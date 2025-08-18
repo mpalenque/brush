@@ -1,0 +1,594 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Control Panel - Multi-Screen Wallpaper</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Arial', sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            background: rgba(255, 255, 255, 0.95);
+            border-radius: 15px;
+            padding: 30px;
+            box-shadow: 0 20px 40px rgba(0, 0, 0, 0.1);
+        }
+
+        h1 {
+            text-align: center;
+            color: #333;
+            margin-bottom: 30px;
+            font-size: 2.5em;
+        }
+
+        .section {
+            margin-bottom: 40px;
+            padding: 20px;
+            background: #f8f9fa;
+            border-radius: 10px;
+            border-left: 5px solid #007bff;
+        }
+
+        .section h2 {
+            color: #333;
+            margin-bottom: 20px;
+            font-size: 1.5em;
+        }
+
+        .controls-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 20px;
+        }
+
+        .control-group {
+            margin-bottom: 15px;
+        }
+
+        .control-group label {
+            display: block;
+            margin-bottom: 5px;
+            color: #555;
+            font-weight: bold;
+            font-size: 14px;
+        }
+
+        .control-group input, .control-group select, .control-group button {
+            width: 100%;
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            font-size: 14px;
+        }
+
+        .control-group button {
+            cursor: pointer;
+            background-color: #28a745;
+            color: white;
+            border: none;
+            font-weight: bold;
+            transition: background-color 0.3s;
+        }
+
+        .control-group button:hover {
+            background-color: #218838;
+        }
+
+        .control-group button.stop {
+            background-color: #dc3545;
+        }
+
+        .control-group button.stop:hover {
+            background-color: #c82333;
+        }
+
+        .control-group button.wallpaper-off {
+            background-color: #dc3545;
+            font-size: 16px;
+        }
+
+        .control-group button.wallpaper-off:hover {
+            background-color: #c82333;
+        }
+
+        .control-group button.wallpaper-on {
+            background-color: #28a745;
+            font-size: 16px;
+        }
+
+        .control-group button.wallpaper-on:hover {
+            background-color: #218838;
+        }
+
+        .screens-grid {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 15px;
+            margin-top: 20px;
+        }
+
+        .screen-control {
+            background: white;
+            padding: 15px;
+            border-radius: 8px;
+            border: 2px solid #dee2e6;
+            text-align: center;
+            transition: border-color 0.3s;
+        }
+
+        .screen-control:hover {
+            border-color: #007bff;
+        }
+
+        .screen-control.connected {
+            border-color: #28a745;
+            background: #f8fff9;
+        }
+
+        .screen-control h3 {
+            color: #333;
+            margin-bottom: 10px;
+        }
+
+        .connection-status {
+            background: #17a2b8;
+            color: white;
+            padding: 10px;
+            border-radius: 5px;
+            margin-bottom: 20px;
+            text-align: center;
+        }
+
+        .connection-status.connected {
+            background: #28a745;
+        }
+
+        .connection-status.disconnected {
+            background: #dc3545;
+        }
+
+        .preview-urls {
+            background: #e9ecef;
+            padding: 15px;
+            border-radius: 8px;
+            margin-top: 20px;
+        }
+
+        .preview-urls h3 {
+            color: #333;
+            margin-bottom: 10px;
+        }
+
+        .url-list {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 10px;
+        }
+
+        .url-item {
+            background: white;
+            padding: 8px 12px;
+            border-radius: 5px;
+            font-family: monospace;
+            font-size: 12px;
+            color: #666;
+            cursor: pointer;
+            transition: background-color 0.3s;
+        }
+
+        .url-item:hover {
+            background: #f0f0f0;
+        }
+
+        .range-display {
+            display: inline-block;
+            margin-left: 10px;
+            color: #007bff;
+            font-weight: bold;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🎨 Multi-Screen Wallpaper Control</h1>
+        
+        <div class="connection-status" id="connectionStatus">
+            🔌 Conectando al servidor...
+        </div>
+
+        <!-- Configuración General -->
+        <div class="section">
+            <h2>⚙️ Configuración General</h2>
+            <div class="controls-grid">
+                <div class="control-group">
+                    <label for="patternType">Tipo de Patrón:</label>
+                    <select id="patternType">
+                        <option value="grid">Cuadrícula Simple</option>
+                        <option value="brick" selected>Ladrillo (Offset)</option>
+                        <option value="metro-tile">Azulejo de Metro</option>
+                        <option value="diamond">Diamante Rotado</option>
+                        <option value="stepped">Patrón Escalonado</option>
+                        <option value="checkerboard">Damero (Tablero)</option>
+                        <option value="mirror-h">Espejo Horizontal</option>
+                        <option value="mirror-v">Espejo Vertical</option>
+                        <option value="mirror-both">Espejo Cuádruple</option>
+                        <option value="rotate-90">Rotación 90°</option>
+                        <option value="rotate-180">Rotación 180°</option>
+                        <option value="rotate-mixed">Rotación Mixta</option>
+                        <option value="scale-varied">Escalado Variado</option>
+                        <option value="alternating-scale">Escala Alternada</option>
+                        <option value="hexagon">Hexagonal</option>
+                        <option value="organic-complex">Orgánico Complejo</option>
+                    </select>
+                </div>
+
+                <div class="control-group">
+                    <label for="repetitionX">Repeticiones Horizontales: <span class="range-display" id="repetitionXValue">10</span></label>
+                    <input type="range" id="repetitionX" min="1" max="30" value="10" step="1">
+                </div>
+
+                <div class="control-group">
+                    <label for="repetitionY">Repeticiones Verticales: <span class="range-display" id="repetitionYValue">8</span></label>
+                    <input type="range" id="repetitionY" min="1" max="30" value="8" step="1">
+                </div>
+
+                <div class="control-group">
+                    <label for="patternSize">Tamaño del Patrón: <span class="range-display" id="sizeValue">245px</span></label>
+                    <input type="range" id="patternSize" min="20" max="300" value="245" step="5">
+                </div>
+
+                <div class="control-group">
+                    <label for="opacity">Opacidad: <span class="range-display" id="opacityValue">100%</span></label>
+                    <input type="range" id="opacity" min="0" max="100" value="100" step="5">
+                </div>
+
+                <div class="control-group">
+                    <label for="rotation">Rotación: <span class="range-display" id="rotationValue">0°</span></label>
+                    <input type="range" id="rotation" min="0" max="360" value="0" step="15">
+                </div>
+
+                <div class="control-group">
+                    <label for="zoom">Zoom: <span class="range-display" id="zoomValue">120%</span></label>
+                    <input type="range" id="zoom" min="0.1" max="3.0" value="1.2" step="0.1">
+                </div>
+
+                <div class="control-group">
+                    <label for="blendMode">Modo de Mezcla:</label>
+                    <select id="blendMode">
+                        <option value="normal">Normal</option>
+                        <option value="multiply" selected>Multiplicar</option>
+                        <option value="screen">Pantalla</option>
+                        <option value="overlay">Superponer</option>
+                        <option value="soft-light">Luz Suave</option>
+                        <option value="hard-light">Luz Fuerte</option>
+                        <option value="color-dodge">Subexponer Color</option>
+                        <option value="color-burn">Sobreexponer Color</option>
+                        <option value="difference">Diferencia</option>
+                        <option value="exclusion">Exclusión</option>
+                        <option value="lighten">Aclarar</option>
+                        <option value="darken">Oscurecer</option>
+                        <option value="saturation">Saturación</option>
+                        <option value="color">Color</option>
+                        <option value="luminosity">Luminosidad</option>
+                        <option value="hue">Matiz</option>
+                        <option value="plus-lighter">Aditivo</option>
+                    </select>
+                </div>
+
+                <div class="control-group">
+                    <label for="backgroundColor">Color de Fondo:</label>
+                    <input type="color" id="backgroundColor" value="#ffffff">
+                </div>
+
+                <div class="control-group">
+                    <label for="animationSpeed">Velocidad Animación: <span class="range-display" id="animationSpeedValue">800ms</span></label>
+                    <input type="range" id="animationSpeed" min="100" max="3000" value="800" step="50">
+                </div>
+            </div>
+        </div>
+
+        <!-- Control de Animación -->
+        <div class="section">
+            <h2>🎬 Control de Wallpaper</h2>
+            <div class="controls-grid">
+                <div class="control-group">
+                    <button id="toggleWallpaper" class="wallpaper-off">🔴 Wallpaper APAGADO - Presiona para ENCENDER</button>
+                </div>
+            </div>
+            <div style="margin-top: 15px; padding: 15px; background: #e7f3ff; border-radius: 8px; border-left: 4px solid #007bff;">
+                <h4 style="margin-bottom: 10px; color: #0056b3;">📈 Patrón de Propagación Orgánica:</h4>
+                <p style="font-size: 14px; color: #666; margin-bottom: 10px;">La animación inicia en la esquina inferior izquierda (Pantalla 1) y se propaga orgánicamente:</p>
+                <div style="font-family: monospace; font-size: 12px; color: #444;">
+                    <strong>Pantalla 1:</strong> 0ms (inicio) &nbsp;→&nbsp; <strong>Pantalla 4:</strong> 250ms &nbsp;→&nbsp; <strong>Pantalla 2:</strong> 350ms<br>
+                    <strong>Pantalla 7:</strong> 500ms &nbsp;→&nbsp; <strong>Pantalla 5:</strong> 600ms &nbsp;→&nbsp; <strong>Pantalla 3:</strong> 700ms<br>
+                    <strong>Pantalla 8:</strong> 850ms &nbsp;→&nbsp; <strong>Pantalla 6:</strong> 950ms &nbsp;→&nbsp; <strong>Pantalla 9:</strong> 1100ms
+                </div>
+            </div>
+        </div>
+
+        <!-- Abrir Pantallas -->
+        <div class="section">
+            <h2>🚀 Abrir Pantallas en Nuevas Pestañas</h2>
+            <div class="screens-grid">
+                <div class="control-group">
+                    <button onclick="openScreen(1)" style="background-color: #17a2b8;">📺 Abrir Pantalla 1</button>
+                </div>
+                <div class="control-group">
+                    <button onclick="openScreen(2)" style="background-color: #17a2b8;">📺 Abrir Pantalla 2</button>
+                </div>
+                <div class="control-group">
+                    <button onclick="openScreen(3)" style="background-color: #17a2b8;">📺 Abrir Pantalla 3</button>
+                </div>
+                <div class="control-group">
+                    <button onclick="openScreen(4)" style="background-color: #17a2b8;">📺 Abrir Pantalla 4</button>
+                </div>
+                <div class="control-group">
+                    <button onclick="openScreen(5)" style="background-color: #17a2b8;">📺 Abrir Pantalla 5</button>
+                </div>
+                <div class="control-group">
+                    <button onclick="openScreen(6)" style="background-color: #17a2b8;">📺 Abrir Pantalla 6</button>
+                </div>
+                <div class="control-group">
+                    <button onclick="openScreen(7)" style="background-color: #17a2b8;">📺 Abrir Pantalla 7</button>
+                </div>
+                <div class="control-group">
+                    <button onclick="openScreen(8)" style="background-color: #17a2b8;">📺 Abrir Pantalla 8</button>
+                </div>
+                <div class="control-group">
+                    <button onclick="openScreen(9)" style="background-color: #17a2b8;">📺 Abrir Pantalla 9</button>
+                </div>
+            </div>
+            <div style="margin-top: 15px;">
+                <button onclick="openAllScreens()" style="background-color: #28a745; font-size: 16px; font-weight: bold;">
+                    🎬 Abrir TODAS las Pantallas (1-9)
+                </button>
+            </div>
+        </div>
+
+        <!-- Configuración de Pantallas -->
+        <div class="section">
+            <h2>🖥️ Configuración de Pantallas (Solo Offset Horizontal)</h2>
+            <div class="screens-grid" id="screensGrid">
+                <!-- Las pantallas se generarán dinámicamente -->
+            </div>
+        </div>
+
+        <!-- URLs de Previsualización -->
+        <div class="preview-urls">
+            <h3>🔗 URLs de las Pantallas:</h3>
+            <div class="url-list" id="urlList">
+                <!-- Las URLs se generarán dinámicamente -->
+            </div>
+        </div>
+    </div>
+
+    <script src="/socket.io/socket.io.js"></script>
+    <script>
+        const socket = io();
+        let connectedScreens = new Set();
+
+        // Elementos del DOM
+        const elements = {
+            connectionStatus: document.getElementById('connectionStatus'),
+            patternType: document.getElementById('patternType'),
+            repetitionX: document.getElementById('repetitionX'),
+            repetitionY: document.getElementById('repetitionY'),
+            patternSize: document.getElementById('patternSize'),
+            opacity: document.getElementById('opacity'),
+            rotation: document.getElementById('rotation'),
+            zoom: document.getElementById('zoom'),
+            blendMode: document.getElementById('blendMode'),
+            backgroundColor: document.getElementById('backgroundColor'),
+            animationSpeed: document.getElementById('animationSpeed'),
+            toggleWallpaper: document.getElementById('toggleWallpaper'),
+            screensGrid: document.getElementById('screensGrid'),
+            urlList: document.getElementById('urlList')
+        };
+
+        // Valores mostrados
+        const values = {
+            repetitionXValue: document.getElementById('repetitionXValue'),
+            repetitionYValue: document.getElementById('repetitionYValue'),
+            sizeValue: document.getElementById('sizeValue'),
+            opacityValue: document.getElementById('opacityValue'),
+            rotationValue: document.getElementById('rotationValue'),
+            zoomValue: document.getElementById('zoomValue'),
+            animationSpeedValue: document.getElementById('animationSpeedValue')
+        };
+
+        // Conexión con el servidor
+        socket.on('connect', () => {
+            elements.connectionStatus.textContent = '✅ Conectado al servidor';
+            elements.connectionStatus.className = 'connection-status connected';
+            socket.emit('registerScreen', { screenId: 0, type: 'control' });
+        });
+
+        socket.on('disconnect', () => {
+            elements.connectionStatus.textContent = '❌ Desconectado del servidor';
+            elements.connectionStatus.className = 'connection-status disconnected';
+        });
+
+        socket.on('initialState', (state) => {
+            loadGeneralConfig(state.general);
+            updateWallpaperButtonState(state.wallpaper?.isActive || false);
+            updateUI();
+        });
+
+        // Función para actualizar el estado del botón wallpaper
+        function updateWallpaperButtonState(isActive) {
+            if (isActive) {
+                elements.toggleWallpaper.textContent = '🟢 Wallpaper ENCENDIDO - Presiona para APAGAR';
+                elements.toggleWallpaper.className = 'wallpaper-on';
+            } else {
+                elements.toggleWallpaper.textContent = '🔴 Wallpaper APAGADO - Presiona para ENCENDER';
+                elements.toggleWallpaper.className = 'wallpaper-off';
+            }
+        }
+
+        // Generar controles de pantallas
+        function generateScreenControls() {
+            elements.screensGrid.innerHTML = '';
+            for (let i = 1; i <= 9; i++) {
+                const screenDiv = document.createElement('div');
+                screenDiv.className = 'screen-control';
+                screenDiv.id = `screen-${i}`;
+                screenDiv.innerHTML = `
+                    <h3>Pantalla ${i}</h3>
+                    <label for="offset-${i}">Offset Horizontal: <span id="offset-value-${i}">0px</span></label>
+                    <input type="range" id="offset-${i}" min="-500" max="500" value="0" step="5" data-screen="${i}">
+                    <div style="margin-top: 10px; font-size: 12px; color: #666;">
+                        <span id="status-${i}">⚪ Desconectado</span>
+                    </div>
+                `;
+                elements.screensGrid.appendChild(screenDiv);
+
+                // Event listener para el offset
+                const offsetInput = document.getElementById(`offset-${i}`);
+                offsetInput.addEventListener('input', (e) => {
+                    const screenId = e.target.dataset.screen;
+                    const value = e.target.value;
+                    document.getElementById(`offset-value-${screenId}`).textContent = value + 'px';
+                    
+                    socket.emit('updateScreenConfig', {
+                        screenId: parseInt(screenId),
+                        config: { offsetX: parseInt(value) }
+                    });
+                });
+            }
+        }
+
+        // Generar URLs
+        function generateURLs() {
+            elements.urlList.innerHTML = '';
+            const baseUrl = window.location.origin;
+            for (let i = 1; i <= 9; i++) {
+                const urlDiv = document.createElement('div');
+                urlDiv.className = 'url-item';
+                urlDiv.textContent = `Pantalla ${i}: ${baseUrl}/screen/${i}`;
+                urlDiv.onclick = () => {
+                    navigator.clipboard.writeText(`${baseUrl}/screen/${i}`);
+                    urlDiv.style.backgroundColor = '#d4edda';
+                    setTimeout(() => {
+                        urlDiv.style.backgroundColor = '';
+                    }, 1000);
+                };
+                elements.urlList.appendChild(urlDiv);
+            }
+        }
+
+        // Cargar configuración general
+        function loadGeneralConfig(config) {
+            elements.patternType.value = config.patternType || 'brick';
+            elements.repetitionX.value = config.repetitionX || 10;
+            elements.repetitionY.value = config.repetitionY || 8;
+            elements.patternSize.value = config.patternSize || 245;
+            elements.opacity.value = config.opacity || 100;
+            elements.rotation.value = config.rotation || 0;
+            elements.zoom.value = config.zoom || 1.2;
+            elements.blendMode.value = config.blendMode || 'multiply';
+            elements.backgroundColor.value = config.backgroundColor || '#ffffff';
+            elements.animationSpeed.value = config.animationSpeed || 800;
+        }
+
+        // Actualizar UI
+        function updateUI() {
+            values.repetitionXValue.textContent = elements.repetitionX.value;
+            values.repetitionYValue.textContent = elements.repetitionY.value;
+            values.sizeValue.textContent = elements.patternSize.value + 'px';
+            values.opacityValue.textContent = elements.opacity.value + '%';
+            values.rotationValue.textContent = elements.rotation.value + '°';
+            values.zoomValue.textContent = Math.round(elements.zoom.value * 100) + '%';
+            values.animationSpeedValue.textContent = elements.animationSpeed.value + 'ms';
+        }
+
+        // Event listeners para configuración general
+        function setupGeneralControls() {
+            const generalControls = [
+                'patternType', 'repetitionX', 'repetitionY', 'patternSize', 
+                'opacity', 'rotation', 'zoom', 'blendMode', 'backgroundColor', 'animationSpeed'
+            ];
+
+            generalControls.forEach(controlName => {
+                const element = elements[controlName];
+                element.addEventListener('input', () => {
+                    updateUI();
+                    const config = {};
+                    config[controlName] = element.type === 'range' ? parseFloat(element.value) : element.value;
+                    socket.emit('updateGeneralConfig', config);
+                });
+            });
+        }
+
+        // Control de animación
+        elements.toggleWallpaper.addEventListener('click', () => {
+            socket.emit('requestAnimationStart');
+        });
+
+        // Manejar respuesta del servidor sobre el estado del wallpaper
+        socket.on('wallpaperToggle', (data) => {
+            updateWallpaperButtonState(data.isActive);
+        });
+
+        // Funciones para abrir pantallas
+        function openScreen(screenId) {
+            const baseUrl = window.location.origin;
+            const url = `${baseUrl}/screen/${screenId}`;
+            const screenWindow = window.open(url, `screen-${screenId}`, 'width=1920,height=1080');
+            
+            if (screenWindow) {
+                // Mensaje de confirmación
+                console.log(`Pantalla ${screenId} abierta en nueva pestaña`);
+            } else {
+                alert(`No se pudo abrir la Pantalla ${screenId}. Verifica que no estén bloqueadas las ventanas emergentes.`);
+            }
+        }
+
+        function openAllScreens() {
+            const baseUrl = window.location.origin;
+            let successCount = 0;
+            
+            for (let i = 1; i <= 9; i++) {
+                setTimeout(() => {
+                    const url = `${baseUrl}/screen/${i}`;
+                    const screenWindow = window.open(url, `screen-${i}`, 'width=1920,height=1080');
+                    
+                    if (screenWindow) {
+                        successCount++;
+                        console.log(`Pantalla ${i} abierta`);
+                    }
+                    
+                    // Mostrar resumen al final
+                    if (i === 9) {
+                        setTimeout(() => {
+                            if (successCount === 9) {
+                                alert('🎉 ¡Todas las 9 pantallas han sido abiertas exitosamente!\n\nRecuerda presionar F11 en cada una para pantalla completa.');
+                            } else {
+                                alert(`${successCount}/9 pantallas abiertas. Algunas pueden haber sido bloqueadas por el navegador.`);
+                            }
+                        }, 500);
+                    }
+                }, i * 200); // Delay entre ventanas para evitar problemas
+            }
+        }
+
+        // Inicializar
+        generateScreenControls();
+        generateURLs();
+        setupGeneralControls();
+        updateUI();
+    </script>
+</body>
+</html>

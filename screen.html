@@ -1,0 +1,559 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Wallpaper Screen - Multi-Display</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Arial', sans-serif;
+            background-color: #f0f0f0;
+            min-height: 100vh;
+        }
+
+        .wallpaper-container {
+            width: 100%;
+            min-height: 100vh;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .pattern-canvas {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: 0;
+        }
+
+        .screen-info {
+            position: fixed;
+            top: 10px;
+            left: 10px;
+            background: rgba(0, 0, 0, 0.7);
+            color: white;
+            padding: 10px 15px;
+            border-radius: 5px;
+            font-size: 14px;
+            z-index: 100;
+            font-family: monospace;
+            display: none;
+        }
+
+        .connection-status {
+            position: fixed;
+            top: 10px;
+            right: 10px;
+            background: rgba(220, 53, 69, 0.9);
+            color: white;
+            padding: 8px 12px;
+            border-radius: 5px;
+            font-size: 12px;
+            z-index: 100;
+            display: none;
+        }
+
+        .connection-status.connected {
+            background: rgba(40, 167, 69, 0.9);
+        }
+
+        .hidden {
+            display: none;
+        }
+    </style>
+</head>
+<body>
+    <div class="wallpaper-container" id="wallpaperContainer">
+        <canvas class="pattern-canvas" id="patternCanvas"></canvas>
+    </div>
+
+    <div class="screen-info" id="screenInfo">
+        Screen ID: <span id="screenId">-</span> | 
+        Offset: <span id="currentOffset">0px</span>
+    </div>
+
+    <div class="connection-status" id="connectionStatus">
+        🔌 Conectando...
+    </div>
+
+    <script src="/socket.io/socket.io.js"></script>
+    <script>
+        const socket = io();
+        const patternCanvas = document.getElementById('patternCanvas');
+        const ctx = patternCanvas.getContext('2d');
+        const wallpaperContainer = document.getElementById('wallpaperContainer');
+
+        // Obtener Screen ID de la URL
+        const pathParts = window.location.pathname.split('/');
+        const screenId = parseInt(pathParts[pathParts.length - 1]);
+
+        // Elementos de UI
+        const elements = {
+            screenInfo: document.getElementById('screenInfo'),
+            screenId: document.getElementById('screenId'),
+            currentOffset: document.getElementById('currentOffset'),
+            connectionStatus: document.getElementById('connectionStatus')
+        };
+
+        // Estado del wallpaper
+        let wallpaperState = {
+            general: {},
+            screen: {},
+            animation: {
+                isRunning: false,
+                startTime: null
+            },
+            wallpaper: {
+                isActive: false
+            }
+        };
+
+        // Estado de animación
+        let isAnimating = false;
+        let animationFrameId = null;
+        let imageInstances = [];
+        let img = new Image();
+        let imgLoaded = false;
+
+        // Mostrar Screen ID
+        elements.screenId.textContent = screenId;
+
+        // Configuración de canvas
+        function setupCanvas() {
+            const dpr = window.devicePixelRatio || 1;
+            patternCanvas.width = window.innerWidth * dpr;
+            patternCanvas.height = window.innerHeight * dpr;
+            patternCanvas.style.width = '100%';
+            patternCanvas.style.height = '100%';
+        }
+
+        // Preparar instancias de imágenes con offset específico de pantalla
+        function prepareImageInstances() {
+            imageInstances = [];
+            const config = wallpaperState.general;
+            const screenConfig = wallpaperState.screen;
+            
+            const repX = parseInt(config.repetitionX || 10);
+            const repY = parseInt(config.repetitionY || 8);
+            const size = parseInt(config.patternSize || 245);
+            const dpr = window.devicePixelRatio || 1;
+            const width = window.innerWidth * dpr;
+            const height = window.innerHeight * dpr;
+            
+            // Offset específico de esta pantalla
+            const offsetXVal = (screenConfig.offsetX || 0) * dpr;
+            const offsetYVal = 0;
+            const rotationVal = parseInt(config.rotation || 0);
+
+            const spacingX = width / repX;
+            const spacingY = height / repY;
+            
+            const imgAspect = img.width / img.height;
+            let baseWidth = size * dpr;
+            let baseHeight = size * dpr;
+            if (imgAspect > 1) baseHeight = baseWidth / imgAspect;
+            else baseWidth = baseHeight * imgAspect;
+
+            let counter = 0;
+
+            for (let j = 0; j < repY; j++) {
+                for (let i = 0; i < repX; i++) {
+                    let x, y, instRotation = rotationVal, scaleMod = 1;
+                    const rowOffset = (j % 2) * (spacingX / 2);
+
+                    // Lógica de patrones
+                    switch (config.patternType) {
+                        case 'brick':
+                            x = i * spacingX + rowOffset;
+                            y = j * spacingY;
+                            break;
+                        case 'metro-tile':
+                            x = i * spacingX + (j % 3) * (spacingX / 3);
+                            y = j * spacingY;
+                            break;
+                        case 'stepped':
+                            x = i * spacingX + (j * spacingX * 0.3);
+                            y = j * spacingY;
+                            break;
+                        case 'hexagon':
+                            x = i * spacingX + rowOffset;
+                            y = j * spacingY * 0.866;
+                            break;
+                        case 'mirror-h':
+                            if (i % 2 !== 0) instRotation += 180;
+                            x = i * spacingX;
+                            y = j * spacingY;
+                            break;
+                        case 'mirror-v':
+                            if (j % 2 !== 0) instRotation += 180;
+                            x = i * spacingX;
+                            y = j * spacingY;
+                            break;
+                        case 'mirror-both':
+                            if (i % 2 !== 0) instRotation += 180;
+                            if (j % 2 !== 0) instRotation += 180;
+                            x = i * spacingX;
+                            y = j * spacingY;
+                            break;
+                        case 'rotate-90':
+                            instRotation += (counter % 4) * 90;
+                            x = i * spacingX;
+                            y = j * spacingY;
+                            break;
+                        case 'rotate-180':
+                            if (counter % 2 !== 0) instRotation += 180;
+                            x = i * spacingX;
+                            y = j * spacingY;
+                            break;
+                        case 'rotate-mixed':
+                            instRotation += [0, 90, 270, 180][counter % 4];
+                            x = i * spacingX;
+                            y = j * spacingY;
+                            break;
+                        case 'scale-varied':
+                            scaleMod = [1, 0.6, 1.4, 0.8][counter % 4];
+                            x = i * spacingX;
+                            y = j * spacingY;
+                            break;
+                        case 'alternating-scale':
+                            const scaleDiff = parseFloat(config.scaleDifference || 1.5);
+                            scaleMod = (counter % 2 === 0) ? 1 : scaleDiff;
+                            x = i * spacingX;
+                            y = j * spacingY;
+                            break;
+                        case 'organic-complex':
+                            // Patrón orgánico complejo con posiciones y rotaciones variadas
+                            const patterns = [
+                                { offsetX: 0, offsetY: 0, rotation: 0, scale: 1 },
+                                { offsetX: spacingX * 0.3, offsetY: spacingY * 0.2, rotation: 180, scale: 0.8 },
+                                { offsetX: -spacingX * 0.1, offsetY: spacingY * 0.4, rotation: 90, scale: 1.2 },
+                                { offsetX: spacingX * 0.2, offsetY: -spacingY * 0.1, rotation: 270, scale: 0.9 },
+                                { offsetX: -spacingX * 0.2, offsetY: -spacingY * 0.3, rotation: 45, scale: 1.1 },
+                                { offsetX: spacingX * 0.4, offsetY: spacingY * 0.1, rotation: 135, scale: 0.7 }
+                            ];
+                            const patternIndex = counter % patterns.length;
+                            const pattern = patterns[patternIndex];
+                            
+                            // Agregar variación adicional basada en la posición de la fila/columna
+                            const rowVariation = (j % 3) * spacingX * 0.15;
+                            const colVariation = (i % 2) * spacingY * 0.1;
+                            
+                            x = i * spacingX + pattern.offsetX + rowVariation;
+                            y = j * spacingY + pattern.offsetY + colVariation;
+                            instRotation += pattern.rotation;
+                            scaleMod = pattern.scale;
+                            break;
+                        default:
+                            x = i * spacingX;
+                            y = j * spacingY;
+                    }
+                    
+                    imageInstances.push({
+                        x: x + offsetXVal,
+                        y: y + offsetYVal,
+                        drawWidth: baseWidth * scaleMod,
+                        drawHeight: baseHeight * scaleMod,
+                        rotation: instRotation,
+                        finalScale: 1,
+                        currentScale: 0,
+                        startTime: 0,
+                        screenId: screenId
+                    });
+                    counter++;
+                }
+            }
+        }
+
+        // Función de dibujo
+        function draw() {
+            const config = wallpaperState.general;
+            const dpr = window.devicePixelRatio || 1;
+            const width = window.innerWidth;
+            const height = window.innerHeight;
+            
+            ctx.save();
+            ctx.clearRect(0, 0, width * dpr, height * dpr);
+            
+            // Color de fondo
+            ctx.fillStyle = config.backgroundColor || '#ffffff';
+            ctx.fillRect(0, 0, width * dpr, height * dpr);
+
+            // Solo dibujar si el wallpaper está activo
+            if (wallpaperState.wallpaper?.isActive) {
+                // Efectos globales
+                ctx.globalAlpha = parseFloat(config.opacity || 100) / 100;
+                ctx.globalCompositeOperation = config.blendMode || 'multiply';
+
+                // Transformaciones globales
+                ctx.translate((width * dpr) / 2, (height * dpr) / 2);
+                const zoomVal = parseFloat(config.zoom || 1.2);
+                ctx.scale(zoomVal, zoomVal);
+                if (config.patternType === 'diamond') {
+                    ctx.rotate(Math.PI / 4);
+                }
+                ctx.translate(-(width * dpr) / 2, -(height * dpr) / 2);
+
+                // Dibujar instancias
+                imageInstances.forEach(instance => {
+                    if (instance.currentScale > 0) {
+                        ctx.save();
+                        ctx.translate(instance.x + instance.drawWidth / 2, instance.y + instance.drawHeight / 2);
+                        ctx.rotate((instance.rotation * Math.PI) / 180);
+                        ctx.scale(instance.currentScale, instance.currentScale);
+                        ctx.drawImage(
+                            img,
+                            -instance.drawWidth / 2,
+                            -instance.drawHeight / 2,
+                            instance.drawWidth,
+                            instance.drawHeight
+                        );
+                        ctx.restore();
+                    }
+                });
+            }
+            
+            ctx.restore();
+        }
+
+        // Función de animación
+        function animate(timestamp) {
+            if (!isAnimating) return;
+
+            const elapsed = timestamp - wallpaperState.animation.startTime;
+            const duration = 8000; // 8 segundos de animación
+            let allComplete = true;
+
+            imageInstances.forEach((instance, index) => {
+                const delay = instance.startTime;
+                const instanceElapsed = elapsed - delay;
+
+                if (instanceElapsed > 0) {
+                    const progress = Math.min(instanceElapsed / 2000, 1); // 2 segundos por instancia
+                    const easeOut = 1 - Math.pow(1 - progress, 3);
+                    instance.currentScale = easeOut * instance.finalScale;
+                } else {
+                    allComplete = false;
+                }
+
+                if (instance.currentScale < instance.finalScale) {
+                    allComplete = false;
+                }
+            });
+
+            draw();
+
+            if (!allComplete && elapsed < duration) {
+                animationFrameId = requestAnimationFrame(animate);
+            } else {
+                isAnimating = false;
+                wallpaperState.animation.isRunning = false;
+            }
+        }
+
+        // Actualizar display de configuración
+        function updateConfigDisplay() {
+            elements.currentOffset.textContent = (wallpaperState.screen.offsetX || 0) + 'px';
+            wallpaperContainer.style.backgroundColor = wallpaperState.general.backgroundColor || '#ffffff';
+        }
+
+        // WebSocket eventos
+        socket.on('connect', () => {
+            elements.connectionStatus.textContent = '✅ Conectado';
+            elements.connectionStatus.className = 'connection-status connected';
+            socket.emit('registerScreen', { screenId: screenId, type: 'screen' });
+        });
+
+        socket.on('disconnect', () => {
+            elements.connectionStatus.textContent = '❌ Desconectado';
+            elements.connectionStatus.className = 'connection-status';
+        });
+
+        socket.on('initialState', (state) => {
+            wallpaperState = state;
+            updateConfigDisplay();
+            if (imgLoaded) {
+                if (wallpaperState.wallpaper?.isActive) {
+                    prepareImageInstances();
+                    imageInstances.forEach(inst => inst.currentScale = inst.finalScale);
+                    draw();
+                } else {
+                    // Solo mostrar color de fondo
+                    const config = wallpaperState.general;
+                    const dpr = window.devicePixelRatio || 1;
+                    ctx.save();
+                    ctx.clearRect(0, 0, window.innerWidth * dpr, window.innerHeight * dpr);
+                    ctx.fillStyle = config.backgroundColor || '#ffffff';
+                    ctx.fillRect(0, 0, window.innerWidth * dpr, window.innerHeight * dpr);
+                    ctx.restore();
+                }
+            }
+        });
+
+        socket.on('generalConfigUpdate', (config) => {
+            wallpaperState.general = { ...wallpaperState.general, ...config };
+            updateConfigDisplay();
+            if (imgLoaded && !isAnimating) {
+                if (wallpaperState.wallpaper?.isActive) {
+                    prepareImageInstances();
+                    imageInstances.forEach(inst => inst.currentScale = inst.finalScale);
+                    draw();
+                } else {
+                    // Solo actualizar color de fondo si está apagado
+                    const dpr = window.devicePixelRatio || 1;
+                    ctx.save();
+                    ctx.clearRect(0, 0, window.innerWidth * dpr, window.innerHeight * dpr);
+                    ctx.fillStyle = config.backgroundColor || wallpaperState.general.backgroundColor || '#ffffff';
+                    ctx.fillRect(0, 0, window.innerWidth * dpr, window.innerHeight * dpr);
+                    ctx.restore();
+                }
+            }
+        });
+
+        socket.on('screenConfigUpdate', (data) => {
+            if (data.screenId == screenId) {
+                wallpaperState.screen = { ...wallpaperState.screen, ...data.config };
+                updateConfigDisplay();
+                if (imgLoaded && !isAnimating && wallpaperState.wallpaper?.isActive) {
+                    prepareImageInstances();
+                    imageInstances.forEach(inst => inst.currentScale = inst.finalScale);
+                    draw();
+                }
+            }
+        });
+
+        socket.on('wallpaperToggle', (data) => {
+            wallpaperState.wallpaper.isActive = data.isActive;
+            
+            if (data.isActive) {
+                // Encender wallpaper con animación simple
+                wallpaperState.animation.isRunning = true;
+                wallpaperState.animation.startTime = data.startTime;
+                
+                const delayForThisScreen = data.delayPattern ? data.delayPattern[screenId] || 0 : 0;
+                
+                if (imgLoaded) {
+                    setTimeout(() => {
+                        isAnimating = true;
+                        prepareImageInstances();
+                        
+                        // Configurar tiempos de inicio para animación orgánica
+                        const totalScreens = 9;
+                        const screenPosition = screenId - 1;
+                        const virtualStartX = window.innerWidth / 2;
+                        const virtualStartY = window.innerHeight * 1.1;
+
+                        imageInstances.sort((a, b) => {
+                            const screenFactor = Math.abs(screenPosition - 4) * 100;
+                            const distA = Math.hypot(a.x - virtualStartX, a.y - virtualStartY) + screenFactor;
+                            const distB = Math.hypot(b.x - virtualStartX, b.y - virtualStartY) + screenFactor;
+                            return (distA + Math.random() * (window.innerWidth/10)) - (distB + Math.random() * (window.innerWidth/10));
+                        });
+
+                        imageInstances.forEach((inst, index) => {
+                            inst.startTime = index * 25; // 25ms entre cada instancia
+                            inst.currentScale = 0;
+                        });
+
+                        wallpaperState.animation.startTime = performance.now();
+                        animationFrameId = requestAnimationFrame(animate);
+                    }, delayForThisScreen);
+                }
+            } else {
+                // Apagar wallpaper inmediatamente
+                wallpaperState.animation.isRunning = false;
+                isAnimating = false;
+                if (animationFrameId) {
+                    cancelAnimationFrame(animationFrameId);
+                    animationFrameId = null;
+                }
+                
+                // Mostrar solo color de fondo
+                const config = wallpaperState.general;
+                const dpr = window.devicePixelRatio || 1;
+                ctx.save();
+                ctx.clearRect(0, 0, window.innerWidth * dpr, window.innerHeight * dpr);
+                ctx.fillStyle = config.backgroundColor || '#ffffff';
+                ctx.fillRect(0, 0, window.innerWidth * dpr, window.innerHeight * dpr);
+                ctx.restore();
+            }
+        });
+
+        socket.on('animationStop', () => {
+            wallpaperState.animation.isRunning = false;
+            isAnimating = false;
+            if (animationFrameId) {
+                cancelAnimationFrame(animationFrameId);
+                animationFrameId = null;
+            }
+            if (imgLoaded) {
+                imageInstances.forEach(inst => inst.currentScale = inst.finalScale);
+                draw();
+            }
+        });
+
+        // Redimensionar canvas cuando cambie el tamaño de ventana
+        window.addEventListener('resize', () => {
+            setupCanvas();
+            if (imgLoaded && !isAnimating) {
+                prepareImageInstances();
+                imageInstances.forEach(inst => inst.currentScale = inst.finalScale);
+                draw();
+            }
+        });
+
+        // Toggle info con tecla 'i'
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'i' || e.key === 'I') {
+                elements.screenInfo.classList.toggle('hidden');
+                elements.connectionStatus.classList.toggle('hidden');
+            }
+        });
+
+        // Inicialización
+        img.onload = () => {
+            imgLoaded = true;
+            setupCanvas();
+            updateConfigDisplay();
+            if (wallpaperState.wallpaper?.isActive) {
+                prepareImageInstances();
+                imageInstances.forEach(inst => inst.currentScale = inst.finalScale);
+                draw();
+            } else {
+                // Mostrar solo color de fondo si está apagado
+                const config = wallpaperState.general;
+                const dpr = window.devicePixelRatio || 1;
+                ctx.save();
+                ctx.clearRect(0, 0, window.innerWidth * dpr, window.innerHeight * dpr);
+                ctx.fillStyle = config.backgroundColor || '#ffffff';
+                ctx.fillRect(0, 0, window.innerWidth * dpr, window.innerHeight * dpr);
+                ctx.restore();
+            }
+        };
+
+        img.onerror = () => {
+            console.error("No se pudo cargar sinperfume.png");
+            elements.connectionStatus.textContent = '❌ Error: sinperfume.png';
+            elements.connectionStatus.className = 'connection-status';
+        };
+
+        img.src = '/sinperfume.png';
+
+        // Validar Screen ID
+        if (screenId < 1 || screenId > 9 || isNaN(screenId)) {
+            document.body.innerHTML = `
+                <div style="display: flex; justify-content: center; align-items: center; height: 100vh; 
+                            font-family: Arial; font-size: 24px; color: #dc3545;">
+                    ❌ Screen ID inválido. Debe ser un número entre 1 y 9.
+                </div>
+            `;
+        }
+    </script>
+</body>
+</html>
