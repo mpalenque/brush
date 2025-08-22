@@ -1,27 +1,25 @@
-// Ajustes generales
-const DURATION_MS = 30000; // 30s (10s más para un cierre más suave)
+// Ajustes generales - suavizados para mejor calidad visual
+const DURATION_MS = 35000; // 35s para más tiempo de desarrollo suave
 const DPR = 1; // cap para rendimiento
-const MASK_SCALE = 0.75; // máscara a menor resolución para mejor FPS
-const MAX_UNITS_PER_FRAME = 480; // menos trabajo por frame para evitar picos
-const FINAL_SEAL_START = 0.86; // iniciar antes para repartir en más frames
-const FINAL_SEAL_ALPHA_MIN = 0.03;
-const FINAL_SEAL_ALPHA_MAX = 0.06;
-const FINAL_SEAL_CHUNK_BASE = 2; // aún más pequeño por frame
-const WASH_START = 0.84; // iniciar antes
-const WASH_CHUNK_BASE = 4;
-const MAX_STEPS_PER_ENTITY_FRAME = 2; // aún más suave por entidad
+const MASK_SCALE = 0.85; // máscara a mayor resolución para mejor calidad
+const MAX_UNITS_PER_FRAME = 320; // menos trabajo por frame para suavidad
+const FINAL_SEAL_START = 0.80; // iniciar antes para asegurar cobertura completa
+const FINAL_SEAL_ALPHA_MIN = 0.08;
+const FINAL_SEAL_ALPHA_MAX = 0.15;
+const FINAL_SEAL_CHUNK_BASE = 4; // más trabajo de sellado
+const WASH_START = 0.75; // iniciar antes
+const WASH_CHUNK_BASE = 6;
+const MAX_STEPS_PER_ENTITY_FRAME = 3; // un poco más de trabajo por entidad
 const container = document.getElementById('container');
 const canvas = document.querySelector('.js-canvas');
 const ctx = canvas.getContext('2d', { alpha: true, desynchronized: true });
 const maskCanvas = document.createElement('canvas');
 const maskCtx = maskCanvas.getContext('2d', { alpha: true, desynchronized: true });
-const fpsEl = document.getElementById('fps');
 // Eventos de dibujo del frame actual (para depuración exacta)
 let drawEvents = [];
-const toggleMarkersBtn = document.getElementById('toggleMarkers');
-let showMarkers = false;
 
 const BG = new Image(); BG.src = '1.png';
+const PERFUME = new Image(); PERFUME.src = 'perfume.png';
 const brushSrcs = [
   'Stroke/blue-watercolor-brush-stroke-1.png',
   'Stroke/blue-watercolor-brush-stroke-2.png',
@@ -31,12 +29,24 @@ const brushSrcs = [
 ];
 let maskBrushes = [];
 
+// Canvas y contexto para las máscaras de 8 perfumes
+const perfumeMaskCanvases = [];
+const perfumeMaskCtxs = [];
+for (let i = 0; i < 8; i++) {
+  const canvas = document.createElement('canvas');
+  const ctx = canvas.getContext('2d', { alpha: true, desynchronized: true });
+  perfumeMaskCanvases.push(canvas);
+  perfumeMaskCtxs.push(ctx);
+}
+
 // Estado
 let size = { wCSS: 0, hCSS: 0, w: 0, h: 0 };
 let layout = { dx: 0, dy: 0, dw: 0, dh: 0 };
+let perfumeLayouts = [];
 let startedAt = 0, rafId = 0;
 let seeds = [], strokes = [], sweeps = [], wash = [], spirals = [], radiants = [], connectors = [], droplets = [], waves = [];
 let finalSealing = [];
+let perfumeStrokes = [];
 
 // Utils
 const clamp = (v,a,b)=>Math.max(a,Math.min(b,v));
@@ -70,8 +80,6 @@ function fillIrregularBlob(cx, cy, R, terms, alpha=1, steps=42, ampScale=1, jitt
     if(i===0) maskCtx.moveTo(x,y); else maskCtx.lineTo(x,y);
   }
   maskCtx.closePath(); maskCtx.fillStyle='#fff'; maskCtx.fill(); maskCtx.restore();
-  // Registrar evento de dibujo (centro y radio aprox.)
-  drawEvents.push({ x: cx, y: cy, r: Math.max(2, R) });
 }
 
 function resize(){
@@ -81,12 +89,100 @@ function resize(){
   canvas.width=size.w; canvas.height=size.h; canvas.style.width=size.wCSS+'px'; canvas.style.height=size.hCSS+'px';
   maskCanvas.width=Math.max(1, Math.floor(size.w*MASK_SCALE));
   maskCanvas.height=Math.max(1, Math.floor(size.h*MASK_SCALE));
+  
+  // Configurar canvas de máscaras de los 8 perfumes
+  for (let i = 0; i < 8; i++) {
+    perfumeMaskCanvases[i].width = Math.max(1, Math.floor(size.w*MASK_SCALE));
+    perfumeMaskCanvases[i].height = Math.max(1, Math.floor(size.h*MASK_SCALE));
+    perfumeMaskCtxs[i].setTransform(MASK_SCALE,0,0,MASK_SCALE,0,0);
+  }
+  
   // Dibujo en coordenadas full-res, pero el contexto de máscara se escala
   maskCtx.setTransform(MASK_SCALE,0,0,MASK_SCALE,0,0);
+  
   if (BG.naturalWidth && BG.naturalHeight){
     const s = Math.max(size.w/BG.naturalWidth, size.h/BG.naturalHeight);
     const dw = Math.ceil(BG.naturalWidth*s), dh = Math.ceil(BG.naturalHeight*s);
     layout.dx = Math.floor((size.w-dw)/2); layout.dy = Math.floor((size.h-dh)/2); layout.dw = dw; layout.dh = dh;
+  }
+  
+  // Layout para 8 perfumes distribuidos en patrón de cruz expandida
+  perfumeLayouts = [];
+  if (PERFUME.naturalWidth && PERFUME.naturalHeight){
+    const maxSize = Math.min(size.w, size.h) * 0.17; // 15% más grande que antes (0.15 * 1.15)
+    const s = Math.min(maxSize/PERFUME.naturalWidth, maxSize/PERFUME.naturalHeight);
+    const dw = Math.ceil(PERFUME.naturalWidth*s), dh = Math.ceil(PERFUME.naturalHeight*s);
+    
+    // Definir posiciones según el patrón:
+    // --x---x--
+    // ----x----
+    // -x-----x-
+    // ----x----
+    // --x---x--
+    const centerX = size.w / 2;
+    const centerY = size.h / 2;
+    const spacingH = Math.min(size.w, size.h) * 0.25; // Espaciado horizontal
+    const spacingV = Math.min(size.w, size.h) * 0.2;  // Espaciado vertical
+    
+    const positions = [
+      // Fila superior: --x---x--
+      { x: centerX - spacingH * 1.2, y: centerY - spacingV * 2 },    // izquierda superior
+      { x: centerX + spacingH * 1.2, y: centerY - spacingV * 2 },    // derecha superior
+      // Fila medio-alta: ----x----
+      { x: centerX, y: centerY - spacingV },                         // centro superior
+      // Fila central: -x-----x- (acercadas al centro)
+      { x: centerX - spacingH * 1.4, y: centerY },                   // izquierda central (más cerca)
+      { x: centerX + spacingH * 1.4, y: centerY },                   // derecha central (más cerca)
+      // Fila medio-baja: ----x----
+      { x: centerX, y: centerY + spacingV },                         // centro inferior
+      // Fila inferior: --x---x--
+      { x: centerX - spacingH * 1.2, y: centerY + spacingV * 2 },    // izquierda inferior
+      { x: centerX + spacingH * 1.2, y: centerY + spacingV * 2 }     // derecha inferior
+    ];
+    
+    for (let i = 0; i < 8; i++) {
+      const pos = positions[i];
+      const dx = Math.floor(pos.x - dw / 2);
+      const dy = Math.floor(pos.y - dh / 2);
+      perfumeLayouts.push({ dx, dy, dw, dh });
+    }
+  }
+}
+
+// Pinceladas para revelar el perfume (más suaves y orgánicas)
+function makePerfumeStrokes(){
+  perfumeStrokes = [];
+  if (!perfumeLayouts.length) return;
+  
+  // Crear trazos para cada una de las 8 imágenes
+  for (let perfumeIndex = 0; perfumeIndex < 8; perfumeIndex++) {
+    const layout = perfumeLayouts[perfumeIndex];
+    if (!layout.dw || !layout.dh) continue;
+    
+    const cx = layout.dx + layout.dw/2;
+    const cy = layout.dy + layout.dh/2;
+    const maxRadius = Math.max(layout.dw, layout.dh) * 0.6;
+    
+    const COUNT = 25; // Menos trazos para un efecto más suave
+    
+    for (let i=0;i<COUNT;i++){
+      // Distribución radial desde el centro con algo de aleatoriedad
+      const angle = (i/COUNT) * Math.PI * 2 + rand(-0.3, 0.3);
+      const distance = rand(0.1, 0.9) * maxRadius;
+      const x = cx + Math.cos(angle) * distance;
+      const y = cy + Math.sin(angle) * distance;
+      
+      const baseW = clamp(gauss(20,6), 12,35) * (size.w/1280+size.h/720)*.5;
+      const alpha = rand(0.3, 0.7); // Más opaco para revelado suave
+      const steps = Math.round(rand(80,150));
+      const stepLen = clamp(gauss(4.0,1.2), 2.0, 6.0) * (size.w/1280+size.h/720)*.5;
+      const drift = rand(.01,.03); // Muy poca deriva para mantener suavidad
+      const tStart = rand(0.1, 0.4); // Empieza temprano
+      const tEnd = clamp(tStart+rand(.4,.7), 0, 0.9);
+      const b = maskBrushes.length? Math.floor(rand(0,maskBrushes.length)) : -1;
+      
+      perfumeStrokes.push({x,y,angle,baseW,alpha,steps,stepLen,drift,tStart,tEnd,idx:0,b,perfumeIndex});
+    }
   }
 }
 
@@ -387,57 +483,39 @@ function stamp(brush,x,y,scale,alpha,rot){
   maskCtx.globalAlpha=alpha;
   maskCtx.drawImage(brush, -w/2, -h/2, w, h);
   maskCtx.restore();
-  // Registrar evento exacto de estampado
-  drawEvents.push({ x, y, r: Math.max(w, h) * 0.5 });
 }
 
-// Marcadores rojos: solo mostrar cuando REALMENTE se dibuja (eventos del frame)
-function drawMarkersOverlay(){
-  if (!drawEvents.length) return;
-  ctx.save();
-  ctx.globalCompositeOperation = 'source-over';
-  ctx.strokeStyle = 'rgba(255,0,0,0.9)';
-  ctx.fillStyle = 'rgba(255,0,0,0.25)';
-  ctx.lineWidth = 1.5;
-  for (const ev of drawEvents){
-    const r = Math.max(2, ev.r || 4);
-    ctx.beginPath(); ctx.arc(ev.x, ev.y, r, 0, Math.PI*2); ctx.fill(); ctx.stroke();
-    ctx.beginPath(); ctx.moveTo(ev.x-4, ev.y); ctx.lineTo(ev.x+4, ev.y);
-    ctx.moveTo(ev.x, ev.y-4); ctx.lineTo(ev.x, ev.y+4); ctx.stroke();
-  }
-  ctx.restore();
-}
+// Marcadores rojos removidos - ya no se usan
 
 function stepStroke(stk, n, sizeMultiplier = 1, motionScale = 1){
   if (n<=0) return 0; let spent=0; const hasBrush=stk.b>=0 && maskBrushes[stk.b];
   if (!hasBrush){ maskCtx.save(); maskCtx.lineCap='round'; maskCtx.lineJoin='round'; maskCtx.strokeStyle='#fff'; }
-  // velocidad suavizada (inercia)
+  // velocidad suavizada (inercia) - más lenta y progresiva
   if (stk.vx===undefined){
-    stk.vx = Math.cos(stk.angle) * stk.stepLen;
-    stk.vy = Math.sin(stk.angle) * stk.stepLen;
+    stk.vx = Math.cos(stk.angle) * stk.stepLen * 0.7;
+    stk.vy = Math.sin(stk.angle) * stk.stepLen * 0.7;
   }
   for (let i=0;i<n;i++){
-    // actualizar dirección con menos jitter
-    stk.angle += gauss(0, stk.drift*.05);
+    // actualizar dirección con menos jitter y menor drift
+    stk.angle += gauss(0, stk.drift * 0.025);
     const cx=size.w*.5, cy=size.h*.5; const toC=Math.atan2(cy-stk.y, cx-stk.x);
-    // Reducir atracción al centro para mejor distribución
-    stk.angle = stk.angle*.98 + toC*.02;
-    const tx = Math.cos(stk.angle) * (stk.stepLen * motionScale);
-    const ty = Math.sin(stk.angle) * (stk.stepLen * motionScale);
-    // inercia hacia la velocidad objetivo
-    stk.vx = lerp(stk.vx, tx, 0.12);
-    stk.vy = lerp(stk.vy, ty, 0.12);
+    // Menor atracción al centro para suavidad
+    stk.angle = stk.angle * 0.99 + toC * 0.01;
+    const tx = Math.cos(stk.angle) * (stk.stepLen * motionScale * 0.7);
+    const ty = Math.sin(stk.angle) * (stk.stepLen * motionScale * 0.7);
+    // inercia hacia la velocidad objetivo, más lenta
+    stk.vx = lerp(stk.vx, tx, 0.07);
+    stk.vy = lerp(stk.vy, ty, 0.07);
     const nx = stk.x + stk.vx;
     const ny = stk.y + stk.vy;
     if (nx<-50||nx>size.w+50||ny<-50||ny>size.h+50){ stk.angle += Math.PI*.35; continue; }
 
-    const w = clamp(gauss(stk.baseW, stk.baseW*.1), stk.baseW*.75, stk.baseW*1.25) * sizeMultiplier;
+    const w = clamp(gauss(stk.baseW, stk.baseW*.08), stk.baseW*.8, stk.baseW*1.2) * sizeMultiplier;
     const a0 = stk.alpha;
     if (hasBrush){
       const brush = maskBrushes[stk.b];
       const scale = w / Math.max(brush.width, brush.height) * 2.6;
-      const rot = Math.atan2(stk.vy, stk.vx) + gauss(0, .1);
-    
+      const rot = Math.atan2(stk.vy, stk.vx) + gauss(0, .07);
       // pasadas muy suaves entre puntos con easing para evitar saltos
       for (let pass=0; pass<6; pass++){
         const t = pass / 5; // 0..1
@@ -446,7 +524,7 @@ function stepStroke(stk, n, sizeMultiplier = 1, motionScale = 1){
         const py = stk.y + (ny-stk.y)*ts;
         const pScale = scale * (0.85 + ts*0.25);
         const pAlpha = a0 * (0.13 + Math.sin(ts*Math.PI)*0.11);
-        const pRot = rot + gauss(0, .06);
+        const pRot = rot + gauss(0, .04);
         stamp(brush, px, py, pScale, pAlpha, pRot);
       }
       // Pasada perpendicular muy sutil para cerrar huecos finos
@@ -473,6 +551,15 @@ function stepStroke(stk, n, sizeMultiplier = 1, motionScale = 1){
   }
   if (!hasBrush) maskCtx.restore();
   return spent;
+  // Al llegar al final, fuerza la máscara a blanco para revelar todo
+  if (p >= 1) {
+    maskCtx.save();
+    maskCtx.globalAlpha = 1;
+    maskCtx.globalCompositeOperation = 'source-over';
+    maskCtx.fillStyle = '#fff';
+    maskCtx.fillRect(0, 0, size.w, size.h);
+    maskCtx.restore();
+  }
 }
 
 function stepSpiral(spr, n, sizeMultiplier = 1){
@@ -523,7 +610,6 @@ function stepRadiant(rad, n, sizeMultiplier = 1){
       spent += 1;
     } else {
       fillIrregularBlob(x, y, w/2, makeHarmonics(2), rad.alpha * 0.3, 24, 0.9, 0.01);
-  drawEvents.push({ x, y, r: w * 0.5 });
       spent += 1;
     }
     rad.idx++;
@@ -552,12 +638,95 @@ function stepConnector(con, n, sizeMultiplier = 1){
       spent += 2;
     } else {
       fillIrregularBlob(x, y, w/2, makeHarmonics(2), con.alpha * 0.28, 22, 0.9, 0.01);
-  drawEvents.push({ x, y, r: w * 0.5 });
       spent += 1;
     }
     con.idx++;
   }
   if (!hasBrush) maskCtx.restore();
+  return spent;
+}
+
+// Función para dibujar las pinceladas del perfume
+function stepPerfumeStroke(stk, n, sizeMultiplier = 1, motionScale = 1){
+  if (n<=0) return 0; 
+  let spent=0; 
+  const hasBrush=stk.b>=0 && maskBrushes[stk.b];
+  const perfumeCtx = perfumeMaskCtxs[stk.perfumeIndex];
+  const layout = perfumeLayouts[stk.perfumeIndex];
+  
+  if (!hasBrush){ 
+    perfumeCtx.save(); 
+    perfumeCtx.lineCap='round'; 
+    perfumeCtx.lineJoin='round'; 
+    perfumeCtx.strokeStyle='#fff'; 
+  }
+  
+  // velocidad suavizada (inercia)
+  if (stk.vx===undefined){
+    stk.vx = Math.cos(stk.angle) * stk.stepLen;
+    stk.vy = Math.sin(stk.angle) * stk.stepLen;
+  }
+  
+  for (let i=0;i<n;i++){
+    // actualizar dirección con menos jitter
+    stk.angle += gauss(0, stk.drift*.03); // Aún más suave
+    
+    const tx = Math.cos(stk.angle) * (stk.stepLen * motionScale);
+    const ty = Math.sin(stk.angle) * (stk.stepLen * motionScale);
+    
+    // inercia hacia la velocidad objetivo
+    stk.vx = lerp(stk.vx, tx, 0.08); // Más suave
+    stk.vy = lerp(stk.vy, ty, 0.08);
+    
+    const nx = stk.x + stk.vx;
+    const ny = stk.y + stk.vy;
+    
+    // Mantener dentro del área del perfume correspondiente
+    if (nx < layout.dx-50 || nx > layout.dx+layout.dw+50 || 
+        ny < layout.dy-50 || ny > layout.dy+layout.dh+50){ 
+      stk.angle += Math.PI*.2; continue; 
+    }
+
+    const w = clamp(gauss(stk.baseW, stk.baseW*.08), stk.baseW*.8, stk.baseW*1.2) * sizeMultiplier;
+    const a0 = stk.alpha;
+    
+    if (hasBrush){
+      const brush = maskBrushes[stk.b];
+      const scale = w / Math.max(brush.width, brush.height) * 2.2;
+      const rot = Math.atan2(stk.vy, stk.vx) + gauss(0, .06);
+    
+      // pasadas muy suaves para perfume
+      for (let pass=0; pass<4; pass++){
+        const t = pass / 3; 
+        const ts = t*t*(3-2*t); 
+        const px = stk.x + (nx-stk.x)*ts;
+        const py = stk.y + (ny-stk.y)*ts;
+        const pScale = scale * (0.9 + ts*0.2);
+        const pAlpha = a0 * (0.2 + Math.sin(ts*Math.PI)*0.15);
+        const pRot = rot + gauss(0, .04);
+        
+        perfumeCtx.save();
+        perfumeCtx.translate(px, py);
+        if(pRot) perfumeCtx.rotate(pRot);
+        perfumeCtx.globalAlpha = pAlpha;
+        perfumeCtx.drawImage(brush, -brush.width*pScale/2, -brush.height*pScale/2, brush.width*pScale, brush.height*pScale);
+        perfumeCtx.restore();
+      }
+      spent += 4;
+    } else {
+      // fallback suave
+      perfumeCtx.globalAlpha = a0 * 0.25;
+      perfumeCtx.lineWidth = w;
+      perfumeCtx.beginPath();
+      perfumeCtx.moveTo(stk.x, stk.y);
+      perfumeCtx.lineTo(nx, ny);
+      perfumeCtx.stroke();
+      spent += 1;
+    }
+    stk.x=nx; stk.y=ny; stk.idx++;
+  }
+  
+  if (!hasBrush) perfumeCtx.restore();
   return spent;
 }
 
@@ -569,13 +738,48 @@ function drawProgress(p){
   let budget = MAX_UNITS_PER_FRAME;
 
   // Empezar con 1 punto y agregar más progresivamente
-  const activeSeeds = Math.max(1, Math.ceil(Math.pow(e, 1.3) * seeds.length));
+  const activeSeeds = Math.max(1, Math.ceil(Math.pow(e, 1.1) * seeds.length)); // Más gradual
   
-  // El tamaño del pincel crece con el tiempo para cubrir todo
-  // Crecimiento de tamaño con saturación al final para evitar saltos de cobertura
-  const sizeMultiplier = 0.15 + (1 - Math.exp(-3.2 * e)) * 1.6;
+  // El tamaño del pincel crece más suavemente
+  const sizeMultiplier = 0.2 + (1 - Math.exp(-2.8 * e)) * 1.4;
   // Mantener velocidad de trazo constante para no acelerar al final
-  const motionScale = 0.8;
+  const motionScale = 0.9;
+
+  // === REVELADO DEL PERFUME (nueva funcionalidad) ===
+  const perfumeFadeInStartTime = 20000; // Empezar a revelar a los 20s
+  const perfumeFadeInDuration = 10000; // Duración del fundido: 10s
+  const perfumeFadeInStartProgress = perfumeFadeInStartTime / DURATION_MS;
+  const perfumeFadeInEndProgress = (perfumeFadeInStartTime + perfumeFadeInDuration) / DURATION_MS;
+
+  // Pinceladas normales antes del fundido final
+  for (let i=0;i<perfumeStrokes.length && budget>0;i++){
+    const s=perfumeStrokes[i];
+    if (e < s.tStart) continue;
+    // Detener las pinceladas cuando empieza el fundido para una transición limpia
+    if (e >= perfumeFadeInStartProgress) continue;
+    const local = s.tEnd>s.tStart? clamp((e-s.tStart)/(s.tEnd-s.tStart),0,1) : 1;
+    const target = Math.floor(s.steps*local); 
+    const need = target - s.idx;
+    if (need>0){ 
+      const allow = Math.min(need, Math.floor(budget*0.18), MAX_STEPS_PER_ENTITY_FRAME); 
+      budget -= stepPerfumeStroke(s, allow, sizeMultiplier * 0.9, motionScale); 
+    }
+  }
+
+  // Fundido suave para revelación completa de las 8 imágenes
+  if (e >= perfumeFadeInStartProgress) {
+    const fadeProgress = clamp((e - perfumeFadeInStartProgress) / (perfumeFadeInEndProgress - perfumeFadeInStartProgress), 0, 1);
+    const easedFadeProgress = easeInOutCubic(fadeProgress);
+
+    for (let i = 0; i < 8; i++) {
+      perfumeMaskCtxs[i].save();
+      perfumeMaskCtxs[i].globalAlpha = easedFadeProgress;
+      perfumeMaskCtxs[i].globalCompositeOperation = 'source-over';
+      perfumeMaskCtxs[i].fillStyle = '#fff';
+      perfumeMaskCtxs[i].fillRect(0, 0, size.w, size.h);
+      perfumeMaskCtxs[i].restore();
+    }
+  }
 
   // Trazos principales (solo de semillas activas)
   for (let i=0;i<strokes.length && budget>0;i++){
@@ -584,7 +788,7 @@ function drawProgress(p){
     if (e < s.tStart) continue;
     const local = s.tEnd>s.tStart? clamp((e-s.tStart)/(s.tEnd-s.tStart),0,1) : 1;
     const target = Math.floor(s.steps*local); const need = target - s.idx;
-    if (need>0){ const factor = 0.4; const allow = Math.min(need, Math.floor(budget*factor), MAX_STEPS_PER_ENTITY_FRAME); budget -= stepStroke(s, allow, sizeMultiplier, motionScale); }
+    if (need>0){ const factor = 0.35; const allow = Math.min(need, Math.floor(budget*factor), MAX_STEPS_PER_ENTITY_FRAME); budget -= stepStroke(s, allow, sizeMultiplier, motionScale); }
   }
   
   // Gotas (se activan progresivamente)
@@ -665,17 +869,17 @@ function drawProgress(p){
     }
   }
 
-  // Sellado final incremental y orgánico
+  // Sellado final incremental y orgánico - MÁS AGRESIVO para cobertura completa
   if (e >= FINAL_SEAL_START && budget > 0 && finalSealing.length){
     if (finalSealing._drawn===undefined) finalSealing._drawn=0;
     const t = clamp((e - FINAL_SEAL_START) / (1 - FINAL_SEAL_START), 0, 1);
     const alpha = FINAL_SEAL_ALPHA_MIN + (FINAL_SEAL_ALPHA_MAX - FINAL_SEAL_ALPHA_MIN) * t;
-    // objetivo gradual: no completar de golpe
+    // objetivo gradual: completar más agresivamente hacia el final
     const total = finalSealing.length;
-    const target = Math.floor(total * (t*0.9));
+    const target = Math.floor(total * Math.min(1, t*1.2)); // Acelerar hacia el final
     const remaining = target - finalSealing._drawn;
-    const base = Math.max(1, Math.ceil(FINAL_SEAL_CHUNK_BASE * (1 - t)));
-    const perFrame = Math.max(1, Math.min(base, Math.min(remaining, Math.floor(budget*0.05))));
+    const base = Math.max(2, Math.ceil(FINAL_SEAL_CHUNK_BASE * (1 + t*2))); // Más agresivo
+    const perFrame = Math.max(2, Math.min(base, Math.min(remaining, Math.floor(budget*0.08))));
     const end = Math.min(finalSealing.length, finalSealing._drawn + perFrame);
     for (let i = finalSealing._drawn; i < end && budget > 0; i++){
       const pt = finalSealing[i];
@@ -683,43 +887,84 @@ function drawProgress(p){
       if (b){
         // micro-trazos cortos para evitar parches notables
         const angle = rand(0, Math.PI*2);
-        const len = 14 * (0.8 + 0.6*(1-t));
-        const steps = 2 + Math.floor(rand(0,2));
+        const len = 18 * (0.9 + 0.4*(1-t));
+        const steps = 3 + Math.floor(rand(0,2));
         for (let k=0;k<steps;k++){
           const u = steps===1? 0.5 : k/(steps-1);
           const x = pt.x + Math.cos(angle)*(u-0.5)*len;
           const y = pt.y + Math.sin(angle)*(u-0.5)*len;
-          const s = 1.6 * (0.9 + u*0.2);
-          stamp(b, x, y, s, alpha*(0.7 + 0.3*u), angle + gauss(0,0.08));
+          const s = 1.8 * (0.9 + u*0.3);
+          stamp(b, x, y, s, alpha*(0.8 + 0.4*u), angle + gauss(0,0.06));
         }
       } else {
-        fillIrregularBlob(pt.x, pt.y, 26 * sizeMultiplier, makeHarmonics(2), alpha, 22, 0.9, 0.01);
+        fillIrregularBlob(pt.x, pt.y, 32 * sizeMultiplier, makeHarmonics(2), alpha, 26, 0.9, 0.01);
       }
       finalSealing._drawn = i + 1; budget -= 1;
+    }
+  }
+
+  // Cobertura final adicional para asegurar 100% de revelado
+  if (e >= 0.95 && budget > 0) {
+    // Sellado extra en áreas problemáticas comunes
+    const extraSeals = [
+      {x: size.w*0.1, y: size.h*0.1}, {x: size.w*0.9, y: size.h*0.1},
+      {x: size.w*0.1, y: size.h*0.9}, {x: size.w*0.9, y: size.h*0.9},
+      {x: size.w*0.5, y: size.h*0.1}, {x: size.w*0.5, y: size.h*0.9},
+      {x: size.w*0.1, y: size.h*0.5}, {x: size.w*0.9, y: size.h*0.5}
+    ];
+    const extraAlpha = (e - 0.95) * 0.4; // Gradual desde 95%
+    for (let i=0; i<extraSeals.length && budget>0; i++) {
+      const pt = extraSeals[i];
+      const b = maskBrushes.length ? maskBrushes[i % maskBrushes.length] : null;
+      if (b) {
+        stamp(b, pt.x, pt.y, 2.5, extraAlpha, rand(0, Math.PI*2));
+      } else {
+        fillIrregularBlob(pt.x, pt.y, 40, makeHarmonics(2), extraAlpha, 30, 1.0, 0.01);
+      }
+      budget--;
     }
   }
 }
 
 function render(){
   ctx.clearRect(0,0,size.w,size.h);
+  
+  // Dibujar imagen de fondo
   if (layout.dw && layout.dh) ctx.drawImage(BG, layout.dx, layout.dy, layout.dw, layout.dh);
+  
+  // Aplicar máscara del efecto original
   ctx.globalCompositeOperation='destination-in';
   ctx.drawImage(maskCanvas, 0,0, maskCanvas.width, maskCanvas.height, 0,0, size.w, size.h);
-  ctx.globalCompositeOperation='destination-over'; ctx.fillStyle='#fff'; ctx.fillRect(0,0,size.w,size.h);
-  ctx.globalCompositeOperation='source-over';
-}
-
-// FPS meter
-let fpsLastTs=0, fpsFrames=0, fpsValue=0;
-function updateFps(ts){
-  fpsFrames++;
-  if (!fpsLastTs) fpsLastTs = ts;
-  const dt = ts - fpsLastTs;
-  if (dt >= 500){ // actualizar 2 veces por segundo
-    fpsValue = Math.round((fpsFrames * 1000) / dt);
-    fpsFrames = 0; fpsLastTs = ts;
-    if (fpsEl) fpsEl.textContent = `${fpsValue} fps`;
+  ctx.globalCompositeOperation='destination-over'; 
+  ctx.fillStyle='#fff'; 
+  ctx.fillRect(0,0,size.w,size.h);
+  
+  // === DIBUJAR 8 PERFUMES CON BLEND MODE MULTIPLY ===
+  if (PERFUME.naturalWidth && perfumeLayouts.length) {
+    for (let i = 0; i < 8; i++) {
+      const layout = perfumeLayouts[i];
+      if (!layout.dw || !layout.dh) continue;
+      
+      // Crear un canvas temporal para cada perfume con su máscara
+      const tempCanvas = document.createElement('canvas');
+      tempCanvas.width = size.w;
+      tempCanvas.height = size.h;
+      const tempCtx = tempCanvas.getContext('2d');
+      
+      // Dibujar el perfume en el canvas temporal
+      tempCtx.drawImage(PERFUME, layout.dx, layout.dy, layout.dw, layout.dh);
+      
+      // Aplicar la máscara del perfume correspondiente
+      tempCtx.globalCompositeOperation = 'destination-in';
+      tempCtx.drawImage(perfumeMaskCanvases[i], 0, 0, perfumeMaskCanvases[i].width, perfumeMaskCanvases[i].height, 0, 0, size.w, size.h);
+      
+      // Dibujar el perfume enmascarado en el canvas principal con blend mode multiply
+      ctx.globalCompositeOperation = 'multiply';
+      ctx.drawImage(tempCanvas, 0, 0);
+    }
   }
+  
+  ctx.globalCompositeOperation='source-over';
 }
 function loop(ts){
   if (!startedAt) startedAt=ts;
@@ -727,17 +972,23 @@ function loop(ts){
   const p=clamp(pRaw,0,1);
   drawProgress(p);
   render();
-  if (showMarkers) drawMarkersOverlay();
-  updateFps(ts);
+  
+  // Continuar hasta que esté 100% completo Y todos los elementos hayan terminado
   const unfinished = (finalSealing && finalSealing.length && finalSealing._drawn < finalSealing.length)
-                   || (wash && wash.length && (wash._drawn||0) < wash.length);
-  if (p<1 || unfinished) rafId=requestAnimationFrame(loop);
+                   || (wash && wash.length && (wash._drawn||0) < wash.length)
+                   || p < 1;
+  if (unfinished) rafId=requestAnimationFrame(loop);
 }
 
 function start(){ 
   cancelAnimationFrame(rafId); 
   resize(); 
   maskCtx.clearRect(0,0,size.w,size.h); 
+  // Limpiar todas las máscaras de perfume
+  for (let i = 0; i < 8; i++) {
+    perfumeMaskCtxs[i].clearRect(0,0,size.w,size.h);
+  }
+  
   // golpe inicial en el centro para que empiece a mostrarse de inmediato
   kickstartMask();
   makeSeeds(12); // Aumentamos las semillas para una mejor distribución final
@@ -750,6 +1001,8 @@ function start(){
   makeWaves();
   makeWash(); 
   makeFinalSealing();
+  makePerfumeStrokes(); // Generar trazos para las 6 imágenes de perfume
+  
   // render inmediato para que se vea el golpe inicial antes del primer frame
   render();
   startedAt=0; 
@@ -761,6 +1014,10 @@ window.addEventListener('resize',()=>{
   const p=startedAt?clamp((now-startedAt)/DURATION_MS,0,1):0; 
   resize(); 
   maskCtx.clearRect(0,0,size.w,size.h); 
+  // Limpiar todas las máscaras de perfume
+  for (let i = 0; i < 8; i++) {
+    perfumeMaskCtxs[i].clearRect(0,0,size.w,size.h);
+  }
   makeSeeds(12); 
   makeStrokes(); 
   makeSpirals();
@@ -771,6 +1028,7 @@ window.addEventListener('resize',()=>{
   makeWaves();
   makeWash(); 
   makeFinalSealing();
+  makePerfumeStrokes();
   drawProgress(p); 
   render(); 
 });
@@ -783,9 +1041,16 @@ function toWhiteMask(image){ const c=document.createElement('canvas'); c.width=i
   try {
     const bg = await loadImage('1.png');
     BG.src = bg.src;
-    if (toggleMarkersBtn){
-      toggleMarkersBtn.addEventListener('click', ()=>{ showMarkers = !showMarkers; toggleMarkersBtn.classList.toggle('active', showMarkers); });
+    
+    // Cargar imagen del perfume
+    try {
+      const perfumeImg = await loadImage('perfume.png');
+      PERFUME.src = perfumeImg.src;
+      console.log('Perfume image loaded successfully');
+    } catch(perfumeErr) {
+      console.warn('Could not load perfume.png:', perfumeErr);
     }
+    
     // Empezar de inmediato con fallback (sin brochas) para evitar pantalla en blanco
     start();
     // Cargar brochas en paralelo y suavemente reconstruir al llegar la primera
@@ -802,6 +1067,10 @@ function toWhiteMask(image){ const c=document.createElement('canvas'); c.width=i
           const p = startedAt? Math.max(0, Math.min(1, (now-startedAt)/DURATION_MS)) : 0;
           // Re-generar elementos con brochas disponibles y dibujar hasta p
           maskCtx.clearRect(0,0,size.w,size.h);
+          // Limpiar todas las máscaras de perfume
+          for (let i = 0; i < 8; i++) {
+            perfumeMaskCtxs[i].clearRect(0,0,size.w,size.h);
+          }
           makeSeeds(12);
           makeStrokes();
           makeSpirals();
@@ -812,6 +1081,7 @@ function toWhiteMask(image){ const c=document.createElement('canvas'); c.width=i
           makeWaves();
           makeWash();
           makeFinalSealing();
+          makePerfumeStrokes();
           drawProgress(p); render();
         }
       }catch(err){ /* ignorar errores de carga individuales */ }
