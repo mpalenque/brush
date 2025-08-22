@@ -44,6 +44,7 @@ let size = { wCSS: 0, hCSS: 0, w: 0, h: 0 };
 let layout = { dx: 0, dy: 0, dw: 0, dh: 0 };
 let perfumeLayouts = [];
 let startedAt = 0, rafId = 0;
+let fpsMonitorRafId = 0; // RAF separado para el monitor FPS
 let seeds = [], strokes = [], sweeps = [], wash = [], spirals = [], radiants = [], connectors = [], droplets = [], waves = [];
 let finalSealing = [];
 let perfumeStrokes = [];
@@ -134,13 +135,13 @@ let fpsMonitor = {
   },
   
   showCompleted() {
-    // Mostrar estado final cuando la animación termine
+    // Mostrar estado final cuando la animación termine pero mantener FPS
     if (this.fpsElement) {
-      this.fpsElement.textContent = 'COMPLETED';
+      this.fpsElement.textContent = `COMPLETO - ${this.fps} FPS`;
       this.fpsElement.style.color = '#00ffff'; // Cyan
     }
     if (this.avgElement) {
-      this.avgElement.textContent = 'Static Image';
+      this.avgElement.textContent = `Avg: ${this.avgFps} - ESTATICO`;
     }
   }
 };
@@ -1087,9 +1088,6 @@ function loop(ts){
     return;
   }
   
-  // Actualizar monitor de FPS
-  fpsMonitor.update(ts);
-  
   if (!startedAt) startedAt=ts;
   const pRaw=(ts-startedAt)/DURATION_MS;
   const p=clamp(pRaw,0,1);
@@ -1111,17 +1109,28 @@ function loop(ts){
     // Render final para asegurar que todo esté visible
     render();
     
-    // Mostrar estado final en el monitor FPS
-    fpsMonitor.showCompleted();
-    
     // Cancelar cualquier frame pendiente
     cancelAnimationFrame(rafId);
     rafId = 0;
   }
 }
 
+// Loop separado para monitor FPS que continúa después de la animación
+function fpsMonitorLoop(ts) {
+  fpsMonitor.update(ts);
+  
+  if (animationFinished) {
+    // Actualizar display con estado completo pero mantener FPS visible
+    fpsMonitor.showCompleted();
+  }
+  
+  // Continuar el monitor FPS indefinidamente
+  fpsMonitorRafId = requestAnimationFrame(fpsMonitorLoop);
+}
+
 function start(){ 
   cancelAnimationFrame(rafId); 
+  cancelAnimationFrame(fpsMonitorRafId);
   
   // Resetear estado de animación
   animationFinished = false;
@@ -1150,7 +1159,10 @@ function start(){
   // render inmediato para que se vea el golpe inicial antes del primer frame
   render();
   startedAt=0; 
-  rafId=requestAnimationFrame(loop); 
+  rafId=requestAnimationFrame(loop);
+  
+  // Iniciar monitor FPS por separado
+  fpsMonitorRafId=requestAnimationFrame(fpsMonitorLoop); 
 }
 
 window.addEventListener('resize',()=>{ 
