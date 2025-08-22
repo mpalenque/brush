@@ -48,6 +48,60 @@ let seeds = [], strokes = [], sweeps = [], wash = [], spirals = [], radiants = [
 let finalSealing = [];
 let perfumeStrokes = [];
 
+// Monitor de FPS
+let fpsMonitor = {
+  lastTime: 0,
+  frameCount: 0,
+  fps: 0,
+  fpsHistory: [],
+  avgFps: 0,
+  fpsElement: null,
+  avgElement: null,
+  
+  init() {
+    this.fpsElement = document.getElementById('fpsValue');
+    this.avgElement = document.getElementById('fpsAvg');
+    this.lastTime = performance.now();
+  },
+  
+  update(currentTime) {
+    this.frameCount++;
+    const deltaTime = currentTime - this.lastTime;
+    
+    if (deltaTime >= 1000) { // Actualizar cada segundo
+      this.fps = Math.round((this.frameCount * 1000) / deltaTime);
+      this.frameCount = 0;
+      this.lastTime = currentTime;
+      
+      // Mantener historial para promedio
+      this.fpsHistory.push(this.fps);
+      if (this.fpsHistory.length > 10) {
+        this.fpsHistory.shift();
+      }
+      
+      // Calcular promedio
+      this.avgFps = Math.round(this.fpsHistory.reduce((a, b) => a + b, 0) / this.fpsHistory.length);
+      
+      // Actualizar display
+      if (this.fpsElement) {
+        this.fpsElement.textContent = `${this.fps} FPS`;
+        // Cambiar color según rendimiento
+        if (this.fps >= 50) {
+          this.fpsElement.style.color = '#00ff00'; // Verde
+        } else if (this.fps >= 30) {
+          this.fpsElement.style.color = '#ffff00'; // Amarillo
+        } else {
+          this.fpsElement.style.color = '#ff0000'; // Rojo
+        }
+      }
+      
+      if (this.avgElement) {
+        this.avgElement.textContent = `Avg: ${this.avgFps}`;
+      }
+    }
+  }
+};
+
 // Utils
 const clamp = (v,a,b)=>Math.max(a,Math.min(b,v));
 const rand = (a,b)=>a+Math.random()*(b-a);
@@ -967,6 +1021,9 @@ function render(){
   ctx.globalCompositeOperation='source-over';
 }
 function loop(ts){
+  // Actualizar monitor de FPS
+  fpsMonitor.update(ts);
+  
   if (!startedAt) startedAt=ts;
   const pRaw=(ts-startedAt)/DURATION_MS;
   const p=clamp(pRaw,0,1);
@@ -1038,6 +1095,9 @@ function loadImage(src){ return new Promise((res,rej)=>{ const im=new Image(); i
 function toWhiteMask(image){ const c=document.createElement('canvas'); c.width=image.naturalWidth; c.height=image.naturalHeight; const g=c.getContext('2d'); g.drawImage(image,0,0); const d=g.getImageData(0,0,c.width,c.height); const a=d.data; for(let i=0;i<a.length;i+=4){ if(a[i+3]>0){a[i]=255;a[i+1]=255;a[i+2]=255;} } g.putImageData(d,0,0); return c; }
 
 (async function init(){
+  // Inicializar monitor de FPS
+  fpsMonitor.init();
+  
   try {
     const bg = await loadImage('1.png');
     BG.src = bg.src;
