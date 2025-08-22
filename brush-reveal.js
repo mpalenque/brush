@@ -47,6 +47,7 @@ let startedAt = 0, rafId = 0;
 let seeds = [], strokes = [], sweeps = [], wash = [], spirals = [], radiants = [], connectors = [], droplets = [], waves = [];
 let finalSealing = [];
 let perfumeStrokes = [];
+let animationFinished = false; // Flag para indicar que la animación terminó
 
 // Pool de canvas temporales para optimización (reutilizar en lugar de crear cada frame)
 const canvasPool = {
@@ -129,6 +130,17 @@ let fpsMonitor = {
       if (this.avgElement) {
         this.avgElement.textContent = `Avg: ${this.avgFps}`;
       }
+    }
+  },
+  
+  showCompleted() {
+    // Mostrar estado final cuando la animación termine
+    if (this.fpsElement) {
+      this.fpsElement.textContent = 'COMPLETED';
+      this.fpsElement.style.color = '#00ffff'; // Cyan
+    }
+    if (this.avgElement) {
+      this.avgElement.textContent = 'Static Image';
     }
   }
 };
@@ -1069,6 +1081,12 @@ function render(){
   }
 }
 function loop(ts){
+  // Si la animación ya terminó, no procesar más frames
+  if (animationFinished) {
+    console.log('Animación terminada - deteniendo loop para optimizar rendimiento');
+    return;
+  }
+  
   // Actualizar monitor de FPS
   fpsMonitor.update(ts);
   
@@ -1082,11 +1100,32 @@ function loop(ts){
   const unfinished = (finalSealing && finalSealing.length && finalSealing._drawn < finalSealing.length)
                    || (wash && wash.length && (wash._drawn||0) < wash.length)
                    || p < 1;
-  if (unfinished) rafId=requestAnimationFrame(loop);
+  
+  if (unfinished) {
+    rafId=requestAnimationFrame(loop);
+  } else {
+    // Animación completada - hacer render final y marcar como terminada
+    animationFinished = true;
+    console.log('Animación completada - realizando render final');
+    
+    // Render final para asegurar que todo esté visible
+    render();
+    
+    // Mostrar estado final en el monitor FPS
+    fpsMonitor.showCompleted();
+    
+    // Cancelar cualquier frame pendiente
+    cancelAnimationFrame(rafId);
+    rafId = 0;
+  }
 }
 
 function start(){ 
   cancelAnimationFrame(rafId); 
+  
+  // Resetear estado de animación
+  animationFinished = false;
+  
   resize(); 
   maskCtx.clearRect(0,0,size.w,size.h); 
   // Limpiar todas las máscaras de perfume
@@ -1115,6 +1154,13 @@ function start(){
 }
 
 window.addEventListener('resize',()=>{ 
+  // Si la animación ya terminó, solo redimensionar y renderizar una vez
+  if (animationFinished) {
+    resize();
+    render();
+    return;
+  }
+  
   const now=performance.now(); 
   const p=startedAt?clamp((now-startedAt)/DURATION_MS,0,1):0; 
   resize(); 
