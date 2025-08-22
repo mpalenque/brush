@@ -48,6 +48,37 @@ let seeds = [], strokes = [], sweeps = [], wash = [], spirals = [], radiants = [
 let finalSealing = [];
 let perfumeStrokes = [];
 
+// Pool de canvas temporales para optimización (reutilizar en lugar de crear cada frame)
+const canvasPool = {
+  tempCanvases: [],
+  tempContexts: [],
+  
+  init() {
+    // Crear 8 canvas reutilizables para los perfumes
+    for (let i = 0; i < 8; i++) {
+      const canvas = document.createElement('canvas');
+      const ctx = canvas.getContext('2d');
+      this.tempCanvases.push(canvas);
+      this.tempContexts.push(ctx);
+    }
+  },
+  
+  resizeAll(width, height) {
+    for (let i = 0; i < this.tempCanvases.length; i++) {
+      this.tempCanvases[i].width = width;
+      this.tempCanvases[i].height = height;
+    }
+  },
+  
+  getCanvas(index) {
+    const canvas = this.tempCanvases[index];
+    const ctx = this.tempContexts[index];
+    // Limpiar canvas para reutilización
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    return { canvas, ctx };
+  }
+};
+
 // Monitor de FPS
 let fpsMonitor = {
   lastTime: 0,
@@ -150,6 +181,9 @@ function resize(){
     perfumeMaskCanvases[i].height = Math.max(1, Math.floor(size.h*MASK_SCALE));
     perfumeMaskCtxs[i].setTransform(MASK_SCALE,0,0,MASK_SCALE,0,0);
   }
+  
+  // Redimensionar canvas temporales del pool
+  canvasPool.resizeAll(size.w, size.h);
   
   // Dibujo en coordenadas full-res, pero el contexto de máscara se escala
   maskCtx.setTransform(MASK_SCALE,0,0,MASK_SCALE,0,0);
@@ -531,12 +565,23 @@ function kickstartMask(){
 
 function stamp(brush,x,y,scale,alpha,rot){
   const w = brush.width*scale, h=brush.height*scale;
-  maskCtx.save();
-  maskCtx.translate(x,y);
-  if(rot) maskCtx.rotate(rot);
-  maskCtx.globalAlpha=alpha;
-  maskCtx.drawImage(brush, -w/2, -h/2, w, h);
-  maskCtx.restore();
+  const halfW = w * 0.5, halfH = h * 0.5;
+  
+  if (rot) {
+    // Solo usar save/restore si hay rotación
+    maskCtx.save();
+    maskCtx.translate(x,y);
+    maskCtx.rotate(rot);
+    maskCtx.globalAlpha=alpha;
+    maskCtx.drawImage(brush, -halfW, -halfH, w, h);
+    maskCtx.restore();
+  } else {
+    // Optimización para caso sin rotación (más común)
+    const prevAlpha = maskCtx.globalAlpha;
+    maskCtx.globalAlpha = alpha;
+    maskCtx.drawImage(brush, x - halfW, y - halfH, w, h);
+    maskCtx.globalAlpha = prevAlpha;
+  }
 }
 
 // Marcadores rojos removidos - ya no se usan
@@ -995,15 +1040,15 @@ function render(){
   
   // === DIBUJAR 8 PERFUMES CON BLEND MODE MULTIPLY ===
   if (PERFUME.naturalWidth && perfumeLayouts.length) {
+    // Cambiar a multiply una sola vez antes del loop
+    ctx.globalCompositeOperation = 'multiply';
+    
     for (let i = 0; i < 8; i++) {
       const layout = perfumeLayouts[i];
       if (!layout.dw || !layout.dh) continue;
       
-      // Crear un canvas temporal para cada perfume con su máscara
-      const tempCanvas = document.createElement('canvas');
-      tempCanvas.width = size.w;
-      tempCanvas.height = size.h;
-      const tempCtx = tempCanvas.getContext('2d');
+      // Usar canvas temporal del pool (reutilizable, no crear nuevo)
+      const { canvas: tempCanvas, ctx: tempCtx } = canvasPool.getCanvas(i);
       
       // Dibujar el perfume en el canvas temporal
       tempCtx.drawImage(PERFUME, layout.dx, layout.dy, layout.dw, layout.dh);
@@ -1012,13 +1057,16 @@ function render(){
       tempCtx.globalCompositeOperation = 'destination-in';
       tempCtx.drawImage(perfumeMaskCanvases[i], 0, 0, perfumeMaskCanvases[i].width, perfumeMaskCanvases[i].height, 0, 0, size.w, size.h);
       
-      // Dibujar el perfume enmascarado en el canvas principal con blend mode multiply
-      ctx.globalCompositeOperation = 'multiply';
+      // Dibujar el perfume enmascarado en el canvas principal (ya en modo multiply)
       ctx.drawImage(tempCanvas, 0, 0);
+      
+      // Restaurar composite operation del canvas temporal para próximo uso
+      tempCtx.globalCompositeOperation = 'source-over';
     }
+    
+    // Restaurar composite operation una sola vez después del loop
+    ctx.globalCompositeOperation = 'source-over';
   }
-  
-  ctx.globalCompositeOperation='source-over';
 }
 function loop(ts){
   // Actualizar monitor de FPS
@@ -1097,6 +1145,9 @@ function toWhiteMask(image){ const c=document.createElement('canvas'); c.width=i
 (async function init(){
   // Inicializar monitor de FPS
   fpsMonitor.init();
+  
+  // Inicializar pool de canvas temporales
+  canvasPool.init();
   
   try {
     const bg = await loadImage('1.png');
