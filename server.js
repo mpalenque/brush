@@ -238,9 +238,9 @@ async function generatePatternImage() {
     const canvas = createCanvas(width, height);
     const ctx = canvas.getContext('2d');
 
-    // Cargar la imagen del patrón
+    // Cargar la imagen principal del patrón (usar la misma que /screen: sinperfume.png)
     try {
-        const patternImage = await loadImage(path.join(__dirname, 'patterns', 'pattern.jpg'));
+        const patternImage = await loadImage(path.join(__dirname, 'sinperfume.png'));
         
         // Configuración del patrón (usando la imagen pattern.jpg)
         const config = globalState.general;
@@ -397,8 +397,53 @@ async function generatePatternImage() {
             console.log('Wallpaper no está activo - guardando solo color de fondo');
         }
         
+        // Dibujar las 8 imágenes de perfume igual que en screen.html si existe perfume.png
+        try {
+            const perfumePath = path.join(__dirname, 'perfume.png');
+            if (fs.existsSync(perfumePath)) {
+                const perfumeImg = await loadImage(perfumePath);
+
+                const spacingFactorH = parseFloat(config.perfumeSpacingH || 1.0);
+                const spacingFactorV = parseFloat(config.perfumeSpacingV || 1.0);
+                const sizeFactor = parseFloat(config.perfumeSizeFactor || 1.0);
+
+                const baseMaxSize = Math.min(width, height) * 0.17;
+                const maxSize = baseMaxSize * sizeFactor;
+                const sPerf = Math.min(maxSize / perfumeImg.width, maxSize / perfumeImg.height);
+                const pdw = Math.ceil(perfumeImg.width * sPerf);
+                const pdh = Math.ceil(perfumeImg.height * sPerf);
+
+                const centerX = width / 2;
+                const centerY = height / 2;
+                const spacingH = Math.min(width, height) * 0.25 * spacingFactorH;
+                const spacingV = Math.min(width, height) * 0.2 * spacingFactorV;
+
+                const positions = [
+                    { x: centerX - spacingH * 1.2, y: centerY - spacingV * 2 },
+                    { x: centerX + spacingH * 1.2, y: centerY - spacingV * 2 },
+                    { x: centerX, y: centerY - spacingV },
+                    { x: centerX - spacingH * 1.4, y: centerY },
+                    { x: centerX + spacingH * 1.4, y: centerY },
+                    { x: centerX, y: centerY + spacingV },
+                    { x: centerX - spacingH * 1.2, y: centerY + spacingV * 2 },
+                    { x: centerX + spacingH * 1.2, y: centerY + spacingV * 2 }
+                ];
+
+                for (let p = 0; p < positions.length; p++) {
+                    const pos = positions[p];
+                    const dx = pos.x - pdw / 2;
+                    const dy = pos.y - pdh / 2;
+                    ctx.save();
+                    ctx.drawImage(perfumeImg, dx, dy, pdw, pdh);
+                    ctx.restore();
+                }
+            }
+        } catch (e) {
+            console.warn('Error dibujando perfume positions', e);
+        }
+
         ctx.restore();
-        
+
         // Guardar la imagen
         const buffer = canvas.toBuffer('image/jpeg', { quality: 0.9 });
         const outputPath = path.join(__dirname, 'patterns', 'pattern.jpg');
