@@ -21,16 +21,14 @@ app.use(express.json());
 let globalState = {
     // Configuración general (aplicada a todas las pantallas)
     general: {
-        patternType: 'brick',
+    patternType: 'organic-complex',
         repetitionX: 10,
         repetitionY: 8,
         patternSize: 245,
-        opacity: 100,
         rotation: 0,
         zoom: 1.2,
         blendMode: 'multiply',
-        backgroundColor: '#ffffff',
-        animationSpeed: 800
+    backgroundColor: '#ffffff'
     },
     // Configuración específica de cada pantalla (solo offset horizontal)
     screens: {
@@ -63,7 +61,7 @@ let globalState = {
     },
     // Estado del wallpaper
     wallpaper: {
-        isActive: false // Nuevo estado para controlar si el wallpaper está visible
+        isActive: true // Activado por defecto
     }
 };
 

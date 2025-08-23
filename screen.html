@@ -51,7 +51,7 @@
             position: fixed;
             top: 10px;
             right: 10px;
-            background: rgba(220, 53, 69, 0.9);
+            background: #17a2b8;
             color: white;
             padding: 8px 12px;
             border-radius: 5px;
@@ -59,24 +59,17 @@
             z-index: 100;
             display: none;
         }
-
-        .connection-status.connected {
-            background: rgba(40, 167, 69, 0.9);
-        }
-
-        .hidden {
-            display: none;
-        }
     </style>
 </head>
 <body>
     <div class="wallpaper-container" id="wallpaperContainer">
         <canvas class="pattern-canvas" id="patternCanvas"></canvas>
-    </div>
-
-    <div class="screen-info" id="screenInfo">
-        Screen ID: <span id="screenId">-</span> | 
-        Offset: <span id="currentOffset">0px</span>
+        
+        <div class="screen-info" id="screenInfo">
+            <div><strong>Screen ID:</strong> <span id="screenId">0</span></div>
+            <div><strong>Offset X:</strong> <span id="currentOffset">0px</span></div>
+            <div><em>Presiona 'i' para ocultar/mostrar esta información</em></div>
+        </div>
     </div>
 
     <div class="connection-status" id="connectionStatus">
@@ -88,7 +81,6 @@
         const socket = io();
         const patternCanvas = document.getElementById('patternCanvas');
         const ctx = patternCanvas.getContext('2d');
-        const wallpaperContainer = document.getElementById('wallpaperContainer');
 
         // Obtener Screen ID de la URL
         const pathParts = window.location.pathname.split('/');
@@ -106,21 +98,14 @@
         let wallpaperState = {
             general: {},
             screen: {},
-            animation: {
-                isRunning: false,
-                startTime: null
-            },
-            wallpaper: {
-                isActive: false
-            }
+            wallpaper: { isActive: false }
         };
 
-        // Estado de animación
-        let isAnimating = false;
-        let animationFrameId = null;
-        let imageInstances = [];
-        let img = new Image();
-        let imgLoaded = false;
+    let img = new Image();
+    let imgLoaded = false;
+    // Perfume image (extra decorative layer) - load independently
+    let perfumeImg = new Image();
+    let perfumeLoaded = false;
 
         // Mostrar Screen ID
         elements.screenId.textContent = screenId;
@@ -134,9 +119,10 @@
             patternCanvas.style.height = '100%';
         }
 
-        // Preparar instancias de imágenes con offset específico de pantalla
-        function prepareImageInstances() {
-            imageInstances = [];
+        // Generar patrón estático (sin animación)
+        function generateStaticPattern() {
+            if (!imgLoaded) return;
+            
             const config = wallpaperState.general;
             const screenConfig = wallpaperState.screen;
             
@@ -149,7 +135,6 @@
             
             // Offset específico de esta pantalla
             const offsetXVal = (screenConfig.offsetX || 0) * dpr;
-            const offsetYVal = 0;
             const rotationVal = parseInt(config.rotation || 0);
 
             const spacingX = width / repX;
@@ -161,399 +146,273 @@
             if (imgAspect > 1) baseHeight = baseWidth / imgAspect;
             else baseWidth = baseHeight * imgAspect;
 
-            let counter = 0;
-
-            for (let j = 0; j < repY; j++) {
-                for (let i = 0; i < repX; i++) {
-                    let x, y, instRotation = rotationVal, scaleMod = 1;
-                    const rowOffset = (j % 2) * (spacingX / 2);
-
-                    // Lógica de patrones
-                    switch (config.patternType) {
-                        case 'brick':
-                            x = i * spacingX + rowOffset;
-                            y = j * spacingY;
-                            break;
-                        case 'metro-tile':
-                            x = i * spacingX + (j % 3) * (spacingX / 3);
-                            y = j * spacingY;
-                            break;
-                        case 'stepped':
-                            x = i * spacingX + (j * spacingX * 0.3);
-                            y = j * spacingY;
-                            break;
-                        case 'hexagon':
-                            x = i * spacingX + rowOffset;
-                            y = j * spacingY * 0.866;
-                            break;
-                        case 'mirror-h':
-                            if (i % 2 !== 0) instRotation += 180;
-                            x = i * spacingX;
-                            y = j * spacingY;
-                            break;
-                        case 'mirror-v':
-                            if (j % 2 !== 0) instRotation += 180;
-                            x = i * spacingX;
-                            y = j * spacingY;
-                            break;
-                        case 'mirror-both':
-                            if (i % 2 !== 0) instRotation += 180;
-                            if (j % 2 !== 0) instRotation += 180;
-                            x = i * spacingX;
-                            y = j * spacingY;
-                            break;
-                        case 'rotate-90':
-                            instRotation += (counter % 4) * 90;
-                            x = i * spacingX;
-                            y = j * spacingY;
-                            break;
-                        case 'rotate-180':
-                            if (counter % 2 !== 0) instRotation += 180;
-                            x = i * spacingX;
-                            y = j * spacingY;
-                            break;
-                        case 'rotate-mixed':
-                            instRotation += [0, 90, 270, 180][counter % 4];
-                            x = i * spacingX;
-                            y = j * spacingY;
-                            break;
-                        case 'scale-varied':
-                            scaleMod = [1, 0.6, 1.4, 0.8][counter % 4];
-                            x = i * spacingX;
-                            y = j * spacingY;
-                            break;
-                        case 'alternating-scale':
-                            const scaleDiff = parseFloat(config.scaleDifference || 1.5);
-                            scaleMod = (counter % 2 === 0) ? 1 : scaleDiff;
-                            x = i * spacingX;
-                            y = j * spacingY;
-                            break;
-                        case 'organic-complex':
-                            // Patrón orgánico complejo con posiciones y rotaciones variadas
-                            const patterns = [
-                                { offsetX: 0, offsetY: 0, rotation: 0, scale: 1 },
-                                { offsetX: spacingX * 0.3, offsetY: spacingY * 0.2, rotation: 180, scale: 0.8 },
-                                { offsetX: -spacingX * 0.1, offsetY: spacingY * 0.4, rotation: 90, scale: 1.2 },
-                                { offsetX: spacingX * 0.2, offsetY: -spacingY * 0.1, rotation: 270, scale: 0.9 },
-                                { offsetX: -spacingX * 0.2, offsetY: -spacingY * 0.3, rotation: 45, scale: 1.1 },
-                                { offsetX: spacingX * 0.4, offsetY: spacingY * 0.1, rotation: 135, scale: 0.7 }
-                            ];
-                            const patternIndex = counter % patterns.length;
-                            const pattern = patterns[patternIndex];
-                            
-                            // Agregar variación adicional basada en la posición de la fila/columna
-                            const rowVariation = (j % 3) * spacingX * 0.15;
-                            const colVariation = (i % 2) * spacingY * 0.1;
-                            
-                            x = i * spacingX + pattern.offsetX + rowVariation;
-                            y = j * spacingY + pattern.offsetY + colVariation;
-                            instRotation += pattern.rotation;
-                            scaleMod = pattern.scale;
-                            break;
-                        default:
-                            x = i * spacingX;
-                            y = j * spacingY;
-                    }
-                    
-                    imageInstances.push({
-                        x: x + offsetXVal,
-                        y: y + offsetYVal,
-                        drawWidth: baseWidth * scaleMod,
-                        drawHeight: baseHeight * scaleMod,
-                        rotation: instRotation,
-                        finalScale: 1,
-                        currentScale: 0,
-                        startTime: 0,
-                        screenId: screenId
-                    });
-                    counter++;
-                }
-            }
-        }
-
-        // Función de dibujo
-        function draw() {
-            const config = wallpaperState.general;
-            const dpr = window.devicePixelRatio || 1;
-            const width = window.innerWidth;
-            const height = window.innerHeight;
-            
+            // Limpiar canvas
             ctx.save();
-            ctx.clearRect(0, 0, width * dpr, height * dpr);
+            ctx.clearRect(0, 0, width, height);
             
             // Color de fondo
             ctx.fillStyle = config.backgroundColor || '#ffffff';
-            ctx.fillRect(0, 0, width * dpr, height * dpr);
+            ctx.fillRect(0, 0, width, height);
 
             // Solo dibujar si el wallpaper está activo
             if (wallpaperState.wallpaper?.isActive) {
                 // Efectos globales
-                ctx.globalAlpha = parseFloat(config.opacity || 100) / 100;
                 ctx.globalCompositeOperation = config.blendMode || 'multiply';
 
                 // Transformaciones globales
-                ctx.translate((width * dpr) / 2, (height * dpr) / 2);
+                ctx.translate(width / 2, height / 2);
                 const zoomVal = parseFloat(config.zoom || 1.2);
                 ctx.scale(zoomVal, zoomVal);
                 if (config.patternType === 'diamond') {
                     ctx.rotate(Math.PI / 4);
                 }
-                ctx.translate(-(width * dpr) / 2, -(height * dpr) / 2);
+                ctx.translate(-width / 2, -height / 2);
 
-                // Dibujar instancias
-                imageInstances.forEach(instance => {
-                    if (instance.currentScale > 0) {
+                let counter = 0;
+
+                for (let j = 0; j < repY; j++) {
+                    for (let i = 0; i < repX; i++) {
+                        let x, y, instRotation = rotationVal, scaleMod = 1;
+
+                        // Calcular posición según el tipo de patrón
+                        switch (config.patternType) {
+                            case 'grid':
+                                x = i * spacingX;
+                                y = j * spacingY;
+                                break;
+                            case 'brick':
+                                x = i * spacingX + (j % 2 === 1 ? spacingX * 0.5 : 0);
+                                y = j * spacingY;
+                                break;
+                            case 'hexagon':
+                                x = i * spacingX + (j % 2 === 1 ? spacingX * 0.5 : 0);
+                                y = j * spacingY * 0.866;
+                                break;
+                            case 'diamond':
+                                x = i * spacingX + (j % 2 === 1 ? spacingX * 0.5 : 0);
+                                y = j * spacingY * 0.8;
+                                break;
+                            case 'mirror-horizontal':
+                                if (i % 2 !== 0) instRotation += 180;
+                                x = i * spacingX;
+                                y = j * spacingY;
+                                break;
+                            case 'mirror-vertical':
+                                if (j % 2 !== 0) instRotation += 180;
+                                x = i * spacingX;
+                                y = j * spacingY;
+                                break;
+                            case 'mirror-both':
+                                if (i % 2 !== 0) instRotation += 180;
+                                if (j % 2 !== 0) instRotation += 180;
+                                x = i * spacingX;
+                                y = j * spacingY;
+                                break;
+                            case 'rotate-90':
+                                instRotation += (counter % 4) * 90;
+                                x = i * spacingX;
+                                y = j * spacingY;
+                                break;
+                            case 'rotate-180':
+                                if (counter % 2 !== 0) instRotation += 180;
+                                x = i * spacingX;
+                                y = j * spacingY;
+                                break;
+                            case 'rotate-mixed':
+                                instRotation += [0, 90, 270, 180][counter % 4];
+                                x = i * spacingX;
+                                y = j * spacingY;
+                                break;
+                            case 'scale-varied':
+                                scaleMod = [1, 0.6, 1.4, 0.8][counter % 4];
+                                x = i * spacingX;
+                                y = j * spacingY;
+                                break;
+                            case 'alternating-scale':
+                                const scaleDiff = parseFloat(config.scaleDifference || 1.5);
+                                scaleMod = (counter % 2 === 0) ? 1 : scaleDiff;
+                                x = i * spacingX;
+                                y = j * spacingY;
+                                break;
+                            case 'organic-complex':
+                                // Patrón orgánico complejo con posiciones y rotaciones variadas
+                                const patterns = [
+                                    { offsetX: 0, offsetY: 0, rotation: 0, scale: 1 },
+                                    { offsetX: spacingX * 0.3, offsetY: spacingY * 0.2, rotation: 180, scale: 0.8 },
+                                    { offsetX: -spacingX * 0.1, offsetY: spacingY * 0.4, rotation: 90, scale: 1.2 },
+                                    { offsetX: spacingX * 0.2, offsetY: -spacingY * 0.1, rotation: 270, scale: 0.9 },
+                                    { offsetX: -spacingX * 0.2, offsetY: -spacingY * 0.3, rotation: 45, scale: 1.1 },
+                                    { offsetX: spacingX * 0.4, offsetY: spacingY * 0.1, rotation: 135, scale: 0.7 }
+                                ];
+                                const patternIndex = counter % patterns.length;
+                                const pattern = patterns[patternIndex];
+                                
+                                // Agregar variación adicional basada en la posición de la fila/columna
+                                const rowVariation = (j % 3) * spacingX * 0.15;
+                                const colVariation = (i % 2) * spacingY * 0.1;
+                                
+                                x = i * spacingX + pattern.offsetX + rowVariation;
+                                y = j * spacingY + pattern.offsetY + colVariation;
+                                instRotation += pattern.rotation;
+                                scaleMod = pattern.scale;
+                                break;
+                            default:
+                                x = i * spacingX;
+                                y = j * spacingY;
+                        }
+                        
+                        // Aplicar offset de pantalla
+                        x += offsetXVal;
+                        
+                        // Dibujar imagen
                         ctx.save();
-                        ctx.translate(instance.x + instance.drawWidth / 2, instance.y + instance.drawHeight / 2);
-                        ctx.rotate((instance.rotation * Math.PI) / 180);
-                        ctx.scale(instance.currentScale, instance.currentScale);
-                        ctx.drawImage(
-                            img,
-                            -instance.drawWidth / 2,
-                            -instance.drawHeight / 2,
-                            instance.drawWidth,
-                            instance.drawHeight
-                        );
+                        ctx.translate(x + baseWidth / 2, y + baseHeight / 2);
+                        ctx.rotate((instRotation * Math.PI) / 180);
+                        ctx.scale(scaleMod, scaleMod);
+                        ctx.drawImage(img, -baseWidth / 2, -baseHeight / 2, baseWidth, baseHeight);
                         ctx.restore();
+
+                        counter++;
                     }
-                });
+                }
+
+                // Dibujar las 8 imágenes de perfume usando el mismo layout que en brush-reveal.js
+        if (perfumeLoaded) {
+                    try {
+            // allow control over spacing/size via general config
+            const spacingFactorH = parseFloat(config.perfumeSpacingH || 1.0);
+            const spacingFactorV = parseFloat(config.perfumeSpacingV || 1.0);
+            const sizeFactor = parseFloat(config.perfumeSizeFactor || 1.0);
+
+            const baseMaxSize = Math.min(width, height) * 0.17;
+            const maxSize = baseMaxSize * sizeFactor;
+            const sPerf = Math.min(maxSize / perfumeImg.width, maxSize / perfumeImg.height);
+            const pdw = Math.ceil(perfumeImg.width * sPerf);
+            const pdh = Math.ceil(perfumeImg.height * sPerf);
+
+            const centerX = width / 2;
+            const centerY = height / 2;
+            const spacingH = Math.min(width, height) * 0.25 * spacingFactorH;
+            const spacingV = Math.min(width, height) * 0.2 * spacingFactorV;
+
+                        const positions = [
+                            { x: centerX - spacingH * 1.2, y: centerY - spacingV * 2 },
+                            { x: centerX + spacingH * 1.2, y: centerY - spacingV * 2 },
+                            { x: centerX, y: centerY - spacingV },
+                            { x: centerX - spacingH * 1.4, y: centerY },
+                            { x: centerX + spacingH * 1.4, y: centerY },
+                            { x: centerX, y: centerY + spacingV },
+                            { x: centerX - spacingH * 1.2, y: centerY + spacingV * 2 },
+                            { x: centerX + spacingH * 1.2, y: centerY + spacingV * 2 }
+                        ];
+
+                        for (let p = 0; p < positions.length; p++) {
+                            const pos = positions[p];
+                            const dx = pos.x - pdw / 2;
+                            const dy = pos.y - pdh / 2;
+                            ctx.save();
+                            // mantener transformaciones globales (zoom/rotate) aplicadas anteriormente
+                            ctx.drawImage(perfumeImg, dx, dy, pdw, pdh);
+                            ctx.restore();
+                        }
+                    } catch (e) {
+                        console.warn('Error dibujando perfume positions', e);
+                    }
+                }
             }
             
             ctx.restore();
         }
 
-        // Función de animación
-        function animate(timestamp) {
-            if (!isAnimating) return;
-
-            const elapsed = timestamp - wallpaperState.animation.startTime;
-            const duration = 8000; // 8 segundos de animación
-            let allComplete = true;
-
-            imageInstances.forEach((instance, index) => {
-                const delay = instance.startTime;
-                const instanceElapsed = elapsed - delay;
-
-                if (instanceElapsed > 0) {
-                    const progress = Math.min(instanceElapsed / 2000, 1); // 2 segundos por instancia
-                    const easeOut = 1 - Math.pow(1 - progress, 3);
-                    instance.currentScale = easeOut * instance.finalScale;
-                } else {
-                    allComplete = false;
-                }
-
-                if (instance.currentScale < instance.finalScale) {
-                    allComplete = false;
-                }
-            });
-
-            draw();
-
-            if (!allComplete && elapsed < duration) {
-                animationFrameId = requestAnimationFrame(animate);
-            } else {
-                isAnimating = false;
-                wallpaperState.animation.isRunning = false;
-            }
-        }
-
         // Actualizar display de configuración
         function updateConfigDisplay() {
-            elements.currentOffset.textContent = (wallpaperState.screen.offsetX || 0) + 'px';
-            wallpaperContainer.style.backgroundColor = wallpaperState.general.backgroundColor || '#ffffff';
+            const config = wallpaperState.general;
+            const screenConfig = wallpaperState.screen;
+            
+            elements.currentOffset.textContent = `${screenConfig.offsetX || 0}px`;
+            
+            // Actualizar título del documento
+            document.title = `Screen ${screenId} - ${config.patternType || 'organic-complex'} - ${wallpaperState.wallpaper?.isActive ? 'ON' : 'OFF'}`;
         }
 
-        // WebSocket eventos
+        // Conectar al servidor
         socket.on('connect', () => {
             elements.connectionStatus.textContent = '✅ Conectado';
-            elements.connectionStatus.className = 'connection-status connected';
+            elements.connectionStatus.style.background = '#28a745';
             socket.emit('registerScreen', { screenId: screenId, type: 'screen' });
         });
 
         socket.on('disconnect', () => {
             elements.connectionStatus.textContent = '❌ Desconectado';
-            elements.connectionStatus.className = 'connection-status';
+            elements.connectionStatus.style.background = '#dc3545';
         });
 
         socket.on('initialState', (state) => {
-            wallpaperState = state;
+            wallpaperState = { ...wallpaperState, ...state };
             updateConfigDisplay();
-            if (imgLoaded) {
-                if (wallpaperState.wallpaper?.isActive) {
-                    prepareImageInstances();
-                    imageInstances.forEach(inst => inst.currentScale = inst.finalScale);
-                    draw();
-                } else {
-                    // Solo mostrar color de fondo
-                    const config = wallpaperState.general;
-                    const dpr = window.devicePixelRatio || 1;
-                    ctx.save();
-                    ctx.clearRect(0, 0, window.innerWidth * dpr, window.innerHeight * dpr);
-                    ctx.fillStyle = config.backgroundColor || '#ffffff';
-                    ctx.fillRect(0, 0, window.innerWidth * dpr, window.innerHeight * dpr);
-                    ctx.restore();
-                }
-            }
+            generateStaticPattern();
+        });
+
+        socket.on('wallpaperToggle', (data) => {
+            wallpaperState.wallpaper = data;
+            updateConfigDisplay();
+            generateStaticPattern();
         });
 
         socket.on('generalConfigUpdate', (config) => {
             wallpaperState.general = { ...wallpaperState.general, ...config };
             updateConfigDisplay();
-            if (imgLoaded && !isAnimating) {
-                if (wallpaperState.wallpaper?.isActive) {
-                    prepareImageInstances();
-                    imageInstances.forEach(inst => inst.currentScale = inst.finalScale);
-                    draw();
-                } else {
-                    // Solo actualizar color de fondo si está apagado
-                    const dpr = window.devicePixelRatio || 1;
-                    ctx.save();
-                    ctx.clearRect(0, 0, window.innerWidth * dpr, window.innerHeight * dpr);
-                    ctx.fillStyle = config.backgroundColor || wallpaperState.general.backgroundColor || '#ffffff';
-                    ctx.fillRect(0, 0, window.innerWidth * dpr, window.innerHeight * dpr);
-                    ctx.restore();
-                }
-            }
+            generateStaticPattern();
         });
 
         socket.on('screenConfigUpdate', (data) => {
-            if (data.screenId == screenId) {
+            if (data.screenId === screenId) {
                 wallpaperState.screen = { ...wallpaperState.screen, ...data.config };
                 updateConfigDisplay();
-                if (imgLoaded && !isAnimating && wallpaperState.wallpaper?.isActive) {
-                    prepareImageInstances();
-                    imageInstances.forEach(inst => inst.currentScale = inst.finalScale);
-                    draw();
-                }
-            }
-        });
-
-        socket.on('wallpaperToggle', (data) => {
-            wallpaperState.wallpaper.isActive = data.isActive;
-            
-            if (data.isActive) {
-                // Encender wallpaper con animación simple
-                wallpaperState.animation.isRunning = true;
-                wallpaperState.animation.startTime = data.startTime;
-                
-                const delayForThisScreen = data.delayPattern ? data.delayPattern[screenId] || 0 : 0;
-                
-                if (imgLoaded) {
-                    setTimeout(() => {
-                        isAnimating = true;
-                        prepareImageInstances();
-                        
-                        // Configurar tiempos de inicio para animación orgánica
-                        const totalScreens = 9;
-                        const screenPosition = screenId - 1;
-                        const virtualStartX = window.innerWidth / 2;
-                        const virtualStartY = window.innerHeight * 1.1;
-
-                        imageInstances.sort((a, b) => {
-                            const screenFactor = Math.abs(screenPosition - 4) * 100;
-                            const distA = Math.hypot(a.x - virtualStartX, a.y - virtualStartY) + screenFactor;
-                            const distB = Math.hypot(b.x - virtualStartX, b.y - virtualStartY) + screenFactor;
-                            return (distA + Math.random() * (window.innerWidth/10)) - (distB + Math.random() * (window.innerWidth/10));
-                        });
-
-                        imageInstances.forEach((inst, index) => {
-                            inst.startTime = index * 25; // 25ms entre cada instancia
-                            inst.currentScale = 0;
-                        });
-
-                        wallpaperState.animation.startTime = performance.now();
-                        animationFrameId = requestAnimationFrame(animate);
-                    }, delayForThisScreen);
-                }
-            } else {
-                // Apagar wallpaper inmediatamente
-                wallpaperState.animation.isRunning = false;
-                isAnimating = false;
-                if (animationFrameId) {
-                    cancelAnimationFrame(animationFrameId);
-                    animationFrameId = null;
-                }
-                
-                // Mostrar solo color de fondo
-                const config = wallpaperState.general;
-                const dpr = window.devicePixelRatio || 1;
-                ctx.save();
-                ctx.clearRect(0, 0, window.innerWidth * dpr, window.innerHeight * dpr);
-                ctx.fillStyle = config.backgroundColor || '#ffffff';
-                ctx.fillRect(0, 0, window.innerWidth * dpr, window.innerHeight * dpr);
-                ctx.restore();
-            }
-        });
-
-        socket.on('animationStop', () => {
-            wallpaperState.animation.isRunning = false;
-            isAnimating = false;
-            if (animationFrameId) {
-                cancelAnimationFrame(animationFrameId);
-                animationFrameId = null;
-            }
-            if (imgLoaded) {
-                imageInstances.forEach(inst => inst.currentScale = inst.finalScale);
-                draw();
+                generateStaticPattern();
             }
         });
 
         // Redimensionar canvas cuando cambie el tamaño de ventana
         window.addEventListener('resize', () => {
             setupCanvas();
-            if (imgLoaded && !isAnimating) {
-                prepareImageInstances();
-                imageInstances.forEach(inst => inst.currentScale = inst.finalScale);
-                draw();
-            }
+            generateStaticPattern();
         });
 
         // Toggle info con tecla 'i'
         document.addEventListener('keydown', (e) => {
             if (e.key === 'i' || e.key === 'I') {
-                elements.screenInfo.classList.toggle('hidden');
-                elements.connectionStatus.classList.toggle('hidden');
+                elements.screenInfo.style.display = 
+                    elements.screenInfo.style.display === 'none' ? 'block' : 'none';
+                elements.connectionStatus.style.display = 
+                    elements.connectionStatus.style.display === 'none' ? 'block' : 'none';
             }
         });
 
-        // Inicialización
+        // Cargar imagen y inicializar
         img.onload = () => {
             imgLoaded = true;
             setupCanvas();
             updateConfigDisplay();
-            if (wallpaperState.wallpaper?.isActive) {
-                prepareImageInstances();
-                imageInstances.forEach(inst => inst.currentScale = inst.finalScale);
-                draw();
-            } else {
-                // Mostrar solo color de fondo si está apagado
-                const config = wallpaperState.general;
-                const dpr = window.devicePixelRatio || 1;
-                ctx.save();
-                ctx.clearRect(0, 0, window.innerWidth * dpr, window.innerHeight * dpr);
-                ctx.fillStyle = config.backgroundColor || '#ffffff';
-                ctx.fillRect(0, 0, window.innerWidth * dpr, window.innerHeight * dpr);
-                ctx.restore();
-            }
+            generateStaticPattern();
         };
 
         img.onerror = () => {
-            console.error("No se pudo cargar sinperfume.png");
-            elements.connectionStatus.textContent = '❌ Error: sinperfume.png';
-            elements.connectionStatus.className = 'connection-status';
+            console.error('Error loading image');
+            elements.connectionStatus.textContent = '❌ Error cargando imagen';
+            elements.connectionStatus.style.background = '#dc3545';
         };
 
-        img.src = '/sinperfume.png';
+    // Cargar imagen sin perfume para el patrón
+    img.src = '/sinperfume.png';
 
-        // Validar Screen ID
-        if (screenId < 1 || screenId > 9 || isNaN(screenId)) {
-            document.body.innerHTML = `
-                <div style="display: flex; justify-content: center; align-items: center; height: 100vh; 
-                            font-family: Arial; font-size: 24px; color: #dc3545;">
-                    ❌ Screen ID inválido. Debe ser un número entre 1 y 9.
-                </div>
-            `;
-        }
+    // Cargar imagen perfume (se dibuja además del patrón)
+    perfumeImg.onload = () => { perfumeLoaded = true; /* redraw if already initialized */ if (imgLoaded) generateStaticPattern(); };
+    perfumeImg.onerror = () => { console.warn('Error loading perfume image'); };
+    perfumeImg.src = '/perfume.png';
+
+        // Inicialización
+        setupCanvas();
     </script>
 </body>
 </html>

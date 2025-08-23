@@ -217,13 +217,10 @@
                     <label for="patternType">Tipo de Patrón:</label>
                     <select id="patternType">
                         <option value="grid">Cuadrícula Simple</option>
-                        <option value="brick" selected>Ladrillo (Offset)</option>
-                        <option value="metro-tile">Azulejo de Metro</option>
+                        <option value="brick">Ladrillo (Offset)</option>
                         <option value="diamond">Diamante Rotado</option>
-                        <option value="stepped">Patrón Escalonado</option>
-                        <option value="checkerboard">Damero (Tablero)</option>
-                        <option value="mirror-h">Espejo Horizontal</option>
-                        <option value="mirror-v">Espejo Vertical</option>
+                        <option value="mirror-horizontal">Espejo Horizontal</option>
+                        <option value="mirror-vertical">Espejo Vertical</option>
                         <option value="mirror-both">Espejo Cuádruple</option>
                         <option value="rotate-90">Rotación 90°</option>
                         <option value="rotate-180">Rotación 180°</option>
@@ -231,7 +228,7 @@
                         <option value="scale-varied">Escalado Variado</option>
                         <option value="alternating-scale">Escala Alternada</option>
                         <option value="hexagon">Hexagonal</option>
-                        <option value="organic-complex">Orgánico Complejo</option>
+                        <option value="organic-complex" selected>Orgánico Complejo</option>
                     </select>
                 </div>
 
@@ -250,10 +247,7 @@
                     <input type="range" id="patternSize" min="20" max="300" value="245" step="5">
                 </div>
 
-                <div class="control-group">
-                    <label for="opacity">Opacidad: <span class="range-display" id="opacityValue">100%</span></label>
-                    <input type="range" id="opacity" min="0" max="100" value="100" step="5">
-                </div>
+                
 
                 <div class="control-group">
                     <label for="rotation">Rotación: <span class="range-display" id="rotationValue">0°</span></label>
@@ -265,38 +259,30 @@
                     <input type="range" id="zoom" min="0.1" max="3.0" value="1.2" step="0.1">
                 </div>
 
-                <div class="control-group">
-                    <label for="blendMode">Modo de Mezcla:</label>
-                    <select id="blendMode">
-                        <option value="normal">Normal</option>
-                        <option value="multiply" selected>Multiplicar</option>
-                        <option value="screen">Pantalla</option>
-                        <option value="overlay">Superponer</option>
-                        <option value="soft-light">Luz Suave</option>
-                        <option value="hard-light">Luz Fuerte</option>
-                        <option value="color-dodge">Subexponer Color</option>
-                        <option value="color-burn">Sobreexponer Color</option>
-                        <option value="difference">Diferencia</option>
-                        <option value="exclusion">Exclusión</option>
-                        <option value="lighten">Aclarar</option>
-                        <option value="darken">Oscurecer</option>
-                        <option value="saturation">Saturación</option>
-                        <option value="color">Color</option>
-                        <option value="luminosity">Luminosidad</option>
-                        <option value="hue">Matiz</option>
-                        <option value="plus-lighter">Aditivo</option>
-                    </select>
-                </div>
+                <!-- blendMode control removed; default kept on server as 'multiply' -->
 
                 <div class="control-group">
                     <label for="backgroundColor">Color de Fondo:</label>
                     <input type="color" id="backgroundColor" value="#ffffff">
+                    <div class="range-display" id="backgroundRgb">RGB: 255, 255, 255</div>
                 </div>
 
                 <div class="control-group">
-                    <label for="animationSpeed">Velocidad Animación: <span class="range-display" id="animationSpeedValue">800ms</span></label>
-                    <input type="range" id="animationSpeed" min="100" max="3000" value="800" step="50">
+                    <label for="perfumeSpacingH">Perfume - Separación H: <span class="range-display" id="perfumeSpacingHValue">1.00×</span></label>
+                    <input type="range" id="perfumeSpacingH" min="0.4" max="1.6" value="1.0" step="0.05">
                 </div>
+
+                <div class="control-group">
+                    <label for="perfumeSpacingV">Perfume - Separación V: <span class="range-display" id="perfumeSpacingVValue">1.00×</span></label>
+                    <input type="range" id="perfumeSpacingV" min="0.4" max="1.6" value="1.0" step="0.05">
+                </div>
+
+                <div class="control-group">
+                    <label for="perfumeSizeFactor">Perfume - Tamaño: <span class="range-display" id="perfumeSizeFactorValue">100%</span></label>
+                    <input type="range" id="perfumeSizeFactor" min="0.5" max="1.8" value="1.0" step="0.05">
+                </div>
+
+                
             </div>
         </div>
 
@@ -387,12 +373,13 @@
             repetitionX: document.getElementById('repetitionX'),
             repetitionY: document.getElementById('repetitionY'),
             patternSize: document.getElementById('patternSize'),
-            opacity: document.getElementById('opacity'),
             rotation: document.getElementById('rotation'),
             zoom: document.getElementById('zoom'),
-            blendMode: document.getElementById('blendMode'),
+            perfumeSpacingH: document.getElementById('perfumeSpacingH'),
+            perfumeSpacingV: document.getElementById('perfumeSpacingV'),
+            perfumeSizeFactor: document.getElementById('perfumeSizeFactor'),
+            // blendMode removed; default kept on server as 'multiply'
             backgroundColor: document.getElementById('backgroundColor'),
-            animationSpeed: document.getElementById('animationSpeed'),
             toggleWallpaper: document.getElementById('toggleWallpaper'),
             screensGrid: document.getElementById('screensGrid'),
             urlList: document.getElementById('urlList')
@@ -403,11 +390,15 @@
             repetitionXValue: document.getElementById('repetitionXValue'),
             repetitionYValue: document.getElementById('repetitionYValue'),
             sizeValue: document.getElementById('sizeValue'),
-            opacityValue: document.getElementById('opacityValue'),
             rotationValue: document.getElementById('rotationValue'),
             zoomValue: document.getElementById('zoomValue'),
-            animationSpeedValue: document.getElementById('animationSpeedValue')
+            perfumeSpacingHValue: document.getElementById('perfumeSpacingHValue'),
+            perfumeSpacingVValue: document.getElementById('perfumeSpacingVValue'),
+            perfumeSizeFactorValue: document.getElementById('perfumeSizeFactorValue'),
         };
+
+        // Elemento para mostrar RGB del color de fondo
+        const backgroundRgb = document.getElementById('backgroundRgb');
 
         // Conexión con el servidor
         socket.on('connect', () => {
@@ -491,16 +482,20 @@
 
         // Cargar configuración general
         function loadGeneralConfig(config) {
-            elements.patternType.value = config.patternType || 'brick';
+            elements.patternType.value = config.patternType || 'organic-complex';
             elements.repetitionX.value = config.repetitionX || 10;
             elements.repetitionY.value = config.repetitionY || 8;
             elements.patternSize.value = config.patternSize || 245;
-            elements.opacity.value = config.opacity || 100;
             elements.rotation.value = config.rotation || 0;
             elements.zoom.value = config.zoom || 1.2;
-            elements.blendMode.value = config.blendMode || 'multiply';
+            elements.perfumeSpacingH.value = config.perfumeSpacingH || 1.0;
+            elements.perfumeSpacingV.value = config.perfumeSpacingV || 1.0;
+            elements.perfumeSizeFactor.value = config.perfumeSizeFactor || 1.0;
+            // blendMode removed; server default multiply applies
             elements.backgroundColor.value = config.backgroundColor || '#ffffff';
-            elements.animationSpeed.value = config.animationSpeed || 800;
+            // update RGB display
+            updateBackgroundRgb(elements.backgroundColor.value);
+            
         }
 
         // Actualizar UI
@@ -508,17 +503,22 @@
             values.repetitionXValue.textContent = elements.repetitionX.value;
             values.repetitionYValue.textContent = elements.repetitionY.value;
             values.sizeValue.textContent = elements.patternSize.value + 'px';
-            values.opacityValue.textContent = elements.opacity.value + '%';
             values.rotationValue.textContent = elements.rotation.value + '°';
             values.zoomValue.textContent = Math.round(elements.zoom.value * 100) + '%';
-            values.animationSpeedValue.textContent = elements.animationSpeed.value + 'ms';
+            values.perfumeSpacingHValue.textContent = parseFloat(elements.perfumeSpacingH.value).toFixed(2) + '×';
+            values.perfumeSpacingVValue.textContent = parseFloat(elements.perfumeSpacingV.value).toFixed(2) + '×';
+            values.perfumeSizeFactorValue.textContent = Math.round(elements.perfumeSizeFactor.value * 100) + '%';
+            // also update RGB display in case color changed programmatically
+            updateBackgroundRgb(elements.backgroundColor.value);
+            
         }
 
         // Event listeners para configuración general
         function setupGeneralControls() {
             const generalControls = [
                 'patternType', 'repetitionX', 'repetitionY', 'patternSize', 
-                'opacity', 'rotation', 'zoom', 'blendMode', 'backgroundColor', 'animationSpeed'
+                'rotation', 'zoom', 'backgroundColor',
+                'perfumeSpacingH', 'perfumeSpacingV', 'perfumeSizeFactor'
             ];
 
             generalControls.forEach(controlName => {
@@ -535,6 +535,29 @@
         // Control de animación
         elements.toggleWallpaper.addEventListener('click', () => {
             socket.emit('requestAnimationStart');
+        });
+
+        // Convert hex to RGB and update display, emit to server
+        function hexToRgb(hex) {
+            const h = hex.replace('#','');
+            const bigint = parseInt(h, 16);
+            const r = (bigint >> 16) & 255;
+            const g = (bigint >> 8) & 255;
+            const b = bigint & 255;
+            return { r, g, b };
+        }
+
+        function updateBackgroundRgb(hex) {
+            if (!hex) return;
+            const c = hexToRgb(hex);
+            if (backgroundRgb) backgroundRgb.textContent = `RGB: ${c.r}, ${c.g}, ${c.b}`;
+        }
+
+        // Emit background color changes and update RGB display
+        elements.backgroundColor.addEventListener('input', (e) => {
+            const hex = e.target.value;
+            updateBackgroundRgb(hex);
+            socket.emit('updateGeneralConfig', { backgroundColor: hex });
         });
 
         // Manejar respuesta del servidor sobre el estado del wallpaper
