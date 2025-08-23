@@ -18,8 +18,7 @@ const maskCtx = maskCanvas.getContext('2d', { alpha: true, desynchronized: true 
 // Eventos de dibujo del frame actual (para depuración exacta)
 let drawEvents = [];
 
-const BG = new Image(); BG.src = '1.png';
-const PERFUME = new Image(); PERFUME.src = 'perfume.png';
+const BG = new Image(); BG.src = 'patterns/pattern.jpg';
 const brushSrcs = [
   'Stroke/blue-watercolor-brush-stroke-1.png',
   'Stroke/blue-watercolor-brush-stroke-2.png',
@@ -29,25 +28,13 @@ const brushSrcs = [
 ];
 let maskBrushes = [];
 
-// Canvas y contexto para las máscaras de 8 perfumes
-const perfumeMaskCanvases = [];
-const perfumeMaskCtxs = [];
-for (let i = 0; i < 8; i++) {
-  const canvas = document.createElement('canvas');
-  const ctx = canvas.getContext('2d', { alpha: true, desynchronized: true });
-  perfumeMaskCanvases.push(canvas);
-  perfumeMaskCtxs.push(ctx);
-}
-
 // Estado
 let size = { wCSS: 0, hCSS: 0, w: 0, h: 0 };
 let layout = { dx: 0, dy: 0, dw: 0, dh: 0 };
-let perfumeLayouts = [];
 let startedAt = 0, rafId = 0;
 let fpsMonitorRafId = 0; // RAF separado para el monitor FPS
 let seeds = [], strokes = [], sweeps = [], wash = [], spirals = [], radiants = [], connectors = [], droplets = [], waves = [];
 let finalSealing = [];
-let perfumeStrokes = [];
 let animationFinished = false; // Flag para indicar que la animación terminó
 
 // Pool de canvas temporales para optimización (reutilizar en lugar de crear cada frame)
@@ -56,8 +43,8 @@ const canvasPool = {
   tempContexts: [],
   
   init() {
-    // Crear 8 canvas reutilizables para los perfumes
-    for (let i = 0; i < 8; i++) {
+    // Crear canvas reutilizables para optimización
+    for (let i = 0; i < 4; i++) {
       const canvas = document.createElement('canvas');
       const ctx = canvas.getContext('2d');
       this.tempCanvases.push(canvas);
@@ -188,13 +175,6 @@ function resize(){
   maskCanvas.width=Math.max(1, Math.floor(size.w*MASK_SCALE));
   maskCanvas.height=Math.max(1, Math.floor(size.h*MASK_SCALE));
   
-  // Configurar canvas de máscaras de los 8 perfumes
-  for (let i = 0; i < 8; i++) {
-    perfumeMaskCanvases[i].width = Math.max(1, Math.floor(size.w*MASK_SCALE));
-    perfumeMaskCanvases[i].height = Math.max(1, Math.floor(size.h*MASK_SCALE));
-    perfumeMaskCtxs[i].setTransform(MASK_SCALE,0,0,MASK_SCALE,0,0);
-  }
-  
   // Redimensionar canvas temporales del pool
   canvasPool.resizeAll(size.w, size.h);
   
@@ -205,85 +185,6 @@ function resize(){
     const s = Math.max(size.w/BG.naturalWidth, size.h/BG.naturalHeight);
     const dw = Math.ceil(BG.naturalWidth*s), dh = Math.ceil(BG.naturalHeight*s);
     layout.dx = Math.floor((size.w-dw)/2); layout.dy = Math.floor((size.h-dh)/2); layout.dw = dw; layout.dh = dh;
-  }
-  
-  // Layout para 8 perfumes distribuidos en patrón de cruz expandida
-  perfumeLayouts = [];
-  if (PERFUME.naturalWidth && PERFUME.naturalHeight){
-    const maxSize = Math.min(size.w, size.h) * 0.17; // 15% más grande que antes (0.15 * 1.15)
-    const s = Math.min(maxSize/PERFUME.naturalWidth, maxSize/PERFUME.naturalHeight);
-    const dw = Math.ceil(PERFUME.naturalWidth*s), dh = Math.ceil(PERFUME.naturalHeight*s);
-    
-    // Definir posiciones según el patrón:
-    // --x---x--
-    // ----x----
-    // -x-----x-
-    // ----x----
-    // --x---x--
-    const centerX = size.w / 2;
-    const centerY = size.h / 2;
-    const spacingH = Math.min(size.w, size.h) * 0.25; // Espaciado horizontal
-    const spacingV = Math.min(size.w, size.h) * 0.2;  // Espaciado vertical
-    
-    const positions = [
-      // Fila superior: --x---x--
-      { x: centerX - spacingH * 1.2, y: centerY - spacingV * 2 },    // izquierda superior
-      { x: centerX + spacingH * 1.2, y: centerY - spacingV * 2 },    // derecha superior
-      // Fila medio-alta: ----x----
-      { x: centerX, y: centerY - spacingV },                         // centro superior
-      // Fila central: -x-----x- (acercadas al centro)
-      { x: centerX - spacingH * 1.4, y: centerY },                   // izquierda central (más cerca)
-      { x: centerX + spacingH * 1.4, y: centerY },                   // derecha central (más cerca)
-      // Fila medio-baja: ----x----
-      { x: centerX, y: centerY + spacingV },                         // centro inferior
-      // Fila inferior: --x---x--
-      { x: centerX - spacingH * 1.2, y: centerY + spacingV * 2 },    // izquierda inferior
-      { x: centerX + spacingH * 1.2, y: centerY + spacingV * 2 }     // derecha inferior
-    ];
-    
-    for (let i = 0; i < 8; i++) {
-      const pos = positions[i];
-      const dx = Math.floor(pos.x - dw / 2);
-      const dy = Math.floor(pos.y - dh / 2);
-      perfumeLayouts.push({ dx, dy, dw, dh });
-    }
-  }
-}
-
-// Pinceladas para revelar el perfume (más suaves y orgánicas)
-function makePerfumeStrokes(){
-  perfumeStrokes = [];
-  if (!perfumeLayouts.length) return;
-  
-  // Crear trazos para cada una de las 8 imágenes
-  for (let perfumeIndex = 0; perfumeIndex < 8; perfumeIndex++) {
-    const layout = perfumeLayouts[perfumeIndex];
-    if (!layout.dw || !layout.dh) continue;
-    
-    const cx = layout.dx + layout.dw/2;
-    const cy = layout.dy + layout.dh/2;
-    const maxRadius = Math.max(layout.dw, layout.dh) * 0.6;
-    
-    const COUNT = 25; // Menos trazos para un efecto más suave
-    
-    for (let i=0;i<COUNT;i++){
-      // Distribución radial desde el centro con algo de aleatoriedad
-      const angle = (i/COUNT) * Math.PI * 2 + rand(-0.3, 0.3);
-      const distance = rand(0.1, 0.9) * maxRadius;
-      const x = cx + Math.cos(angle) * distance;
-      const y = cy + Math.sin(angle) * distance;
-      
-      const baseW = clamp(gauss(20,6), 12,35) * (size.w/1280+size.h/720)*.5;
-      const alpha = rand(0.3, 0.7); // Más opaco para revelado suave
-      const steps = Math.round(rand(80,150));
-      const stepLen = clamp(gauss(4.0,1.2), 2.0, 6.0) * (size.w/1280+size.h/720)*.5;
-      const drift = rand(.01,.03); // Muy poca deriva para mantener suavidad
-      const tStart = rand(0.1, 0.4); // Empieza temprano
-      const tEnd = clamp(tStart+rand(.4,.7), 0, 0.9);
-      const b = maskBrushes.length? Math.floor(rand(0,maskBrushes.length)) : -1;
-      
-      perfumeStrokes.push({x,y,angle,baseW,alpha,steps,stepLen,drift,tStart,tEnd,idx:0,b,perfumeIndex});
-    }
   }
 }
 
@@ -508,13 +409,25 @@ function makeWaves(){
 function stepWave(wv, n, sizeMultiplier=1){
   if (n<=0) return 0; let spent=0; const hasBrush = wv.b>=0 && maskBrushes[wv.b];
   if (!hasBrush){ maskCtx.save(); maskCtx.lineCap='round'; maskCtx.lineJoin='round'; maskCtx.strokeStyle='#fff'; }
+  // Inicializar contador si no existe
+  if (wv.stepCount === undefined) wv.stepCount = 0;
+  
   for (let i=0;i<n;i++){
-    // ángulo con leve deriva + oscilación senoidal
-    wv.angle += gauss(0, wv.drift*.06) + Math.sin(wv.phase)*wv.ampAng*0.5;
-    wv.phase += wv.freq;
+    // Movimiento más orgánico y menos predecible
+    const baseDrift = gauss(0, wv.drift*.06);
+    const sineWave = Math.sin(wv.phase)*wv.ampAng*0.5;
+    const randomTurn = (Math.random() - 0.5) * 0.12; // Giros aleatorios
+    const directionShift = Math.cos(wv.stepCount * 0.015) * 0.08; // Cambio direccional periódico
+    
+    wv.angle += baseDrift + sineWave + randomTurn + directionShift;
+    wv.phase += wv.freq * (0.8 + Math.random() * 0.4); // Frecuencia variable
+    
     const nx = wv.x + Math.cos(wv.angle) * wv.stepLen;
     const ny = wv.y + Math.sin(wv.angle) * wv.stepLen;
-    if (nx<-60||nx>size.w+60||ny<-60||ny>size.h+60){ wv.angle += Math.PI*.35; continue; }
+    if (nx<-60||nx>size.w+60||ny<-60||ny>size.h+60){ 
+      wv.angle += Math.PI * (0.25 + Math.random() * 0.2); // Rebotes más variados
+      continue; 
+    }
     const w = clamp(gauss(wv.baseW, wv.baseW*.12), wv.baseW*.75, wv.baseW*1.25) * sizeMultiplier;
     if (hasBrush){
       const brush = maskBrushes[wv.b];
@@ -537,7 +450,7 @@ function stepWave(wv, n, sizeMultiplier=1){
       maskCtx.beginPath(); maskCtx.moveTo(wv.x, wv.y); maskCtx.lineTo(nx, ny); maskCtx.stroke();
       spent += 1;
     }
-    wv.x = nx; wv.y = ny; wv.idx++;
+    wv.x = nx; wv.y = ny; wv.idx++; wv.stepCount++; // Incrementar contador
   }
   if (!hasBrush) maskCtx.restore();
   return spent;
@@ -607,12 +520,27 @@ function stepStroke(stk, n, sizeMultiplier = 1, motionScale = 1){
     stk.vx = Math.cos(stk.angle) * stk.stepLen * 0.7;
     stk.vy = Math.sin(stk.angle) * stk.stepLen * 0.7;
   }
+  // Inicializar contador de pasos si no existe
+  if (stk.stepCount === undefined) stk.stepCount = 0;
+  
   for (let i=0;i<n;i++){
-    // actualizar dirección con menos jitter y menor drift
-    stk.angle += gauss(0, stk.drift * 0.025);
+    // Variación direccional más orgánica y menos circular
+    const baseAngleChange = gauss(0, stk.drift * 0.04); // Más variación base
+    
+    // Cambios direccionales periódicos para evitar espirales
+    const directionShift = Math.sin(stk.stepCount * 0.02) * 0.15; // Oscilación suave
+    const randomWalk = (Math.random() - 0.5) * 0.08; // Caminata aleatoria
+    
+    stk.angle += baseAngleChange + directionShift + randomWalk;
+    
+    // Reducir significativamente la atracción al centro para evitar circularidad
     const cx=size.w*.5, cy=size.h*.5; const toC=Math.atan2(cy-stk.y, cx-stk.x);
-    // Menor atracción al centro para suavidad
-    stk.angle = stk.angle * 0.99 + toC * 0.01;
+    stk.angle = stk.angle * 0.995 + toC * 0.005; // Mucho menos atracción al centro
+    
+    // Agregar tendencia direccional basada en la posición para crear flujos más naturales
+    const flowAngle = Math.atan2(stk.y - size.h*0.3, stk.x - size.w*0.3);
+    stk.angle = stk.angle * 0.98 + flowAngle * 0.02;
+    
     const tx = Math.cos(stk.angle) * (stk.stepLen * motionScale * 0.7);
     const ty = Math.sin(stk.angle) * (stk.stepLen * motionScale * 0.7);
     // inercia hacia la velocidad objetivo, más lenta
@@ -620,7 +548,10 @@ function stepStroke(stk, n, sizeMultiplier = 1, motionScale = 1){
     stk.vy = lerp(stk.vy, ty, 0.07);
     const nx = stk.x + stk.vx;
     const ny = stk.y + stk.vy;
-    if (nx<-50||nx>size.w+50||ny<-50||ny>size.h+50){ stk.angle += Math.PI*.35; continue; }
+    if (nx<-50||nx>size.w+50||ny<-50||ny>size.h+50){ 
+      stk.angle += Math.PI * (0.2 + Math.random() * 0.3); // Variación en los rebotes
+      continue; 
+    }
 
     const w = clamp(gauss(stk.baseW, stk.baseW*.08), stk.baseW*.8, stk.baseW*1.2) * sizeMultiplier;
     const a0 = stk.alpha;
@@ -659,7 +590,7 @@ function stepStroke(stk, n, sizeMultiplier = 1, motionScale = 1){
       }
       spent += 4;
     }
-    stk.x=nx; stk.y=ny; stk.idx++;
+    stk.x=nx; stk.y=ny; stk.idx++; stk.stepCount++; // Incrementar contador de pasos
   }
   if (!hasBrush) maskCtx.restore();
   return spent;
@@ -758,90 +689,6 @@ function stepConnector(con, n, sizeMultiplier = 1){
   return spent;
 }
 
-// Función para dibujar las pinceladas del perfume
-function stepPerfumeStroke(stk, n, sizeMultiplier = 1, motionScale = 1){
-  if (n<=0) return 0; 
-  let spent=0; 
-  const hasBrush=stk.b>=0 && maskBrushes[stk.b];
-  const perfumeCtx = perfumeMaskCtxs[stk.perfumeIndex];
-  const layout = perfumeLayouts[stk.perfumeIndex];
-  
-  if (!hasBrush){ 
-    perfumeCtx.save(); 
-    perfumeCtx.lineCap='round'; 
-    perfumeCtx.lineJoin='round'; 
-    perfumeCtx.strokeStyle='#fff'; 
-  }
-  
-  // velocidad suavizada (inercia)
-  if (stk.vx===undefined){
-    stk.vx = Math.cos(stk.angle) * stk.stepLen;
-    stk.vy = Math.sin(stk.angle) * stk.stepLen;
-  }
-  
-  for (let i=0;i<n;i++){
-    // actualizar dirección con menos jitter
-    stk.angle += gauss(0, stk.drift*.03); // Aún más suave
-    
-    const tx = Math.cos(stk.angle) * (stk.stepLen * motionScale);
-    const ty = Math.sin(stk.angle) * (stk.stepLen * motionScale);
-    
-    // inercia hacia la velocidad objetivo
-    stk.vx = lerp(stk.vx, tx, 0.08); // Más suave
-    stk.vy = lerp(stk.vy, ty, 0.08);
-    
-    const nx = stk.x + stk.vx;
-    const ny = stk.y + stk.vy;
-    
-    // Mantener dentro del área del perfume correspondiente
-    if (nx < layout.dx-50 || nx > layout.dx+layout.dw+50 || 
-        ny < layout.dy-50 || ny > layout.dy+layout.dh+50){ 
-      stk.angle += Math.PI*.2; continue; 
-    }
-
-    const w = clamp(gauss(stk.baseW, stk.baseW*.08), stk.baseW*.8, stk.baseW*1.2) * sizeMultiplier;
-    const a0 = stk.alpha;
-    
-    if (hasBrush){
-      const brush = maskBrushes[stk.b];
-      const scale = w / Math.max(brush.width, brush.height) * 2.2;
-      const rot = Math.atan2(stk.vy, stk.vx) + gauss(0, .06);
-    
-      // pasadas muy suaves para perfume
-      for (let pass=0; pass<4; pass++){
-        const t = pass / 3; 
-        const ts = t*t*(3-2*t); 
-        const px = stk.x + (nx-stk.x)*ts;
-        const py = stk.y + (ny-stk.y)*ts;
-        const pScale = scale * (0.9 + ts*0.2);
-        const pAlpha = a0 * (0.2 + Math.sin(ts*Math.PI)*0.15);
-        const pRot = rot + gauss(0, .04);
-        
-        perfumeCtx.save();
-        perfumeCtx.translate(px, py);
-        if(pRot) perfumeCtx.rotate(pRot);
-        perfumeCtx.globalAlpha = pAlpha;
-        perfumeCtx.drawImage(brush, -brush.width*pScale/2, -brush.height*pScale/2, brush.width*pScale, brush.height*pScale);
-        perfumeCtx.restore();
-      }
-      spent += 4;
-    } else {
-      // fallback suave
-      perfumeCtx.globalAlpha = a0 * 0.25;
-      perfumeCtx.lineWidth = w;
-      perfumeCtx.beginPath();
-      perfumeCtx.moveTo(stk.x, stk.y);
-      perfumeCtx.lineTo(nx, ny);
-      perfumeCtx.stroke();
-      spent += 1;
-    }
-    stk.x=nx; stk.y=ny; stk.idx++;
-  }
-  
-  if (!hasBrush) perfumeCtx.restore();
-  return spent;
-}
-
 function drawProgress(p){
   // Reset eventos de dibujo de este frame
   drawEvents.length = 0;
@@ -856,42 +703,6 @@ function drawProgress(p){
   const sizeMultiplier = 0.2 + (1 - Math.exp(-2.8 * e)) * 1.4;
   // Mantener velocidad de trazo constante para no acelerar al final
   const motionScale = 0.9;
-
-  // === REVELADO DEL PERFUME (nueva funcionalidad) ===
-  const perfumeFadeInStartTime = 20000; // Empezar a revelar a los 20s
-  const perfumeFadeInDuration = 10000; // Duración del fundido: 10s
-  const perfumeFadeInStartProgress = perfumeFadeInStartTime / DURATION_MS;
-  const perfumeFadeInEndProgress = (perfumeFadeInStartTime + perfumeFadeInDuration) / DURATION_MS;
-
-  // Pinceladas normales antes del fundido final
-  for (let i=0;i<perfumeStrokes.length && budget>0;i++){
-    const s=perfumeStrokes[i];
-    if (e < s.tStart) continue;
-    // Detener las pinceladas cuando empieza el fundido para una transición limpia
-    if (e >= perfumeFadeInStartProgress) continue;
-    const local = s.tEnd>s.tStart? clamp((e-s.tStart)/(s.tEnd-s.tStart),0,1) : 1;
-    const target = Math.floor(s.steps*local); 
-    const need = target - s.idx;
-    if (need>0){ 
-      const allow = Math.min(need, Math.floor(budget*0.18), MAX_STEPS_PER_ENTITY_FRAME); 
-      budget -= stepPerfumeStroke(s, allow, sizeMultiplier * 0.9, motionScale); 
-    }
-  }
-
-  // Fundido suave para revelación completa de las 8 imágenes
-  if (e >= perfumeFadeInStartProgress) {
-    const fadeProgress = clamp((e - perfumeFadeInStartProgress) / (perfumeFadeInEndProgress - perfumeFadeInStartProgress), 0, 1);
-    const easedFadeProgress = easeInOutCubic(fadeProgress);
-
-    for (let i = 0; i < 8; i++) {
-      perfumeMaskCtxs[i].save();
-      perfumeMaskCtxs[i].globalAlpha = easedFadeProgress;
-      perfumeMaskCtxs[i].globalCompositeOperation = 'source-over';
-      perfumeMaskCtxs[i].fillStyle = '#fff';
-      perfumeMaskCtxs[i].fillRect(0, 0, size.w, size.h);
-      perfumeMaskCtxs[i].restore();
-    }
-  }
 
   // Trazos principales (solo de semillas activas)
   for (let i=0;i<strokes.length && budget>0;i++){
@@ -1048,38 +859,8 @@ function render(){
   ctx.globalCompositeOperation='destination-in';
   ctx.drawImage(maskCanvas, 0,0, maskCanvas.width, maskCanvas.height, 0,0, size.w, size.h);
   ctx.globalCompositeOperation='destination-over'; 
-  ctx.fillStyle='#fff'; 
+  ctx.fillStyle='#F5DDC7'; 
   ctx.fillRect(0,0,size.w,size.h);
-  
-  // === DIBUJAR 8 PERFUMES CON BLEND MODE MULTIPLY ===
-  if (PERFUME.naturalWidth && perfumeLayouts.length) {
-    // Cambiar a multiply una sola vez antes del loop
-    ctx.globalCompositeOperation = 'multiply';
-    
-    for (let i = 0; i < 8; i++) {
-      const layout = perfumeLayouts[i];
-      if (!layout.dw || !layout.dh) continue;
-      
-      // Usar canvas temporal del pool (reutilizable, no crear nuevo)
-      const { canvas: tempCanvas, ctx: tempCtx } = canvasPool.getCanvas(i);
-      
-      // Dibujar el perfume en el canvas temporal
-      tempCtx.drawImage(PERFUME, layout.dx, layout.dy, layout.dw, layout.dh);
-      
-      // Aplicar la máscara del perfume correspondiente
-      tempCtx.globalCompositeOperation = 'destination-in';
-      tempCtx.drawImage(perfumeMaskCanvases[i], 0, 0, perfumeMaskCanvases[i].width, perfumeMaskCanvases[i].height, 0, 0, size.w, size.h);
-      
-      // Dibujar el perfume enmascarado en el canvas principal (ya en modo multiply)
-      ctx.drawImage(tempCanvas, 0, 0);
-      
-      // Restaurar composite operation del canvas temporal para próximo uso
-      tempCtx.globalCompositeOperation = 'source-over';
-    }
-    
-    // Restaurar composite operation una sola vez después del loop
-    ctx.globalCompositeOperation = 'source-over';
-  }
 }
 function loop(ts){
   // Si la animación ya terminó, no procesar más frames
@@ -1137,10 +918,6 @@ function start(){
   
   resize(); 
   maskCtx.clearRect(0,0,size.w,size.h); 
-  // Limpiar todas las máscaras de perfume
-  for (let i = 0; i < 8; i++) {
-    perfumeMaskCtxs[i].clearRect(0,0,size.w,size.h);
-  }
   
   // golpe inicial en el centro para que empiece a mostrarse de inmediato
   kickstartMask();
@@ -1154,7 +931,6 @@ function start(){
   makeWaves();
   makeWash(); 
   makeFinalSealing();
-  makePerfumeStrokes(); // Generar trazos para las 6 imágenes de perfume
   
   // render inmediato para que se vea el golpe inicial antes del primer frame
   render();
@@ -1177,10 +953,6 @@ window.addEventListener('resize',()=>{
   const p=startedAt?clamp((now-startedAt)/DURATION_MS,0,1):0; 
   resize(); 
   maskCtx.clearRect(0,0,size.w,size.h); 
-  // Limpiar todas las máscaras de perfume
-  for (let i = 0; i < 8; i++) {
-    perfumeMaskCtxs[i].clearRect(0,0,size.w,size.h);
-  }
   makeSeeds(12); 
   makeStrokes(); 
   makeSpirals();
@@ -1191,7 +963,6 @@ window.addEventListener('resize',()=>{
   makeWaves();
   makeWash(); 
   makeFinalSealing();
-  makePerfumeStrokes();
   drawProgress(p); 
   render(); 
 });
@@ -1208,17 +979,8 @@ function toWhiteMask(image){ const c=document.createElement('canvas'); c.width=i
   canvasPool.init();
   
   try {
-    const bg = await loadImage('1.png');
+    const bg = await loadImage('patterns/pattern.jpg');
     BG.src = bg.src;
-    
-    // Cargar imagen del perfume
-    try {
-      const perfumeImg = await loadImage('perfume.png');
-      PERFUME.src = perfumeImg.src;
-      console.log('Perfume image loaded successfully');
-    } catch(perfumeErr) {
-      console.warn('Could not load perfume.png:', perfumeErr);
-    }
     
     // Empezar de inmediato con fallback (sin brochas) para evitar pantalla en blanco
     start();
@@ -1236,10 +998,6 @@ function toWhiteMask(image){ const c=document.createElement('canvas'); c.width=i
           const p = startedAt? Math.max(0, Math.min(1, (now-startedAt)/DURATION_MS)) : 0;
           // Re-generar elementos con brochas disponibles y dibujar hasta p
           maskCtx.clearRect(0,0,size.w,size.h);
-          // Limpiar todas las máscaras de perfume
-          for (let i = 0; i < 8; i++) {
-            perfumeMaskCtxs[i].clearRect(0,0,size.w,size.h);
-          }
           makeSeeds(12);
           makeStrokes();
           makeSpirals();
@@ -1250,7 +1008,6 @@ function toWhiteMask(image){ const c=document.createElement('canvas'); c.width=i
           makeWaves();
           makeWash();
           makeFinalSealing();
-          makePerfumeStrokes();
           drawProgress(p); render();
         }
       }catch(err){ /* ignorar errores de carga individuales */ }

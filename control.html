@@ -263,8 +263,8 @@
 
                 <div class="control-group">
                     <label for="backgroundColor">Color de Fondo:</label>
-                    <input type="color" id="backgroundColor" value="#ffffff">
-                    <div class="range-display" id="backgroundRgb">RGB: 255, 255, 255</div>
+                    <input type="color" id="backgroundColor" value="#F5DDC7">
+                    <div class="range-display" id="backgroundRgb">RGB: 245, 221, 199</div>
                 </div>
 
                 <div class="control-group">
@@ -292,6 +292,11 @@
             <div class="controls-grid">
                 <div class="control-group">
                     <button id="toggleWallpaper" class="wallpaper-off">🔴 Wallpaper APAGADO - Presiona para ENCENDER</button>
+                </div>
+                <div class="control-group">
+                    <button id="savePattern" style="background-color: #28a745; font-size: 16px; font-weight: bold; margin-top: 10px;">
+                        💾 START - Guardar Patrón como Imagen
+                    </button>
                 </div>
             </div>
             <div style="margin-top: 15px; padding: 15px; background: #e7f3ff; border-radius: 8px; border-left: 4px solid #007bff;">
@@ -342,6 +347,11 @@
                     🎬 Abrir TODAS las Pantallas (1-9)
                 </button>
             </div>
+            <div style="margin-top: 10px;">
+                <button onclick="openBrushReveal()" style="background-color: #6f42c1; font-size: 16px; font-weight: bold;">
+                    🎨 Abrir Brush Reveal
+                </button>
+            </div>
         </div>
 
         <!-- Configuración de Pantallas -->
@@ -381,6 +391,7 @@
             // blendMode removed; default kept on server as 'multiply'
             backgroundColor: document.getElementById('backgroundColor'),
             toggleWallpaper: document.getElementById('toggleWallpaper'),
+            savePattern: document.getElementById('savePattern'),
             screensGrid: document.getElementById('screensGrid'),
             urlList: document.getElementById('urlList')
         };
@@ -492,7 +503,7 @@
             elements.perfumeSpacingV.value = config.perfumeSpacingV || 1.0;
             elements.perfumeSizeFactor.value = config.perfumeSizeFactor || 1.0;
             // blendMode removed; server default multiply applies
-            elements.backgroundColor.value = config.backgroundColor || '#ffffff';
+            elements.backgroundColor.value = config.backgroundColor || '#F5DDC7';
             // update RGB display
             updateBackgroundRgb(elements.backgroundColor.value);
             
@@ -535,6 +546,33 @@
         // Control de animación
         elements.toggleWallpaper.addEventListener('click', () => {
             socket.emit('requestAnimationStart');
+        });
+
+        // Control de guardado de patrón
+        elements.savePattern.addEventListener('click', () => {
+            elements.savePattern.textContent = '⏳ Guardando patrón...';
+            elements.savePattern.disabled = true;
+            socket.emit('savePattern');
+        });
+
+        // Respuesta del servidor al guardar patrón
+        socket.on('patternSaved', (data) => {
+            if (data.success) {
+                elements.savePattern.textContent = '✅ Patrón guardado exitosamente';
+                elements.savePattern.style.backgroundColor = '#28a745';
+                setTimeout(() => {
+                    elements.savePattern.textContent = '💾 START - Guardar Patrón como Imagen';
+                    elements.savePattern.disabled = false;
+                }, 3000);
+            } else {
+                elements.savePattern.textContent = '❌ Error al guardar patrón';
+                elements.savePattern.style.backgroundColor = '#dc3545';
+                setTimeout(() => {
+                    elements.savePattern.textContent = '💾 START - Guardar Patrón como Imagen';
+                    elements.savePattern.style.backgroundColor = '#28a745';
+                    elements.savePattern.disabled = false;
+                }, 3000);
+            }
         });
 
         // Convert hex to RGB and update display, emit to server
@@ -605,6 +643,12 @@
                     }
                 }, i * 200); // Delay entre ventanas para evitar problemas
             }
+        }
+
+        function openBrushReveal() {
+            const baseUrl = window.location.origin;
+            const url = `${baseUrl}/brush-reveal.html`;
+            window.open(url, 'brush-reveal', 'width=1920,height=1080');
         }
 
         // Inicializar
