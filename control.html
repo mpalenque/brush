@@ -233,18 +233,18 @@
                 </div>
 
                 <div class="control-group">
-                    <label for="repetitionX">Repeticiones Horizontales: <span class="range-display" id="repetitionXValue">10</span></label>
-                    <input type="range" id="repetitionX" min="1" max="30" value="10" step="1">
+                    <label for="repetitionX">Repeticiones Horizontales: <span class="range-display" id="repetitionXValue">13</span></label>
+                    <input type="range" id="repetitionX" min="1" max="30" value="13" step="1">
                 </div>
 
                 <div class="control-group">
-                    <label for="repetitionY">Repeticiones Verticales: <span class="range-display" id="repetitionYValue">8</span></label>
-                    <input type="range" id="repetitionY" min="1" max="30" value="8" step="1">
+                    <label for="repetitionY">Repeticiones Verticales: <span class="range-display" id="repetitionYValue">12</span></label>
+                    <input type="range" id="repetitionY" min="1" max="30" value="12" step="1">
                 </div>
 
                 <div class="control-group">
-                    <label for="patternSize">Tamaño del Patrón: <span class="range-display" id="sizeValue">245px</span></label>
-                    <input type="range" id="patternSize" min="20" max="300" value="245" step="5">
+                    <label for="patternSize">Tamaño del Patrón: <span class="range-display" id="sizeValue">300px</span></label>
+                    <input type="range" id="patternSize" min="20" max="300" value="300" step="5">
                 </div>
 
                 
@@ -255,8 +255,8 @@
                 </div>
 
                 <div class="control-group">
-                    <label for="zoom">Zoom: <span class="range-display" id="zoomValue">120%</span></label>
-                    <input type="range" id="zoom" min="0.1" max="3.0" value="1.2" step="0.1">
+                    <label for="zoom">Zoom: <span class="range-display" id="zoomValue">230%</span></label>
+                    <input type="range" id="zoom" min="0.1" max="3.0" value="2.3" step="0.1">
                 </div>
 
                 <!-- blendMode control removed; default kept on server as 'multiply' -->
@@ -268,18 +268,18 @@
                 </div>
 
                 <div class="control-group">
-                    <label for="perfumeSpacingH">Perfume - Separación H: <span class="range-display" id="perfumeSpacingHValue">1.00×</span></label>
-                    <input type="range" id="perfumeSpacingH" min="0.4" max="1.6" value="1.0" step="0.05">
+                    <label for="perfumeSpacingH">Perfume - Separación H: <span class="range-display" id="perfumeSpacingHValue">0.45×</span></label>
+                    <input type="range" id="perfumeSpacingH" min="0.4" max="1.6" value="0.45" step="0.05">
                 </div>
 
                 <div class="control-group">
-                    <label for="perfumeSpacingV">Perfume - Separación V: <span class="range-display" id="perfumeSpacingVValue">1.00×</span></label>
-                    <input type="range" id="perfumeSpacingV" min="0.4" max="1.6" value="1.0" step="0.05">
+                    <label for="perfumeSpacingV">Perfume - Separación V: <span class="range-display" id="perfumeSpacingVValue">0.70×</span></label>
+                    <input type="range" id="perfumeSpacingV" min="0.4" max="1.6" value="0.70" step="0.05">
                 </div>
 
                 <div class="control-group">
-                    <label for="perfumeSizeFactor">Perfume - Tamaño: <span class="range-display" id="perfumeSizeFactorValue">100%</span></label>
-                    <input type="range" id="perfumeSizeFactor" min="0.5" max="1.8" value="1.0" step="0.05">
+                    <label for="perfumeSizeFactor">Perfume - Tamaño: <span class="range-display" id="perfumeSizeFactorValue">85%</span></label>
+                    <input type="range" id="perfumeSizeFactor" min="0.5" max="1.8" value="0.85" step="0.05">
                 </div>
 
                 
@@ -494,14 +494,14 @@
         // Cargar configuración general
         function loadGeneralConfig(config) {
             elements.patternType.value = config.patternType || 'organic-complex';
-            elements.repetitionX.value = config.repetitionX || 10;
-            elements.repetitionY.value = config.repetitionY || 8;
-            elements.patternSize.value = config.patternSize || 245;
+            elements.repetitionX.value = config.repetitionX || 13;
+            elements.repetitionY.value = config.repetitionY || 12;
+            elements.patternSize.value = config.patternSize || 300;
             elements.rotation.value = config.rotation || 0;
-            elements.zoom.value = config.zoom || 1.2;
-            elements.perfumeSpacingH.value = config.perfumeSpacingH || 1.0;
-            elements.perfumeSpacingV.value = config.perfumeSpacingV || 1.0;
-            elements.perfumeSizeFactor.value = config.perfumeSizeFactor || 1.0;
+            elements.zoom.value = config.zoom || 2.3;
+            elements.perfumeSpacingH.value = config.perfumeSpacingH || 0.45;
+            elements.perfumeSpacingV.value = config.perfumeSpacingV || 0.7;
+            elements.perfumeSizeFactor.value = config.perfumeSizeFactor || 0.85;
             // blendMode removed; server default multiply applies
             elements.backgroundColor.value = config.backgroundColor || '#F5DDC7';
             // update RGB display
@@ -655,7 +655,7 @@
         generateScreenControls();
         generateURLs();
         setupGeneralControls();
-        updateUI();
+    updateUI();
     </script>
 </body>
 </html>

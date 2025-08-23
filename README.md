@@ -156,3 +156,18 @@ El servidor muestra logs de conexiones y desconexiones en la consola.
 - La animación es orgánica y empieza desde la pantalla 1
 - Solo el offset horizontal es configurable por pantalla
 - Todos los demás parámetros son globales y sincronizados
+
+## Valores por defecto (configuración inicial)
+
+Al iniciar sin estado previo, el sistema utiliza estos valores por defecto en el panel de control y en el servidor:
+
+- Tipo de Patrón: Orgánico Complejo
+- Repeticiones Horizontales: 13
+- Repeticiones Verticales: 12
+- Tamaño del Patrón: 300px
+- Rotación: 0°
+- Zoom: 230%
+- Color de Fondo: RGB 245, 221, 199 (#F5DDC7)
+- Perfume - Separación H: 0.45×
+- Perfume - Separación V: 0.70×
+- Perfume - Tamaño: 85%

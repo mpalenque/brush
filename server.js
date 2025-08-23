@@ -25,12 +25,15 @@ let globalState = {
     // Configuración general (aplicada a todas las pantallas)
     general: {
     patternType: 'organic-complex',
-        repetitionX: 10,
-        repetitionY: 8,
-        patternSize: 245,
-        rotation: 0,
-        zoom: 1.2,
+    repetitionX: 13,
+    repetitionY: 12,
+    patternSize: 300,
+    rotation: 0,
+        zoom: 2.3,
         blendMode: 'multiply',
+        perfumeSpacingH: 0.45,
+        perfumeSpacingV: 0.7,
+        perfumeSizeFactor: 0.85,
     backgroundColor: '#F5DDC7'
     },
     // Configuración específica de cada pantalla (solo offset horizontal)
