@@ -403,8 +403,8 @@
             elements.connectionStatus.style.background = '#dc3545';
         };
 
-    // Cargar imagen sin perfume para el patrón
-    img.src = '/sinperfume.png';
+    // Cargar imagen procesada para el patrón
+    img.src = '/processed/pattern.png';
 
     // Cargar imagen perfume (se dibuja además del patrón)
     perfumeImg.onload = () => { perfumeLoaded = true; /* redraw if already initialized */ if (imgLoaded) generateStaticPattern(); };

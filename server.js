@@ -18,6 +18,60 @@ const io = socketIo(server, {
 app.use(express.static(__dirname));
 app.use('/sinperfume.png', express.static(path.join(__dirname, 'sinperfume.png')));
 app.use('/patterns', express.static(path.join(__dirname, 'patterns')));
+app.use('/processed', express.static(path.join(__dirname, 'processed')));
+
+// Helper: remove all files in processed/ except pattern.png
+function cleanProcessedDirExceptPattern() {
+    try {
+        const processedDir = path.join(__dirname, 'processed');
+        if (!fs.existsSync(processedDir)) return;
+        const files = fs.readdirSync(processedDir);
+        for (const f of files) {
+            if (f === 'pattern.png') continue;
+            const p = path.join(processedDir, f);
+            try {
+                const stat = fs.statSync(p);
+                if (stat.isFile()) fs.unlinkSync(p);
+                else if (stat.isDirectory()) fs.rmSync(p, { recursive: true, force: true });
+            } catch (e) {
+                console.warn('No se pudo borrar:', p, e.message);
+            }
+        }
+    } catch (e) {
+        console.warn('Error limpiando processed/:', e.message);
+    }
+
+    // Garantizar que exista pattern.png: copiar sinperfume.png como fallback
+    try {
+        const processedDir = path.join(__dirname, 'processed');
+        if (!fs.existsSync(processedDir)) fs.mkdirSync(processedDir, { recursive: true });
+        const patternPath = path.join(processedDir, 'pattern.png');
+        if (!fs.existsSync(patternPath)) {
+            const fallback = path.join(__dirname, 'sinperfume.png');
+            if (fs.existsSync(fallback)) {
+                fs.copyFileSync(fallback, patternPath);
+                console.log('Copiado sinperfume.png -> processed/pattern.png (fallback)');
+            }
+        }
+    } catch (e) {
+        console.warn('Error asegurando pattern.png:', e.message);
+    }
+}
+
+// Ruta especial para pattern.png con fallback
+app.get('/processed/pattern.png', (req, res) => {
+    const patternPath = path.join(__dirname, 'processed', 'pattern.png');
+    const fallbackPath = path.join(__dirname, 'sinperfume.png');
+    
+    // Si existe pattern.png, usarlo; si no, usar sinperfume.png como fallback
+    if (fs.existsSync(patternPath)) {
+        res.sendFile(patternPath);
+    } else {
+        console.log('pattern.png no existe, usando sinperfume.png como fallback');
+        res.sendFile(fallbackPath);
+    }
+});
+
 app.use(express.json());
 
 // Estado global del sistema
@@ -224,6 +278,85 @@ io.on('connection', (socket) => {
             } catch (error) {
                 console.error('Error saving pattern:', error);
                 socket.emit('patternSaved', { success: false, message: 'Error al guardar el patrón' });
+            }
+        }
+    });
+
+    // Nuevo evento para guardar imagen procesada por OpenCV
+    socket.on('saveProcessedImage', async (data) => {
+        const client = connectedClients.get(socket.id);
+        if (client && client.type === 'control') {
+            try {
+                const { imageDataUrl } = data;
+                
+                if (!imageDataUrl) {
+                    socket.emit('processedImageSaved', { success: false, message: 'No se recibieron datos de imagen' });
+                    return;
+                }
+
+                // Crear directorio si no existe
+                const processedDir = path.join(__dirname, 'processed');
+                if (!fs.existsSync(processedDir)) {
+                    fs.mkdirSync(processedDir, { recursive: true });
+                }
+
+                // Usar siempre el mismo nombre: pattern.png (sobrescribir)
+                const filename = 'pattern.png';
+                const filepath = path.join(processedDir, filename);
+
+                // Convertir data URL a buffer y guardar (sobrescribiendo)
+                const base64Data = imageDataUrl.replace(/^data:image\/png;base64,/, '');
+                const buffer = Buffer.from(base64Data, 'base64');
+                fs.writeFileSync(filepath, buffer);
+
+                // Después de guardar, limpiar otros archivos en processed/
+                cleanProcessedDirExceptPattern();
+
+                console.log('Imagen procesada guardada como:', filename);
+                socket.emit('processedImageSaved', { 
+                    success: true, 
+                    message: 'Imagen procesada guardada exitosamente',
+                    filename: filename
+                });
+
+            } catch (error) {
+                console.error('Error saving processed image:', error);
+                socket.emit('processedImageSaved', { success: false, message: 'Error al guardar imagen procesada' });
+            }
+        }
+    });
+
+    // Nuevo evento para aplicar imagen procesada (ya no necesita copiar, screen.html lee directamente)
+    socket.on('applyProcessedImage', async (data) => {
+        const client = connectedClients.get(socket.id);
+        if (client && client.type === 'control') {
+            try {
+                // Verificar que pattern.png existe
+                const patternPath = path.join(__dirname, 'processed', 'pattern.png');
+
+                if (!fs.existsSync(patternPath)) {
+                    socket.emit('processedImageApplied', { success: false, message: 'Archivo pattern.png no encontrado en processed/' });
+                    return;
+                }
+
+                console.log('Imagen del patrón lista: pattern.png');
+
+                // Notificar a todas las pantallas conectadas que actualicen la imagen
+                io.emit('imageUpdated', { 
+                    message: 'Nueva imagen aplicada directamente',
+                    filename: 'pattern.png',
+                    timestamp: new Date().toISOString()
+                });
+
+                socket.emit('processedImageApplied', { 
+                    success: true, 
+                    message: 'Imagen aplicada como nuevo patrón exitosamente',
+                    appliedFile: 'pattern.png'
+                });
+
+            } catch (error) {
+                console.error('Error applying processed image:', error);
+                socket.emit('processedImageApplied', { success: false, message: 'Error al aplicar imagen procesada' });
             }
         }
     });
@@ -460,6 +593,9 @@ async function generatePatternImage() {
         throw error;
     }
 }
+
+// Al iniciar, limpiar processed/ dejando solo pattern.png
+cleanProcessedDirExceptPattern();
 
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => {

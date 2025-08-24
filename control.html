@@ -4,6 +4,102 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Control Panel - Multi-Screen Wallpaper</title>
+    <!-- OpenCV.js from CDN -->
+    <script>
+        // Update OpenCV Status function (defined first)
+        function updateOpenCVStatus(message, type = 'normal') {
+            const statusDiv = document.getElementById('opencvStatus');
+            if (statusDiv) {
+                statusDiv.textContent = message;
+                statusDiv.className = `opencv-status ${type}`;
+            }
+        }
+        
+        // Global variable to track OpenCV loading
+        let opencvReady = false;
+        
+        function onOpenCvReady() {
+            console.log('OpenCV.js is ready!');
+            opencvReady = true;
+            updateOpenCVStatus('✅ OpenCV.js cargado correctamente', 'ready');
+            if (document.getElementById('processButton')) {
+                document.getElementById('processButton').disabled = false;
+            }
+            if (document.getElementById('autoProcessButton')) {
+                document.getElementById('autoProcessButton').disabled = false;
+            }
+        }
+        
+        // Load OpenCV.js
+        function loadOpenCV() {
+            updateOpenCVStatus('🔄 Cargando OpenCV.js...', 'normal');
+            
+            // Try multiple CDNs in order
+            const cdnUrls = [
+                'https://docs.opencv.org/4.8.0/opencv.js',
+                'https://cdn.jsdelivr.net/npm/opencv.js@4.8.0/opencv.js',
+                'https://unpkg.com/opencv.js@4.8.0/opencv.js'
+            ];
+            
+            let currentCdnIndex = 0;
+            
+            function tryLoadFromCdn(index) {
+                if (index >= cdnUrls.length) {
+                    updateOpenCVStatus('❌ Error: No se pudo cargar OpenCV desde ningún CDN', 'error');
+                    return;
+                }
+                
+                console.log(`Trying CDN ${index + 1}/${cdnUrls.length}: ${cdnUrls[index]}`);
+                updateOpenCVStatus(`🔄 Probando CDN ${index + 1}/${cdnUrls.length}...`, 'normal');
+                
+                const script = document.createElement('script');
+                script.src = cdnUrls[index];
+                
+                script.onload = function() {
+                    console.log(`OpenCV script loaded from CDN ${index + 1}, waiting for initialization...`);
+                    updateOpenCVStatus('🔄 OpenCV cargado, inicializando...', 'normal');
+                    
+                    // Set up runtime initialization
+                    let initTimeout = setTimeout(() => {
+                        console.error('OpenCV initialization timeout');
+                        tryLoadFromCdn(index + 1);
+                    }, 10000);
+                    
+                    // Check if cv is available and set up initialization
+                    function checkAndInitialize() {
+                        if (typeof cv !== 'undefined') {
+                            clearTimeout(initTimeout);
+                            if (cv.Mat) {
+                                // Already initialized
+                                onOpenCvReady();
+                            } else {
+                                cv.onRuntimeInitialized = () => {
+                                    clearTimeout(initTimeout);
+                                    onOpenCvReady();
+                                };
+                            }
+                        } else {
+                            setTimeout(checkAndInitialize, 100);
+                        }
+                    }
+                    
+                    checkAndInitialize();
+                };
+                
+                script.onerror = function() {
+                    console.error(`Failed to load OpenCV from CDN ${index + 1}`);
+                    tryLoadFromCdn(index + 1);
+                };
+                
+                document.head.appendChild(script);
+            }
+            
+            tryLoadFromCdn(0);
+        }
+        
+        // Load OpenCV when DOM is ready
+        document.addEventListener('DOMContentLoaded', loadOpenCV);
+    </script>
     <style>
         * {
             margin: 0;
@@ -199,11 +295,237 @@
             color: #007bff;
             font-weight: bold;
         }
+
+        /* OpenCV Styles */
+        .opencv-section {
+            background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+            border-left: 5px solid #e91e63;
+            margin-bottom: 40px;
+        }
+
+        .opencv-section h2 {
+            color: white;
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.3);
+        }
+
+        .opencv-controls {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+            margin-bottom: 20px;
+        }
+
+        .opencv-input-area {
+            background: rgba(255, 255, 255, 0.9);
+            padding: 20px;
+            border-radius: 10px;
+            box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+        }
+
+        .opencv-output-area {
+            background: rgba(255, 255, 255, 0.9);
+            padding: 20px;
+            border-radius: 10px;
+            box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+        }
+
+        .image-upload {
+            border: 2px dashed #007bff;
+            border-radius: 10px;
+            padding: 20px;
+            text-align: center;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            background: #f8f9fa;
+        }
+
+        .image-upload:hover {
+            border-color: #0056b3;
+            background: #e9ecef;
+        }
+
+        .image-upload.dragover {
+            border-color: #28a745;
+            background: #d4edda;
+        }
+
+        #imageInput {
+            display: none;
+        }
+
+        .image-preview {
+            max-width: 100%;
+            max-height: none; /* Removed height constraint to preserve original resolution */
+            margin: 10px 0;
+            border-radius: 8px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+            height: auto; /* Let image maintain aspect ratio at full resolution */
+        }
+
+        .process-button {
+            background: linear-gradient(45deg, #FF6B6B, #4ECDC4);
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            border-radius: 25px;
+            font-size: 16px;
+            font-weight: bold;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            width: 100%;
+            margin: 10px 0;
+        }
+
+        .process-button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(0,0,0,0.2);
+        }
+
+        .process-button:disabled {
+            background: #6c757d;
+            cursor: not-allowed;
+            transform: none;
+        }
+
+        .opencv-status {
+            background: #fff3cd;
+            border: 1px solid #ffeaa7;
+            color: #856404;
+            padding: 10px;
+            border-radius: 5px;
+            margin-bottom: 15px;
+            text-align: center;
+        }
+
+        .opencv-status.ready {
+            background: #d4edda;
+            border-color: #c3e6cb;
+            color: #155724;
+        }
+
+        .opencv-status.error {
+            background: #f8d7da;
+            border-color: #f5c6cb;
+            color: #721c24;
+        }
+
+        .result-images {
+            display: flex;
+            gap: 15px;
+            flex-wrap: wrap;
+            justify-content: center;
+        }
+
+        .result-container {
+            text-align: center;
+            flex: 1;
+            min-width: 400px;
+            max-width: 800px;
+            margin: 0 auto;
+        }
+
+        .result-container h4 {
+            margin-bottom: 10px;
+            color: #333;
+        }
+
+        canvas {
+            max-width: 100%;
+            height: auto;
+            border: 2px solid #ddd;
+            border-radius: 8px;
+            box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+        }
+
+        #correctedCanvas {
+            max-width: 100%;
+            height: auto;
+            min-height: 400px;
+            border: 3px solid #28a745;
+            border-radius: 8px;
+            box-shadow: 0 6px 12px rgba(0,0,0,0.15);
+            background: #f8f9fa;
+        }
     </style>
 </head>
 <body>
     <div class="container">
         <h1>🎨 Multi-Screen Wallpaper Control</h1>
+        
+        <!-- OpenCV Image Processing Section -->
+        <div class="section opencv-section">
+            <h2>📷 OpenCV - Detección y Corrección de Perspectiva de Rectángulos</h2>
+            
+            <div id="opencvStatus" class="opencv-status">
+                ⏳ Cargando OpenCV.js...
+            </div>
+            
+            <div class="opencv-controls">
+                <div class="opencv-input-area">
+                    <h3>🖼️ Imagen de Entrada</h3>
+                    <div class="image-upload" onclick="document.getElementById('imageInput').click()">
+                        <div id="uploadText">
+                            📤 Haz click aquí o arrastra una imagen<br>
+                            <small>Busca rectángulos/cuadrados blancos • Formatos: JPG, PNG, GIF</small>
+                        </div>
+                        <input type="file" id="imageInput" accept="image/*">
+                        <img id="sourceImage" class="image-preview" style="display: none;">
+                    </div>
+                    
+                    <button id="processButton" class="process-button" disabled>
+                        🔍 Detectar y Corregir Rectángulo/Cuadrado Blanco
+                    </button>
+                    
+                    <button id="autoProcessButton" class="process-button" style="background: linear-gradient(45deg, #4CAF50, #45a049); margin-top: 10px;" disabled>
+                        🚀 PROCESAR Y APLICAR AUTOMÁTICAMENTE
+                    </button>
+                    
+                    <button id="debugButton" class="process-button" style="background: linear-gradient(45deg, #9C27B0, #E91E63); display: none;">
+                        🔍 Mostrar Imágenes de Debug
+                    </button>
+                    
+                    <div style="margin-top: 15px;">
+                        <h4>⚙️ Configuración de Detección</h4>
+                        <div class="control-group">
+                            <label for="thresholdValue">Umbral de Blanco: <span id="thresholdDisplay">200</span></label>
+                            <input type="range" id="thresholdValue" min="150" max="255" value="200" step="5">
+                        </div>
+                        <div class="control-group">
+                            <label for="minAreaValue">Área Mínima: <span id="minAreaDisplay">1000</span></label>
+                            <input type="range" id="minAreaValue" min="500" max="50000" value="1000" step="500">
+                        </div>
+                        <div class="control-group">
+                            <label for="epsilonValue">Tolerancia de Forma: <span id="epsilonDisplay">0.02</span></label>
+                            <input type="range" id="epsilonValue" min="0.01" max="0.08" value="0.02" step="0.005">
+                        </div>
+                        <div class="control-group">
+                            <label for="aspectRatioTolerance">Tolerancia Aspect Ratio: <span id="aspectRatioDisplay">3.0</span></label>
+                            <input type="range" id="aspectRatioTolerance" min="1.5" max="5.0" value="3.0" step="0.1">
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="opencv-output-area">
+                    <h3>✨ Resultado Procesado</h3>
+                    <div class="result-images">
+                        <div class="result-container">
+                            <h4>🔍 Detección</h4>
+                            <canvas id="detectionCanvas" width="800" height="600"></canvas>
+                        </div>
+                        <div class="result-container">
+                            <h4>📐 Perspectiva Corregida</h4>
+                            <canvas id="correctedCanvas" width="2000" height="1500"></canvas>
+                        </div>
+                    </div>
+                    
+                    <div style="margin-top: 15px; text-align: center;">
+                        <button id="downloadButton" class="process-button" style="display: none;">
+                            💾 Descargar Imagen Corregida
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
         
         <div class="connection-status" id="connectionStatus">
             🔌 Conectando al servidor...
@@ -372,6 +694,1732 @@
     </div>
 
     <script src="/socket.io/socket.io.js"></script>
+    
+    <script>
+        // OpenCV Variables (opencvReady is now declared in head)
+        let currentImage = null;
+        
+        // File Upload Handler
+        document.getElementById('imageInput').addEventListener('change', function(e) {
+            const file = e.target.files[0];
+            if (file) {
+                const reader = new FileReader();
+                reader.onload = function(event) {
+                    const img = document.getElementById('sourceImage');
+                    img.src = event.target.result;
+                    img.style.display = 'block';
+                    document.getElementById('uploadText').style.display = 'none';
+                    
+                    img.onload = function() {
+                        currentImage = img;
+                        document.getElementById('debugButton').style.display = 'block';
+                        if (opencvReady) {
+                            document.getElementById('processButton').disabled = false;
+                        }
+                    };
+                };
+                reader.readAsDataURL(file);
+            }
+        });
+        
+        // Drag and Drop
+        const uploadArea = document.querySelector('.image-upload');
+        
+        uploadArea.addEventListener('dragover', function(e) {
+            e.preventDefault();
+            uploadArea.classList.add('dragover');
+        });
+        
+        uploadArea.addEventListener('dragleave', function(e) {
+            e.preventDefault();
+            uploadArea.classList.remove('dragover');
+        });
+        
+        uploadArea.addEventListener('drop', function(e) {
+            e.preventDefault();
+            uploadArea.classList.remove('dragover');
+            
+            const files = e.dataTransfer.files;
+            if (files.length > 0) {
+                document.getElementById('imageInput').files = files;
+                document.getElementById('imageInput').dispatchEvent(new Event('change'));
+            }
+        });
+        
+        // Threshold, Area, and new controls
+        document.getElementById('thresholdValue').addEventListener('input', function(e) {
+            document.getElementById('thresholdDisplay').textContent = e.target.value;
+        });
+        
+        document.getElementById('minAreaValue').addEventListener('input', function(e) {
+            document.getElementById('minAreaDisplay').textContent = e.target.value;
+        });
+        
+        document.getElementById('epsilonValue').addEventListener('input', function(e) {
+            document.getElementById('epsilonDisplay').textContent = parseFloat(e.target.value).toFixed(3);
+        });
+        
+        document.getElementById('aspectRatioTolerance').addEventListener('input', function(e) {
+            document.getElementById('aspectRatioDisplay').textContent = parseFloat(e.target.value).toFixed(1);
+        });
+        
+        // Initialize display values
+        document.getElementById('thresholdDisplay').textContent = '200';
+        document.getElementById('minAreaDisplay').textContent = '1000';
+        
+        // Process Image Button
+        document.getElementById('processButton').addEventListener('click', function() {
+            if (!opencvReady) {
+                updateOpenCVStatus('❌ OpenCV aún no está listo', 'error');
+                return;
+            }
+            
+            if (!currentImage) {
+                updateOpenCVStatus('❌ Por favor, carga una imagen primero', 'error');
+                return;
+            }
+            
+            // Simple white rectangle detection
+            detectWhiteRectangleSimple();
+        });
+        
+        // AUTO PROCESS Button - Completo proceso automatizado
+        document.getElementById('autoProcessButton').addEventListener('click', function() {
+            if (!opencvReady) {
+                updateOpenCVStatus('❌ OpenCV aún no está listo', 'error');
+                return;
+            }
+            
+            if (!currentImage) {
+                updateOpenCVStatus('❌ Por favor, carga una imagen primero', 'error');
+                return;
+            }
+            
+            updateOpenCVStatus('🚀 Iniciando proceso automático completo...', 'normal');
+            
+            // Ejecutar proceso automático completo
+            autoProcessAndApply();
+        });
+        
+        // Robust rectangle detection using the 4-step method
+        function detectWhiteRectangleSimple() {
+            if (!opencvReady) {
+                updateOpenCVStatus('❌ OpenCV aún no está listo', 'error');
+                return;
+            }
+            
+            if (!currentImage) {
+                updateOpenCVStatus('❌ Por favor, carga una imagen primero', 'error');
+                return;
+            }
+            
+            try {
+                updateOpenCVStatus('🔄 Procesando imagen...', 'normal');
+                console.log('Iniciando detección de rectángulo con método robusto...');
+                
+                // Read the image into OpenCV Mat
+                let src = cv.imread(currentImage);
+                let gray = new cv.Mat();
+                let blurred = new cv.Mat();
+                let edges = new cv.Mat();
+                let contours = new cv.MatVector();
+                let hierarchy = new cv.Mat();
+                
+                console.log(`Imagen cargada: ${src.cols}x${src.rows}`);
+                
+                // PASO 1: PRE-PROCESAMIENTO
+                console.log('Paso 1: Pre-procesamiento...');
+                
+                // Convertir a escala de grises
+                cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY, 0);
+                
+                // Aplicar desenfoque gaussiano
+                cv.GaussianBlur(gray, blurred, new cv.Size(5, 5), 0, 0, cv.BORDER_DEFAULT);
+                
+                // Detección de bordes con Canny
+                cv.Canny(blurred, edges, 75, 200);
+                
+                // Mostrar bordes para debug
+                cv.imshow(document.getElementById('detectionCanvas'), edges);
+                
+                // PASO 2: DETECCIÓN DE CONTORNOS
+                console.log('Paso 2: Detectando contornos...');
+                cv.findContours(edges, contours, hierarchy, cv.RETR_LIST, cv.CHAIN_APPROX_SIMPLE);
+                console.log(`Encontrados ${contours.size()} contornos`);
+                
+                // PASO 3: ENCONTRAR EL RECTÁNGULO MÁS GRANDE
+                console.log('Paso 3: Buscando el rectángulo más grande...');
+                let maxArea = 0;
+                let biggestContour = null;
+                
+                for (let i = 0; i < contours.size(); ++i) {
+                    let contour = contours.get(i);
+                    let area = cv.contourArea(contour, false);
+                    let peri = cv.arcLength(contour, true);
+                    let approx = new cv.Mat();
+                    cv.approxPolyDP(contour, approx, 0.02 * peri, true);
+                    
+                    console.log(`Contorno ${i}: área=${area.toFixed(0)}, perímetro=${peri.toFixed(0)}, vértices=${approx.rows}`);
+                    
+                    // Buscamos un contorno de 4 lados con el área más grande
+                    if (approx.rows === 4 && area > maxArea && area > 1000) {
+                        console.log(`✓ Nuevo mejor candidato: área=${area.toFixed(0)}`);
+                        maxArea = area;
+                        if (biggestContour) biggestContour.delete();
+                        biggestContour = approx.clone();
+                    }
+                    
+                    contour.delete();
+                    approx.delete();
+                }
+                
+                if (biggestContour && maxArea > 1000) {
+                    console.log('Paso 4: Aplicando corrección de perspectiva...');
+                    
+                    // Mostrar el contorno detectado
+                    const debugMat = src.clone();
+                    const contourVector = new cv.MatVector();
+                    contourVector.push_back(biggestContour);
+                    cv.drawContours(debugMat, contourVector, -1, [0, 255, 0, 255], 3);
+                    cv.imshow(document.getElementById('detectionCanvas'), debugMat);
+                    contourVector.delete();
+                    debugMat.delete();
+                    
+                    // Extraer y ordenar los puntos
+                    const corners = [];
+                    for (let i = 0; i < biggestContour.rows; i++) {
+                        corners.push({ 
+                            x: biggestContour.data32S[i * 2], 
+                            y: biggestContour.data32S[i * 2 + 1] 
+                        });
+                    }
+                    
+                    console.log('Esquinas detectadas:', corners);
+                    
+                    // Ordenar los puntos: top-left, top-right, bottom-right, bottom-left
+                    corners.sort((a, b) => a.y - b.y); // Ordenar por Y
+                    const topCorners = corners.slice(0, 2).sort((a, b) => a.x - b.x);
+                    const bottomCorners = corners.slice(2, 4).sort((a, b) => a.x - b.x);
+                    const sortedCorners = [topCorners[0], topCorners[1], bottomCorners[1], bottomCorners[0]];
+                    
+                    console.log('Esquinas ordenadas:', sortedCorners);
+                    
+                    // Definir puntos de origen
+                    const srcCorners = cv.matFromArray(4, 1, cv.CV_32FC2, [
+                        sortedCorners[0].x, sortedCorners[0].y,
+                        sortedCorners[1].x, sortedCorners[1].y,
+                        sortedCorners[2].x, sortedCorners[2].y,
+                        sortedCorners[3].x, sortedCorners[3].y
+                    ]);
+                    
+                    // Calcular dimensiones del rectángulo de destino manteniendo alta resolución
+                    const width = Math.max(
+                        Math.abs(sortedCorners[1].x - sortedCorners[0].x), 
+                        Math.abs(sortedCorners[2].x - sortedCorners[3].x)
+                    );
+                    const height = Math.max(
+                        Math.abs(sortedCorners[3].y - sortedCorners[0].y), 
+                        Math.abs(sortedCorners[2].y - sortedCorners[1].y)
+                    );
+
+                    // Mantener resolución alta - escalar solo si es demasiado grande
+                    let finalWidth = Math.round(width);
+                    let finalHeight = Math.round(height);
+                    const maxDimension = 2400; // Aumentado para alta resolución
+                    
+                    if (finalWidth > maxDimension || finalHeight > maxDimension) {
+                        const scale = maxDimension / Math.max(finalWidth, finalHeight);
+                        finalWidth = Math.round(finalWidth * scale);
+                        finalHeight = Math.round(finalHeight * scale);
+                        console.log(`Escalando de ${width}x${height} a ${finalWidth}x${finalHeight} para optimizar`);
+                    } else {
+                        console.log(`Manteniendo resolución completa: ${finalWidth}x${finalHeight}`);
+                    }
+
+                    // Ajustar canvas de salida dinámicamente para mejor visualización
+                    const correctedCanvas = document.getElementById('correctedCanvas');
+                    correctedCanvas.width = finalWidth;
+                    correctedCanvas.height = finalHeight;
+                    
+                    // Mejorar visualización CSS
+                    correctedCanvas.style.maxWidth = '100%';
+                    correctedCanvas.style.height = 'auto';
+                    correctedCanvas.style.minWidth = '600px';
+                    correctedCanvas.style.border = '3px solid #28a745';
+                    correctedCanvas.style.borderRadius = '8px';
+                    correctedCanvas.style.boxShadow = '0 6px 12px rgba(0,0,0,0.15)';
+                    correctedCanvas.style.background = '#ffffff';
+                    correctedCanvas.style.display = 'block';
+                    correctedCanvas.style.margin = '10px auto';
+                    
+                    console.log(`AUTO: Canvas configurado para visualización: ${finalWidth}x${finalHeight}`);                    console.log(`Dimensiones finales: ${finalWidth}x${finalHeight}`);
+                    
+                    // Definir puntos de destino (rectángulo perfecto)
+                    const dstCorners = cv.matFromArray(4, 1, cv.CV_32FC2, [
+                        0, 0, 
+                        finalWidth, 0, 
+                        finalWidth, finalHeight, 
+                        0, finalHeight
+                    ]);
+                    
+                    // Calcular y aplicar la transformación
+                    const transformMatrix = cv.getPerspectiveTransform(srcCorners, dstCorners);
+                    let warped = new cv.Mat();
+                    // Use white border scalar to avoid black edges after warp and maintain high resolution
+                    cv.warpPerspective(src, warped, transformMatrix, new cv.Size(finalWidth, finalHeight), cv.INTER_LINEAR, cv.BORDER_CONSTANT, new cv.Scalar(255,255,255,255));
+                    
+                    // MEJORA 1: Crop automático para eliminar bordes negros
+                    console.log('Aplicando crop automático para eliminar bordes negros...');
+                    const croppedImage = cropBlackBorders(warped);
+                    
+                    // MEJORA 2: Procesar imagen para convertir bordes negros internos a blancos
+                    console.log('Procesando bordes negros internos...');
+                    const processedImage = processInternalBlackBorders(croppedImage);
+                    
+                    // Mostrar el resultado final
+                    cv.imshow(document.getElementById('correctedCanvas'), processedImage);
+                    
+                    // Mejorar la visualización después de mostrar la imagen
+                    optimizeCanvasDisplay('correctedCanvas', processedImage.cols, processedImage.rows);
+                    
+                    console.log(`Imagen procesada mostrada: ${processedImage.cols}x${processedImage.rows}`);
+                    
+                    updateOpenCVStatus('✅ ¡Rectángulo detectado, croppeado y procesado exitosamente!', 'ready');
+                    console.log('✓ Proceso completo: detección + crop + procesamiento de bordes');
+                    document.getElementById('downloadButton').style.display = 'block';
+                    
+                    // Liberar memoria
+                    warped.delete();
+                    croppedImage.delete();
+                    processedImage.delete();
+                    transformMatrix.delete();
+                    srcCorners.delete();
+                    dstCorners.delete();
+                    
+                } else {
+                    updateOpenCVStatus('❌ No se encontró ningún rectángulo válido de 4 lados', 'error');
+                    console.log('No se encontró contorno válido. Área máxima encontrada:', maxArea);
+                }
+                
+                // Liberar memoria
+                src.delete();
+                gray.delete();
+                blurred.delete();
+                edges.delete();
+                contours.delete();
+                hierarchy.delete();
+                if (biggestContour) biggestContour.delete();
+                
+            } catch (error) {
+                console.error('Error durante el procesamiento:', error);
+                updateOpenCVStatus('❌ Error durante el procesamiento: ' + error.message, 'error');
+            }
+        }
+        
+        // FUNCIÓN 1: Crop automático para eliminar bordes negros (optimizado para alta resolución)
+        function cropBlackBorders(image) {
+            try {
+                console.log('Iniciando crop de bordes negros de alta resolución...');
+                
+                // Convertir a escala de grises para análisis
+                let gray = new cv.Mat();
+                cv.cvtColor(image, gray, cv.COLOR_RGBA2GRAY);
+                
+                // Crear una máscara para píxeles no negros (umbral más preciso para alta resolución)
+                let mask = new cv.Mat();
+                cv.threshold(gray, mask, 25, 255, cv.THRESH_BINARY); // Umbral más bajo para alta resolución
+                
+                // Aplicar operaciones morfológicas para limpiar ruido
+                let kernel = cv.getStructuringElement(cv.MORPH_RECT, new cv.Size(3, 3));
+                cv.morphologyEx(mask, mask, cv.MORPH_CLOSE, kernel);
+                cv.morphologyEx(mask, mask, cv.MORPH_OPEN, kernel);
+                
+                // Encontrar contornos de áreas no negras
+                let contours = new cv.MatVector();
+                let hierarchy = new cv.Mat();
+                cv.findContours(mask, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
+                
+                if (contours.size() === 0) {
+                    console.log('No se encontraron áreas para crop, devolviendo imagen original');
+                    gray.delete();
+                    mask.delete();
+                    kernel.delete();
+                    contours.delete();
+                    hierarchy.delete();
+                    return image.clone();
+                }
+                
+                // Encontrar el bounding box de todas las áreas no negras
+                let minX = image.cols, minY = image.rows, maxX = 0, maxY = 0;
+                
+                for (let i = 0; i < contours.size(); i++) {
+                    let contour = contours.get(i);
+                    let boundingRect = cv.boundingRect(contour);
+                    
+                    minX = Math.min(minX, boundingRect.x);
+                    minY = Math.min(minY, boundingRect.y);
+                    maxX = Math.max(maxX, boundingRect.x + boundingRect.width);
+                    maxY = Math.max(maxY, boundingRect.y + boundingRect.height);
+                    
+                    contour.delete();
+                }
+                
+                // Padding proporcional a la resolución de la imagen
+                const basePadding = Math.max(8, Math.min(image.cols, image.rows) / 200); // Padding adaptativo
+                const padding = Math.round(basePadding);
+                
+                minX = Math.max(0, minX - padding);
+                minY = Math.max(0, minY - padding);
+                maxX = Math.min(image.cols, maxX + padding);
+                maxY = Math.min(image.rows, maxY + padding);
+                
+                console.log(`Crop detectado: (${minX}, ${minY}) a (${maxX}, ${maxY}) con padding ${padding}px`);
+                
+                // Crear ROI (Region of Interest) y copiar
+                let roi = new cv.Rect(minX, minY, maxX - minX, maxY - minY);
+                let croppedImage = image.roi(roi);
+                let result = croppedImage.clone();
+                
+                // Cleanup
+                gray.delete();
+                mask.delete();
+                kernel.delete();
+                contours.delete();
+                hierarchy.delete();
+                croppedImage.delete();
+                
+                console.log(`✓ Crop completado: ${result.cols}x${result.rows} (resolución alta preservada)`);
+                return result;
+                
+            } catch (error) {
+                console.error('Error en crop automático:', error);
+                return image.clone();
+            }
+        }
+        
+        // FUNCIÓN 2: Procesar imagen usando enmascaramiento HSV avanzado para preservar bordes suaves
+        function processInternalBlackBorders(image) {
+            try {
+                console.log('Iniciando procesamiento avanzado HSV con enmascaramiento...');
+                
+                let result = image.clone();
+
+                // Paso preliminar: rellenar cualquier borde transparente/negro en el contorno con blanco
+                result = ensureWhiteBorder(result, 10);
+                
+                // PASO PRINCIPAL: Enmascaramiento HSV profesional para fondo blanco preservando bordes suaves
+                console.log('Paso principal: Aplicando enmascaramiento HSV avanzado...');
+                result = applyAdvancedHSVMasking(result);
+                
+                // PASO FINAL: Limpieza suave de bordes sin arruinar la acuarela
+                console.log('Paso final: Limpieza suave de bordes...');
+                result = finalCleanBorders(result);
+                
+                console.log('✓ Procesamiento HSV avanzado completado');
+                return result;
+                
+            } catch (error) {
+                console.error('Error en procesamiento HSV avanzado:', error);
+                // Fallback a método anterior si falla
+                return processInternalBlackBorders_Legacy(image);
+            }
+        }
+        
+        // FUNCIÓN PRINCIPAL: Enmascaramiento HSV avanzado para preservar bordes suaves de acuarela
+        function applyAdvancedHSVMasking(image) {
+            try {
+                console.log('Aplicando enmascaramiento HSV profesional...');
+                
+                let result = image.clone();
+                
+                // Método 1: OpenCV.js HSV masking (más eficiente)
+                if (typeof cv !== 'undefined' && cv.inRange) {
+                    console.log('Usando método OpenCV HSV...');
+                    result = applyOpenCVHSVMasking(result);
+                } else {
+                    console.log('Usando método Canvas HSL manual...');
+                    result = applyCanvasHSLMasking(result);
+                }
+                
+                return result;
+                
+            } catch (error) {
+                console.error('Error en enmascaramiento HSV:', error);
+                return image.clone();
+            }
+        }
+
+        // Método OpenCV.js - HSV masking profesional (optimizado para alta resolución)
+        function applyOpenCVHSVMasking(image) {
+            try {
+                let src = image.clone();
+                let hsv = new cv.Mat();
+                let mask = new cv.Mat();
+                let resultado = new cv.Mat();
+                
+                console.log(`Procesando imagen HSV de alta resolución: ${src.cols}x${src.rows}`);
+                
+                // Convertir a HSV
+                cv.cvtColor(src, hsv, cv.COLOR_RGBA2RGB);
+                cv.cvtColor(hsv, hsv, cv.COLOR_RGB2HSV);
+                
+                // Definir rango del fondo grisáceo en HSV (ajustado para alta resolución)
+                // H: 0-179, S: 0-255, V: 0-255
+                let rangoInferior = new cv.Mat(hsv.rows, hsv.cols, hsv.type(), [0, 0, 190, 0]);     // Gris muy claro (ajustado)
+                let rangoSuperior = new cv.Mat(hsv.rows, hsv.cols, hsv.type(), [179, 70, 255, 255]); // Blanco puro con baja saturación
+                
+                // Crear máscara: blanco donde está el fondo, negro donde están las flores
+                cv.inRange(hsv, rangoInferior, rangoSuperior, mask);
+                
+                // Suavizar la máscara para bordes más naturales - kernel más grande para alta resolución
+                const kernelSize = Math.max(3, Math.round(Math.min(src.cols, src.rows) / 800)); // Kernel adaptativo
+                let kernel = cv.getStructuringElement(cv.MORPH_ELLIPSE, new cv.Size(kernelSize, kernelSize));
+                cv.morphologyEx(mask, mask, cv.MORPH_CLOSE, kernel);
+                
+                // Aplicar blur gaussiano más fuerte para alta resolución
+                const blurSize = Math.max(3, kernelSize);
+                cv.GaussianBlur(mask, mask, new cv.Size(blurSize, blurSize), 0);
+                
+                // Invertir máscara: negro donde está el fondo, blanco donde están las flores
+                cv.bitwise_not(mask, mask);
+                
+                // Crear imagen con canal alfa basado en la máscara
+                let channels = new cv.MatVector();
+                cv.split(src, channels);
+                
+                // Usar la máscara como canal alfa
+                channels.set(3, mask); // Establecer canal alfa
+                
+                // Recombinar canales
+                cv.merge(channels, resultado);
+                
+                // Cleanup
+                src.delete();
+                hsv.delete();
+                mask.delete();
+                rangoInferior.delete();
+                rangoSuperior.delete();
+                kernel.delete();
+                channels.delete();
+                
+                console.log(`✓ Enmascaramiento OpenCV HSV completado para imagen ${resultado.cols}x${resultado.rows}`);
+                return resultado;
+                
+            } catch (error) {
+                console.error('Error en OpenCV HSV masking:', error);
+                return image.clone();
+            }
+        }
+
+        // Método Canvas - HSL masking manual como fallback
+        function applyCanvasHSLMasking(image) {
+            try {
+                let result = image.clone();
+                let data = result.data;
+                
+                // Umbrales ajustables
+                const umbralLuminosidad = 0.82;  // Más alto = más blanco (0-1)
+                const umbralSaturacion = 0.25;   // Más bajo = menos colorido (0-1)
+                
+                let pixelsProcessed = 0;
+                
+                // Procesar cada píxel
+                for (let i = 0; i < data.length; i += 4) {
+                    const r = data[i] / 255;
+                    const g = data[i + 1] / 255;
+                    const b = data[i + 2] / 255;
+                    
+                    // Convertir RGB a HSL
+                    const [h, s, l] = rgbToHsl(r, g, b);
+                    
+                    // Si es fondo (alta luminosidad Y baja saturación)
+                    if (l > umbralLuminosidad && s < umbralSaturacion) {
+                        // Hacer transparente gradualmente basado en qué tan "fondo" es
+                        const fondoScore = Math.min(1, (l - umbralLuminosidad) / (1 - umbralLuminosidad) + 
+                                                      (umbralSaturacion - s) / umbralSaturacion);
+                        
+                        // Aplicar transparencia graduada
+                        data[i + 3] = Math.max(0, 255 * (1 - fondoScore * 0.9));
+                        pixelsProcessed++;
+                    }
+                }
+                
+                console.log(`✓ Canvas HSL masking completado. ${pixelsProcessed} píxeles procesados`);
+                return result;
+                
+            } catch (error) {
+                console.error('Error en Canvas HSL masking:', error);
+                return image.clone();
+            }
+        }
+
+        // Función auxiliar: Convertir RGB a HSL
+        function rgbToHsl(r, g, b) {
+            const max = Math.max(r, g, b);
+            const min = Math.min(r, g, b);
+            const diff = max - min;
+            const sum = max + min;
+            const l = sum / 2;
+
+            let h, s;
+
+            if (diff === 0) {
+                h = s = 0; // achromático
+            } else {
+                s = l > 0.5 ? diff / (2 - sum) : diff / sum;
+                
+                switch (max) {
+                    case r: h = (g - b) / diff + (g < b ? 6 : 0); break;
+                    case g: h = (b - r) / diff + 2; break;
+                    case b: h = (r - g) / diff + 4; break;
+                }
+                h /= 6;
+            }
+
+            return [h, s, l];
+        }
+        
+        // Función legacy para fallback (mantiene métodos anteriores por seguridad)
+        function processInternalBlackBorders_Legacy(image) {
+            try {
+                console.log('Usando método legacy de procesamiento...');
+                
+                let result = image.clone();
+                
+                // PASO 1: Saturar colores y mejorar blancos
+                result = enhanceColorsAndWhites_Legacy(result);
+                
+                // PASO 2: Ajuste agresivo de brillo y contraste para blancos perfectos
+                result = enhanceBrightnessContrast_Legacy(result);
+                
+                // PASO 3: Convertir específicamente píxeles casi-blancos a blanco absoluto
+                result = forceAlmostWhiteToWhite_Legacy(result);
+                
+                // PASO 4: Detectar y convertir líneas negras a blancas
+                result = convertBlackLinesToWhite_Legacy(result);
+                
+                console.log('✓ Procesamiento legacy completado');
+                return result;
+                
+            } catch (error) {
+                console.error('Error en procesamiento legacy:', error);
+                return image.clone();
+            }
+        }
+
+        // Funciones legacy renombradas para mantener compatibilidad
+        function enhanceColorsAndWhites_Legacy(image) {
+            try {
+                let result = image.clone();
+                let hsv = new cv.Mat();
+                
+                // Convertir a HSV para saturación
+                cv.cvtColor(result, hsv, cv.COLOR_RGBA2RGB);
+                cv.cvtColor(hsv, hsv, cv.COLOR_RGB2HSV);
+                
+                // Separar canales HSV
+                let hsvChannels = new cv.MatVector();
+                cv.split(hsv, hsvChannels);
+                
+                let h = hsvChannels.get(0);  // Hue (matiz)
+                let s = hsvChannels.get(1);  // Saturation (saturación)
+                let v = hsvChannels.get(2);  // Value (brillo)
+                
+                // MEJORAR SATURACIÓN: Solo para píxeles con color (no grises)
+                for (let i = 0; i < s.rows; i++) {
+                    for (let j = 0; j < s.cols; j++) {
+                        let satValue = s.ucharAt(i, j);
+                        let valueValue = v.ucharAt(i, j);
+                        
+                        // Solo saturar si tiene algo de color Y no es muy oscuro ni muy claro
+                        if (satValue > 15 && valueValue > 50 && valueValue < 240) {
+                            // Aumentar saturación un 30%
+                            let newSat = Math.min(255, satValue * 1.3);
+                            s.ucharPtr(i, j)[0] = newSat;
+                        }
+                    }
+                }
+                
+                // MEJORAR BLANCOS: Hacer blancos más puros
+                for (let i = 0; i < v.rows; i++) {
+                    for (let j = 0; j < v.cols; j++) {
+                        let satValue = s.ucharAt(i, j);
+                        let valueValue = v.ucharAt(i, j);
+                        
+                        // Si es casi blanco (alta luminosidad, baja saturación)
+                        if (valueValue > 220 && satValue < 30) {
+                            // Hacerlo blanco puro
+                            s.ucharPtr(i, j)[0] = 0;    // Sin saturación
+                            v.ucharPtr(i, j)[0] = 255;  // Máximo brillo
+                        }
+                    }
+                }
+                
+                // Recombinar canales HSV
+                let enhancedHsv = new cv.Mat();
+                cv.merge(hsvChannels, enhancedHsv);
+                
+                // Convertir de vuelta a RGB
+                let enhancedRgb = new cv.Mat();
+                cv.cvtColor(enhancedHsv, enhancedRgb, cv.COLOR_HSV2RGB);
+                cv.cvtColor(enhancedRgb, result, cv.COLOR_RGB2RGBA);
+                
+                // Cleanup
+                hsv.delete();
+                hsvChannels.delete();
+                h.delete();
+                s.delete();
+                v.delete();
+                enhancedHsv.delete();
+                enhancedRgb.delete();
+                
+                return result;
+                
+            } catch (error) {
+                console.error('Error mejorando colores legacy:', error);
+                return image.clone();
+            }
+        }
+        
+        function enhanceBrightnessContrast_Legacy(image) {
+            try {
+                let result = image.clone();
+                let data = result.data;
+                
+                // Parámetros de ajuste más agresivos
+                const brightness = 60;  // Aumentar brillo más
+                const contrast = 1.8;   // Aumentar contraste más
+                
+                // Contador de píxeles convertidos
+                let pixelsConverted = 0;
+                
+                // Aplicar ajuste píxel por píxel
+                for (let i = 0; i < data.length; i += 4) {
+                    let r = data[i];
+                    let g = data[i + 1]; 
+                    let b = data[i + 2];
+                    
+                    // DETECCIÓN ESPECÍFICA: Rango (240-250) que necesita ser convertido a blanco puro
+                    const isAlmostWhite = (r >= 240 && r <= 250) && 
+                                         (g >= 240 && g <= 250) && 
+                                         (b >= 240 && b <= 250);
+                    
+                    if (isAlmostWhite) {
+                        // Forzar a blanco absoluto inmediatamente
+                        data[i] = 255;     // R
+                        data[i + 1] = 255; // G  
+                        data[i + 2] = 255; // B
+                        pixelsConverted++;
+                    } else {
+                        // Para otros píxeles, aplicar ajuste normal de contraste y brillo
+                        for (let c = 0; c < 3; c++) {
+                            let value = data[i + c];
+                            
+                            // Aplicar contraste primero (alrededor del punto medio 128)
+                            value = ((value - 128) * contrast) + 128;
+                            
+                            // Aplicar brillo
+                            value = value + brightness;
+                            
+                            // Clampear valores entre 0-255
+                            value = Math.max(0, Math.min(255, value));
+                            
+                            // Si después del ajuste queda muy claro, también forzar a blanco
+                            if (value > 248) {
+                                value = 255;
+                            }
+                            
+                            data[i + c] = value;
+                        }
+                    }
+                    // El canal alfa (transparencia) se mantiene igual
+                }
+                
+                return result;
+                
+            } catch (error) {
+                console.error('Error ajustando brillo y contraste legacy:', error);
+                return image.clone();
+            }
+        }
+
+        function forceAlmostWhiteToWhite_Legacy(image) {
+            try {
+                let result = image.clone();
+                let data = result.data;
+                
+                let convertedPixels = 0;
+                let totalPixels = data.length / 4;
+                
+                // Procesar cada píxel
+                for (let i = 0; i < data.length; i += 4) {
+                    let r = data[i];
+                    let g = data[i + 1];
+                    let b = data[i + 2];
+                    
+                    // Detectar píxeles en el rango problemático (240-250) 
+                    const isInAlmostWhiteRange = (r >= 240 && r <= 250) && 
+                                                (g >= 240 && g <= 250) && 
+                                                (b >= 240 && b <= 250);
+                    
+                    // También detectar píxeles que son muy similares entre sí (grises claros)
+                    const isGrayishWhite = Math.abs(r - g) <= 5 && 
+                                          Math.abs(g - b) <= 5 && 
+                                          Math.abs(r - b) <= 5 && 
+                                          r >= 235;
+                    
+                    if (isInAlmostWhiteRange || isGrayishWhite) {
+                        // Convertir a blanco absoluto
+                        data[i] = 255;     // R = 255
+                        data[i + 1] = 255; // G = 255  
+                        data[i + 2] = 255; // B = 255
+                        convertedPixels++;
+                    }
+                }
+                
+                return result;
+                
+            } catch (error) {
+                console.error('Error convirtiendo casi-blancos legacy:', error);
+                return image.clone();
+            }
+        }
+
+        function convertBlackLinesToWhite_Legacy(image) {
+            try {
+                let result = image.clone();
+                let gray = new cv.Mat();
+                let hsv = new cv.Mat();
+                
+                // Convertir a escala de grises para análisis
+                cv.cvtColor(result, gray, cv.COLOR_RGBA2GRAY);
+                
+                // Convertir a HSV para preservar colores
+                cv.cvtColor(result, hsv, cv.COLOR_RGBA2RGB);
+                cv.cvtColor(hsv, hsv, cv.COLOR_RGB2HSV);
+                
+                // Separar canales HSV
+                let hsvChannels = new cv.MatVector();
+                cv.split(hsv, hsvChannels);
+                let h = hsvChannels.get(0);
+                let s = hsvChannels.get(1);
+                let v = hsvChannels.get(2);
+                
+                let linesConverted = 0;
+                
+                for (let i = 1; i < gray.rows - 1; i++) {
+                    for (let j = 1; j < gray.cols - 1; j++) {
+                        let grayValue = gray.ucharAt(i, j);
+                        let satValue = s.ucharAt(i, j);
+                        let valueValue = v.ucharAt(i, j);
+                        
+                        if (grayValue < 50 && satValue < 50) {
+                            // Verificar contexto: es una línea si tiene píxeles claros cerca
+                            let hasLightNeighbors = false;
+                            let hasColorNeighbors = false;
+                            
+                            // Verificar vecindario 3x3
+                            for (let di = -1; di <= 1; di++) {
+                                for (let dj = -1; dj <= 1; dj++) {
+                                    if (di === 0 && dj === 0) continue;
+                                    
+                                    let ni = i + di;
+                                    let nj = j + dj;
+                                    
+                                    if (ni >= 0 && ni < gray.rows && nj >= 0 && nj < gray.cols) {
+                                        let neighborGray = gray.ucharAt(ni, nj);
+                                        let neighborSat = s.ucharAt(ni, nj);
+                                        
+                                        if (neighborGray > 150) hasLightNeighbors = true;
+                                        if (neighborSat > 30) hasColorNeighbors = true;
+                                    }
+                                }
+                            }
+                            
+                            // Si tiene vecinos claros O vecinos con color, probablemente es una línea/borde
+                            if (hasLightNeighbors || hasColorNeighbors) {
+                                // Convertir a blanco en la imagen RGBA
+                                let rgbaIdx = (i * result.cols + j) * 4;
+                                result.data[rgbaIdx] = 255;     // R
+                                result.data[rgbaIdx + 1] = 255; // G
+                                result.data[rgbaIdx + 2] = 255; // B
+                                result.data[rgbaIdx + 3] = 255; // A
+                                
+                                linesConverted++;
+                            }
+                        }
+                    }
+                }
+                
+                // PASO ADICIONAL: Suavizar transiciones
+                if (linesConverted > 0) {
+                    let smoothed = new cv.Mat();
+                    // Filtro suave para mejorar transiciones
+                    cv.bilateralFilter(result, smoothed, 3, 50, 50);
+                    result.delete();
+                    result = smoothed;
+                }
+                
+                // Cleanup
+                gray.delete();
+                hsv.delete();
+                hsvChannels.delete();
+                h.delete();
+                s.delete();
+                v.delete();
+                
+                return result;
+                
+            } catch (error) {
+                console.error('Error convirtiendo líneas negras legacy:', error);
+                return image.clone();
+            }
+        }
+
+        // Asegura que un borde de 'pad' píxeles alrededor de la imagen sea blanco absoluto.
+        function ensureWhiteBorder(image, pad) {
+            try {
+                let result = image.clone();
+                const w = result.cols;
+                const h = result.rows;
+
+                // Forzar las filas/columnas de borde a blanco
+                for (let y = 0; y < h; y++) {
+                    for (let x = 0; x < w; x++) {
+                        if (x < pad || x >= w - pad || y < pad || y >= h - pad) {
+                            const idx = (y * w + x) * 4;
+                            result.data[idx] = 255;
+                            result.data[idx + 1] = 255;
+                            result.data[idx + 2] = 255;
+                            result.data[idx + 3] = 255;
+                        }
+                    }
+                }
+                return result;
+            } catch (e) {
+                console.warn('ensureWhiteBorder failed:', e.message);
+                return image.clone();
+            }
+        }
+
+        // Limpieza final de bordes: suaviza y fuerza blancos cerca del borde (optimizado para alta resolución)
+        function finalCleanBorders(image) {
+            try {
+                let result = image.clone();
+                const w = result.cols;
+                const h = result.rows;
+                const edgeThreshold = 240; // luminosidad mínima para considerar blanco
+
+                // Margen proporcional a la resolución de la imagen
+                const baseMargin = Math.max(10, Math.min(w, h) / 100); // Margen adaptativo
+                const margin = Math.round(baseMargin);
+
+                console.log(`Aplicando limpieza final con margen de ${margin}px para imagen ${w}x${h}`);
+
+                // Forzar a blanco cualquier píxel en el margen que esté por debajo del umbral
+                for (let y = 0; y < h; y++) {
+                    for (let x = 0; x < w; x++) {
+                        if (x < margin || x >= w - margin || y < margin || y >= h - margin) {
+                            const idx = (y * w + x) * 4;
+                            const r = result.data[idx];
+                            const g = result.data[idx + 1];
+                            const b = result.data[idx + 2];
+                            const lum = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+                            if (lum < edgeThreshold) {
+                                result.data[idx] = 255;
+                                result.data[idx + 1] = 255;
+                                result.data[idx + 2] = 255;
+                                result.data[idx + 3] = 255;
+                            }
+                        }
+                    }
+                }
+
+                // Aplicar un blur adaptativo para suavizar transiciones
+                const blurSize = Math.max(3, Math.round(margin / 3));
+                let blurred = new cv.Mat();
+                cv.GaussianBlur(result, blurred, new cv.Size(blurSize, blurSize), 0);
+                
+                console.log(`✓ Limpieza final completada con blur de ${blurSize}px`);
+                
+                result.delete();
+                return blurred;
+            } catch (e) {
+                console.warn('finalCleanBorders failed:', e.message);
+                return image.clone();
+            }
+        }
+        
+        // Función para optimizar la visualización del canvas
+        function optimizeCanvasDisplay(canvasId, actualWidth, actualHeight) {
+            try {
+                const canvas = document.getElementById(canvasId);
+                if (!canvas) return;
+                
+                // Calcular el tamaño de visualización óptimo
+                const containerWidth = canvas.parentElement.clientWidth || 800;
+                const maxDisplayWidth = Math.min(containerWidth - 40, 1000); // Máximo 1000px de ancho
+                const maxDisplayHeight = 600; // Máximo 600px de alto
+                
+                // Calcular escala manteniendo proporción
+                const scaleX = maxDisplayWidth / actualWidth;
+                const scaleY = maxDisplayHeight / actualHeight;
+                const scale = Math.min(scaleX, scaleY, 1); // No escalar hacia arriba
+                
+                const displayWidth = Math.round(actualWidth * scale);
+                const displayHeight = Math.round(actualHeight * scale);
+                
+                // Aplicar estilos de visualización mejorados
+                canvas.style.width = `${displayWidth}px`;
+                canvas.style.height = `${displayHeight}px`;
+                canvas.style.maxWidth = '100%';
+                canvas.style.border = '3px solid #28a745';
+                canvas.style.borderRadius = '8px';
+                canvas.style.boxShadow = '0 8px 16px rgba(0,0,0,0.2)';
+                canvas.style.background = '#ffffff';
+                canvas.style.display = 'block';
+                canvas.style.margin = '15px auto';
+                canvas.style.imageRendering = 'high-quality';
+                canvas.style.imageRendering = '-webkit-optimize-contrast';
+                
+                console.log(`Canvas optimizado: ${actualWidth}x${actualHeight} → display ${displayWidth}x${displayHeight} (escala: ${scale.toFixed(2)})`);
+                
+                // Scroll suave al canvas para que sea visible
+                setTimeout(() => {
+                    canvas.scrollIntoView({ 
+                        behavior: 'smooth', 
+                        block: 'center',
+                        inline: 'center'
+                    });
+                }, 100);
+                
+            } catch (error) {
+                console.warn('Error optimizando visualización del canvas:', error);
+            }
+        }
+
+        // Debug Button
+        document.getElementById('debugButton').addEventListener('click', function() {
+            // This will be populated during processing
+            console.log('Debug button clicked - check the canvas elements for debug images');
+        });
+        
+        // Main OpenCV Processing Function - FOCUSED ON WHITE RECTANGLES
+        function processImageWithOpenCV() {
+            try {
+                updateOpenCVStatus('🔄 Procesando imagen...', 'normal');
+                
+                // Create Mat from image
+                const img = currentImage;
+                const canvas = document.createElement('canvas');
+                const ctx = canvas.getContext('2d');
+                canvas.width = img.width;
+                canvas.height = img.height;
+                ctx.drawImage(img, 0, 0);
+                
+                const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+                const mat = cv.matFromImageData(imageData);
+                
+                console.log(`Image size: ${mat.cols} x ${mat.rows}`);
+                
+                // Convert to grayscale
+                const gray = new cv.Mat();
+                cv.cvtColor(mat, gray, cv.COLOR_RGBA2GRAY);
+                
+                // Show grayscale for debugging
+                cv.imshow(document.getElementById('detectionCanvas'), gray);
+                console.log('Grayscale conversion done');
+                
+                // FOCUS ON WHITE RECTANGLES - Try multiple thresholds for white detection
+                const threshold = parseInt(document.getElementById('thresholdValue').value);
+                console.log(`Starting white rectangle detection with threshold: ${threshold}`);
+                
+                let bestBinary = null;
+                let bestWhitePixels = 0;
+                let bestThresholdValue = threshold;
+                
+                // Try different thresholds to find white rectangles
+                const thresholdsToTry = [threshold, threshold - 20, threshold - 40, threshold - 60, 180, 160, 140];
+                
+                for (const testThreshold of thresholdsToTry) {
+                    if (testThreshold < 100) continue; // Don't go too low
+                    
+                    const testBinary = new cv.Mat();
+                    cv.threshold(gray, testBinary, testThreshold, 255, cv.THRESH_BINARY);
+                    const whitePixelCount = cv.countNonZero(testBinary);
+                    
+                    console.log(`Threshold ${testThreshold}: ${whitePixelCount} white pixels`);
+                    
+                    // Look for reasonable amount of white pixels (not too few, not too many)
+                    if (whitePixelCount > 500 && whitePixelCount < (mat.rows * mat.cols * 0.8)) {
+                        if (whitePixelCount > bestWhitePixels) {
+                            if (bestBinary) bestBinary.delete();
+                            bestBinary = testBinary.clone();
+                            bestWhitePixels = whitePixelCount;
+                            bestThresholdValue = testThreshold;
+                        }
+                    }
+                    testBinary.delete();
+                }
+                
+                if (!bestBinary || bestWhitePixels === 0) {
+                    updateOpenCVStatus('❌ No se pudo detectar un rectángulo blanco. Intenta ajustar el umbral.', 'error');
+                    cleanupMats([mat, gray]);
+                    return;
+                }
+                
+                console.log(`Using threshold ${bestThresholdValue} with ${bestWhitePixels} white pixels`);
+                
+                // Apply morphological operations to clean up
+                const kernel = cv.getStructuringElement(cv.MORPH_RECT, new cv.Size(3, 3));
+                const cleaned = new cv.Mat();
+                cv.morphologyEx(bestBinary, cleaned, cv.MORPH_CLOSE, kernel);
+                cv.morphologyEx(cleaned, cleaned, cv.MORPH_OPEN, kernel);
+                
+                // Show binary image for debugging
+                cv.imshow(document.getElementById('correctedCanvas'), cleaned);
+                console.log('Binary image cleaned');
+                
+                // Find contours
+                const contours = new cv.MatVector();
+                const hierarchy = new cv.Mat();
+                cv.findContours(cleaned, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
+                
+                console.log(`Found ${contours.size()} contours`);
+                
+                if (contours.size() === 0) {
+                    updateOpenCVStatus('❌ No se encontraron contornos. El rectángulo blanco puede ser muy pequeño o muy grande.', 'error');
+                    cleanupMats([mat, gray, bestBinary, cleaned, contours, hierarchy, kernel]);
+                    return;
+                }
+                
+                // Find the best white rectangle - prioritize central, rectangular shapes
+                let bestContour = null;
+                let bestScore = 0;
+                const imageCenter = [mat.cols / 2, mat.rows / 2];
+                const minArea = Math.max(parseInt(document.getElementById('minAreaValue').value), 100);
+                
+                console.log(`Looking for rectangles with min area: ${minArea}, image center: [${imageCenter[0]}, ${imageCenter[1]}]`);
+                
+                for (let i = 0; i < contours.size(); i++) {
+                    const contour = contours.get(i);
+                    const area = cv.contourArea(contour);
+                    
+                    console.log(`\nContour ${i}: area = ${area}`);
+                    
+                    if (area > minArea) {
+                        // Try to approximate to rectangle
+                        const approx = new cv.Mat();
+                        const epsilon = 0.02 * cv.arcLength(contour, true);
+                        cv.approxPolyDP(contour, approx, epsilon, true);
+                        
+                        console.log(`  Approximation has ${approx.rows} points`);
+                        
+                        // For white rectangles, be more strict about 4 corners
+                        if (approx.rows === 4) {
+                            const score = calculateWhiteRectangleScore(approx, area, imageCenter, mat.cols, mat.rows);
+                            console.log(`  Rectangle score: ${score}`);
+                            
+                            if (score > bestScore) {
+                                bestScore = score;
+                                if (bestContour) bestContour.delete();
+                                bestContour = approx.clone();
+                                console.log(`  ✓ New best rectangle found!`);
+                            }
+                        } else if (approx.rows > 4 && approx.rows <= 8) {
+                            // Try to reduce to 4 corners
+                            const rectApprox = findBestRectangleFromPolygon(approx);
+                            if (rectApprox && rectApprox.rows === 4) {
+                                const score = calculateWhiteRectangleScore(rectApprox, area, imageCenter, mat.cols, mat.rows);
+                                console.log(`  Reduced rectangle score: ${score}`);
+                                
+                                if (score > bestScore) {
+                                    bestScore = score;
+                                    if (bestContour) bestContour.delete();
+                                    bestContour = rectApprox.clone();
+                                    console.log(`  ✓ New best reduced rectangle found!`);
+                                }
+                                rectApprox.delete();
+                            }
+                        }
+                        approx.delete();
+                    }
+                    contour.delete();
+                }
+                
+                if (!bestContour || bestScore === 0) {
+                    updateOpenCVStatus('❌ No se encontró un rectángulo blanco válido. Intenta ajustar los parámetros.', 'error');
+                    console.log('No valid white rectangle found');
+                    cleanupMats([mat, gray, bestBinary, cleaned, contours, hierarchy, kernel]);
+                    return;
+                }
+                
+                console.log(`\n✓ Best white rectangle found with score: ${bestScore}`);
+                
+                // Draw detection result
+                drawDetectionResult(mat, bestContour);
+                
+                // Apply perspective correction
+                const correctedImage = applyPerspectiveCorrection(mat, bestContour);
+                
+                if (correctedImage) {
+                    drawCorrectedResult(correctedImage);
+                    updateOpenCVStatus('✅ Rectángulo blanco detectado y corregido exitosamente', 'ready');
+                    document.getElementById('downloadButton').style.display = 'block';
+                    correctedImage.delete();
+                } else {
+                    updateOpenCVStatus('❌ Error en la corrección de perspectiva', 'error');
+                }
+                
+                // Cleanup
+                cleanupMats([mat, gray, bestBinary, cleaned, contours, hierarchy, kernel, bestContour]);
+                
+            } catch (error) {
+                console.error('Error en OpenCV:', error);
+                updateOpenCVStatus('❌ Error durante el procesamiento: ' + error.message, 'error');
+            }
+        }
+        
+        // Draw Detection Result
+        function drawDetectionResult(originalMat, contour) {
+            const detectionCanvas = document.getElementById('detectionCanvas');
+            const displayMat = originalMat.clone();
+            
+            // Draw the detected contour
+            const contours = new cv.MatVector();
+            contours.push_back(contour);
+            cv.drawContours(displayMat, contours, -1, [0, 255, 0, 255], 3);
+            
+            cv.imshow(detectionCanvas, displayMat);
+            
+            displayMat.delete();
+            contours.delete();
+        }
+        
+        // Apply Perspective Correction (IMPROVED)
+        function applyPerspectiveCorrection(mat, contour) {
+            try {
+                console.log('Starting perspective correction...');
+                
+                // Get the four corner points
+                const points = [];
+                for (let i = 0; i < contour.rows; i++) {
+                    const point = contour.data32S.slice(i * 2, i * 2 + 2);
+                    points.push([point[0], point[1]]);
+                }
+                
+                console.log('Original points:', points);
+                
+                // Sort points to get correct order (top-left, top-right, bottom-right, bottom-left)
+                const sortedPoints = sortCornerPointsImproved(points);
+                console.log('Sorted points:', sortedPoints);
+                
+                // Calculate the size of the output rectangle
+                const width1 = distance(sortedPoints[0], sortedPoints[1]); // top edge
+                const width2 = distance(sortedPoints[2], sortedPoints[3]); // bottom edge
+                const height1 = distance(sortedPoints[1], sortedPoints[2]); // right edge
+                const height2 = distance(sortedPoints[3], sortedPoints[0]); // left edge
+                
+                const outputWidth = Math.max(width1, width2);
+                const outputHeight = Math.max(height1, height2);
+                
+                console.log(`Output dimensions: ${outputWidth} x ${outputHeight}`);
+                
+                // Make sure output size is reasonable
+                const maxSize = 800;
+                let finalWidth = outputWidth;
+                let finalHeight = outputHeight;
+                
+                if (outputWidth > maxSize || outputHeight > maxSize) {
+                    const scale = maxSize / Math.max(outputWidth, outputHeight);
+                    finalWidth = outputWidth * scale;
+                    finalHeight = outputHeight * scale;
+                }
+                
+                console.log(`Final dimensions: ${finalWidth} x ${finalHeight}`);
+                
+                // Define source and destination points
+                const srcPoints = cv.matFromArray(4, 1, cv.CV_32FC2, [
+                    sortedPoints[0][0], sortedPoints[0][1],  // top-left
+                    sortedPoints[1][0], sortedPoints[1][1],  // top-right
+                    sortedPoints[2][0], sortedPoints[2][1],  // bottom-right
+                    sortedPoints[3][0], sortedPoints[3][1]   // bottom-left
+                ]);
+                
+                const dstPoints = cv.matFromArray(4, 1, cv.CV_32FC2, [
+                    0, 0,                                    // top-left
+                    finalWidth, 0,                          // top-right
+                    finalWidth, finalHeight,                // bottom-right
+                    0, finalHeight                          // bottom-left
+                ]);
+                
+                // Calculate homography matrix
+                const homography = cv.getPerspectiveTransform(srcPoints, dstPoints);
+                
+                // Apply perspective transformation
+                const corrected = new cv.Mat();
+                // Use white border scalar to avoid black edges after warp
+                cv.warpPerspective(mat, corrected, homography, new cv.Size(finalWidth, finalHeight), cv.INTER_LINEAR, cv.BORDER_CONSTANT, new cv.Scalar(255,255,255,255));
+                
+                console.log('Perspective correction completed successfully');
+                
+                // Cleanup
+                srcPoints.delete();
+                dstPoints.delete();
+                homography.delete();
+                
+                return corrected;
+                
+            } catch (error) {
+                console.error('Error en corrección de perspectiva:', error);
+                return null;
+            }
+        }
+        
+        // Sort Corner Points (IMPROVED)
+        function sortCornerPointsImproved(points) {
+            if (points.length !== 4) {
+                console.error('Expected 4 points, got', points.length);
+                return points;
+            }
+            
+            // Calculate center point
+            const centerX = points.reduce((sum, p) => sum + p[0], 0) / 4;
+            const centerY = points.reduce((sum, p) => sum + p[1], 0) / 4;
+            
+            console.log(`Center point: (${centerX}, ${centerY})`);
+            
+            // Classify each point by its position relative to center
+            const classified = points.map(point => {
+                return {
+                    point: point,
+                    isLeft: point[0] < centerX,
+                    isTop: point[1] < centerY
+                };
+            });
+            
+            // Find each corner
+            const topLeft = classified.find(p => p.isLeft && p.isTop)?.point;
+            const topRight = classified.find(p => !p.isLeft && p.isTop)?.point;
+            const bottomLeft = classified.find(p => p.isLeft && !p.isTop)?.point;
+            const bottomRight = classified.find(p => !p.isLeft && !p.isTop)?.point;
+            
+            // Fallback: if classification fails, use distance-based approach
+            if (!topLeft || !topRight || !bottomLeft || !bottomRight) {
+                console.log('Classification failed, using distance-based approach');
+                
+                // Find points closest to theoretical corners
+                const corners = [
+                    { x: centerX - 1000, y: centerY - 1000 }, // top-left
+                    { x: centerX + 1000, y: centerY - 1000 }, // top-right
+                    { x: centerX + 1000, y: centerY + 1000 }, // bottom-right
+                    { x: centerX - 1000, y: centerY + 1000 }  // bottom-left
+                ];
+                
+                const result = [];
+                for (const corner of corners) {
+                    let minDist = Infinity;
+                    let closest = null;
+                    for (const point of points) {
+                        const dist = Math.pow(point[0] - corner.x, 2) + Math.pow(point[1] - corner.y, 2);
+                        if (dist < minDist) {
+                            minDist = dist;
+                            closest = point;
+                        }
+                    }
+                    result.push(closest);
+                }
+                return result;
+            }
+            
+            return [topLeft, topRight, bottomRight, bottomLeft];
+        }
+        
+        // Calculate distance between two points
+        function distance(p1, p2) {
+            return Math.sqrt(Math.pow(p2[0] - p1[0], 2) + Math.pow(p2[1] - p1[1], 2));
+        }
+        
+        // Find Best Quadrilateral from polygon with more than 4 points (IMPROVED)
+        function findBestQuadrilateralImproved(approx) {
+            try {
+                // Extract all points
+                const points = [];
+                for (let i = 0; i < approx.rows; i++) {
+                    const point = approx.data32S.slice(i * 2, i * 2 + 2);
+                    points.push([point[0], point[1]]);
+                }
+                
+                console.log(`Finding best quad from ${points.length} points`);
+                
+                // If we have 3 or fewer points, create a bounding rectangle
+                if (points.length <= 3) {
+                    console.log('Too few points, creating bounding rectangle');
+                    return createBoundingRectangle(points);
+                }
+                
+                // Try multiple approaches
+                
+                // Approach 1: Use convex hull
+                try {
+                    const pointsMat = cv.matFromArray(points.length, 1, cv.CV_32SC2, points.flat());
+                    const hull = new cv.Mat();
+                    cv.convexHull(pointsMat, hull, false, true);
+                    
+                    // Extract hull points
+                    const hullPoints = [];
+                    for (let i = 0; i < hull.rows; i++) {
+                        const point = hull.data32S.slice(i * 2, i * 2 + 2);
+                        hullPoints.push([point[0], point[1]]);
+                    }
+                    
+                    pointsMat.delete();
+                    hull.delete();
+                    
+                    console.log(`Convex hull has ${hullPoints.length} points`);
+                    
+                    // If we have exactly 4 points, use them
+                    if (hullPoints.length === 4) {
+                        const cornerMat = cv.matFromArray(4, 1, cv.CV_32SC2, hullPoints.flat());
+                        return cornerMat;
+                    } else if (hullPoints.length > 4) {
+                        // Find the 4 most extreme points from hull
+                        const corners = findExtremePointsImproved(hullPoints);
+                        const cornerMat = cv.matFromArray(4, 1, cv.CV_32SC2, corners.flat());
+                        return cornerMat;
+                    }
+                } catch (error) {
+                    console.log('Convex hull approach failed:', error.message);
+                }
+                
+                // Approach 2: Find extreme points directly
+                try {
+                    const corners = findExtremePointsImproved(points);
+                    const cornerMat = cv.matFromArray(4, 1, cv.CV_32SC2, corners.flat());
+                    return cornerMat;
+                } catch (error) {
+                    console.log('Extreme points approach failed:', error.message);
+                }
+                
+                // Approach 3: Bounding rectangle as fallback
+                console.log('Using bounding rectangle as fallback');
+                return createBoundingRectangle(points);
+                
+            } catch (error) {
+                console.error('Error finding best quadrilateral:', error);
+                return null;
+            }
+        }
+        
+        // Create bounding rectangle from points
+        function createBoundingRectangle(points) {
+            try {
+                if (points.length === 0) return null;
+                
+                let minX = points[0][0], maxX = points[0][0];
+                let minY = points[0][1], maxY = points[0][1];
+                
+                for (const point of points) {
+                    minX = Math.min(minX, point[0]);
+                    maxX = Math.max(maxX, point[0]);
+                    minY = Math.min(minY, point[1]);
+                    maxY = Math.max(maxY, point[1]);
+                }
+                
+                const corners = [
+                    [minX, minY],     // top-left
+                    [maxX, minY],     // top-right
+                    [maxX, maxY],     // bottom-right
+                    [minX, maxY]      // bottom-left
+                ];
+                
+                console.log('Created bounding rectangle:', corners);
+                return cv.matFromArray(4, 1, cv.CV_32SC2, corners.flat());
+                
+            } catch (error) {
+                console.error('Error creating bounding rectangle:', error);
+                return null;
+            }
+        }
+        
+        // Find Extreme Points (IMPROVED)
+        function findExtremePointsImproved(points) {
+            if (points.length <= 4) return points;
+            
+            // Find bounding box
+            let minX = points[0][0], maxX = points[0][0];
+            let minY = points[0][1], maxY = points[0][1];
+            
+            for (const point of points) {
+                minX = Math.min(minX, point[0]);
+                maxX = Math.max(maxX, point[0]);
+                minY = Math.min(minY, point[1]);
+                maxY = Math.max(maxY, point[1]);
+            }
+            
+            // Find points closest to each corner of bounding box
+            let topLeft = points[0];
+            let topRight = points[0];
+            let bottomLeft = points[0];
+            let bottomRight = points[0];
+            
+            let minTL = Infinity, minTR = Infinity, minBL = Infinity, minBR = Infinity;
+            
+            for (const point of points) {
+                const distTL = Math.pow(point[0] - minX, 2) + Math.pow(point[1] - minY, 2);
+                const distTR = Math.pow(point[0] - maxX, 2) + Math.pow(point[1] - minY, 2);
+                const distBL = Math.pow(point[0] - minX, 2) + Math.pow(point[1] - maxY, 2);
+                const distBR = Math.pow(point[0] - maxX, 2) + Math.pow(point[1] - maxY, 2);
+                
+                if (distTL < minTL) { minTL = distTL; topLeft = point; }
+                if (distTR < minTR) { minTR = distTR; topRight = point; }
+                if (distBL < minBL) { minBL = distBL; bottomLeft = point; }
+                if (distBR < minBR) { minBR = distBR; bottomRight = point; }
+            }
+            
+            return [topLeft, topRight, bottomRight, bottomLeft];
+        }
+        
+        // Calculate score for white rectangle detection
+        function calculateWhiteRectangleScore(contour, area, imageCenter, imageWidth, imageHeight) {
+            try {
+                // Extract points
+                const points = [];
+                for (let i = 0; i < contour.rows; i++) {
+                    const point = contour.data32S.slice(i * 2, i * 2 + 2);
+                    points.push([point[0], point[1]]);
+                }
+                
+                if (points.length !== 4) return 0;
+                
+                // Calculate center of the rectangle
+                const rectCenter = [
+                    points.reduce((sum, p) => sum + p[0], 0) / 4,
+                    points.reduce((sum, p) => sum + p[1], 0) / 4
+                ];
+                
+                // Distance from image center (prefer central rectangles)
+                const distanceFromCenter = distance(rectCenter, imageCenter);
+                const maxDistance = Math.sqrt(imageWidth * imageWidth + imageHeight * imageHeight) / 2;
+                const centralityScore = 1 - (distanceFromCenter / maxDistance);
+                
+                // Calculate side lengths and regularity
+                const sides = [];
+                for (let i = 0; i < 4; i++) {
+                    const p1 = points[i];
+                    const p2 = points[(i + 1) % 4];
+                    sides.push(distance(p1, p2));
+                }
+                
+                sides.sort((a, b) => a - b);
+                const aspectRatio = sides[3] / sides[0];
+                const aspectScore = Math.max(0, 1 - (aspectRatio / 10)); // Penalize extreme aspect ratios
+                
+                // Check if opposite sides are similar (rectangle property)
+                const oppositeSides1 = Math.abs(sides[0] - sides[2]) / Math.max(sides[0], sides[2]);
+                const oppositeSides2 = Math.abs(sides[1] - sides[3]) / Math.max(sides[1], sides[3]);
+                const regularityScore = Math.max(0, 1 - (oppositeSides1 + oppositeSides2) / 2);
+                
+                // Area score (logarithmic preference for larger areas)
+                const areaScore = Math.log(area + 1) / 15;
+                
+                // Combined score
+                const totalScore = (
+                    centralityScore * 0.4 +     // Prefer central rectangles
+                    aspectScore * 0.2 +         // Reasonable aspect ratio
+                    regularityScore * 0.2 +     // Rectangle-like shape
+                    areaScore * 0.2             // Reasonable size
+                ) * area; // Multiply by area to break ties
+                
+                console.log(`    Centrality: ${centralityScore.toFixed(3)}, Aspect: ${aspectScore.toFixed(3)}, Regularity: ${regularityScore.toFixed(3)}, Area: ${areaScore.toFixed(3)} → Total: ${totalScore.toFixed(1)}`);
+                
+                return totalScore;
+                
+            } catch (error) {
+                console.error('Error calculating white rectangle score:', error);
+                return 0;
+            }
+        }
+        
+        // Find best rectangle from polygon with more than 4 points
+        function findBestRectangleFromPolygon(approx) {
+            try {
+                // Extract all points
+                const points = [];
+                for (let i = 0; i < approx.rows; i++) {
+                    const point = approx.data32S.slice(i * 2, i * 2 + 2);
+                    points.push([point[0], point[1]]);
+                }
+                
+                if (points.length <= 4) return approx.clone();
+                
+                console.log(`    Reducing ${points.length} points to 4 corners`);
+                
+                // Find bounding box corners
+                let minX = points[0][0], maxX = points[0][0];
+                let minY = points[0][1], maxY = points[0][1];
+                
+                for (const point of points) {
+                    minX = Math.min(minX, point[0]);
+                    maxX = Math.max(maxX, point[0]);
+                    minY = Math.min(minY, point[1]);
+                    maxY = Math.max(maxY, point[1]);
+                }
+                
+                // Find points closest to each corner of bounding box
+                let topLeft = points[0];
+                let topRight = points[0];
+                let bottomLeft = points[0];
+                let bottomRight = points[0];
+                
+                let minTL = Infinity, minTR = Infinity, minBL = Infinity, minBR = Infinity;
+                
+                for (const point of points) {
+                    const distTL = Math.pow(point[0] - minX, 2) + Math.pow(point[1] - minY, 2);
+                    const distTR = Math.pow(point[0] - maxX, 2) + Math.pow(point[1] - minY, 2);
+                    const distBL = Math.pow(point[0] - minX, 2) + Math.pow(point[1] - maxY, 2);
+                    const distBR = Math.pow(point[0] - maxX, 2) + Math.pow(point[1] - maxY, 2);
+                    
+                    if (distTL < minTL) { minTL = distTL; topLeft = point; }
+                    if (distTR < minTR) { minTR = distTR; topRight = point; }
+                    if (distBL < minBL) { minBL = distBL; bottomLeft = point; }
+                    if (distBR < minBR) { minBR = distBR; bottomRight = point; }
+                }
+                
+                const corners = [topLeft, topRight, bottomRight, bottomLeft];
+                console.log(`    Found corners:`, corners);
+                
+                return cv.matFromArray(4, 1, cv.CV_32SC2, corners.flat());
+                
+            } catch (error) {
+                console.error('Error finding best rectangle from polygon:', error);
+                return null;
+            }
+        }
+        
+        // Check if contour is a valid rectangle (RELAXED VERSION)
+        function isValidRectangleRelaxed(contour) {
+            try {
+                // Extract points
+                const points = [];
+                for (let i = 0; i < contour.rows; i++) {
+                    const point = contour.data32S.slice(i * 2, i * 2 + 2);
+                    points.push([point[0], point[1]]);
+                }
+                
+                if (points.length !== 4) {
+                    console.log(`Rejected: not 4 points (${points.length})`);
+                    return false;
+                }
+                
+                // Calculate side lengths
+                const sides = [];
+                for (let i = 0; i < 4; i++) {
+                    const p1 = points[i];
+                    const p2 = points[(i + 1) % 4];
+                    sides.push(distance(p1, p2));
+                }
+                
+                // Check if all sides are reasonable (not too small)
+                const minSideLength = 10; // Reduced from 20 to 10 pixels
+                if (sides.some(side => side < minSideLength)) {
+                    console.log(`Rejected: sides too small (min: ${Math.min(...sides)})`);
+                    return false;
+                }
+                
+                // Check aspect ratio (more lenient)
+                sides.sort((a, b) => a - b);
+                const aspectRatio = sides[3] / sides[0];
+                const maxAspectRatio = 10.0; // Very lenient aspect ratio
+                
+                console.log(`Aspect ratio: ${aspectRatio.toFixed(2)}, max allowed: ${maxAspectRatio}`);
+                
+                if (aspectRatio > maxAspectRatio) {
+                    console.log('Rejected: aspect ratio too high');
+                    return false;
+                }
+                
+                console.log('✓ Rectangle accepted (relaxed validation)');
+                return true;
+                
+            } catch (error) {
+                console.error('Error validating rectangle:', error);
+                return false;
+            }
+        }
+        
+        // Check if contour is a valid rectangle
+        function isValidRectangle(contour, maxAspectRatio) {
+            try {
+                // Extract points
+                const points = [];
+                for (let i = 0; i < contour.rows; i++) {
+                    const point = contour.data32S.slice(i * 2, i * 2 + 2);
+                    points.push([point[0], point[1]]);
+                }
+                
+                if (points.length !== 4) return false;
+                
+                // Calculate side lengths
+                const sides = [];
+                for (let i = 0; i < 4; i++) {
+                    const p1 = points[i];
+                    const p2 = points[(i + 1) % 4];
+                    sides.push(distance(p1, p2));
+                }
+                
+                // Check aspect ratio
+                sides.sort((a, b) => a - b);
+                const aspectRatio = sides[3] / sides[0];
+                
+                console.log(`Rectangle check: aspect ratio = ${aspectRatio}, max allowed = ${maxAspectRatio}`);
+                
+                if (aspectRatio > maxAspectRatio) {
+                    console.log('Rectangle rejected: aspect ratio too high');
+                    return false;
+                }
+                
+                // Check if sides are reasonable (not too small)
+                const minSideLength = 20; // pixels
+                if (sides[0] < minSideLength) {
+                    console.log('Rectangle rejected: sides too small');
+                    return false;
+                }
+                
+                console.log('Rectangle accepted');
+                return true;
+                
+            } catch (error) {
+                console.error('Error validating rectangle:', error);
+                return false;
+            }
+        }
+        
+        // Draw Corrected Result
+        function drawCorrectedResult(correctedMat) {
+            const correctedCanvas = document.getElementById('correctedCanvas');
+            cv.imshow(correctedCanvas, correctedMat);
+        }
+        
+        // Cleanup OpenCV Mats
+        function cleanupMats(mats) {
+            mats.forEach(mat => {
+                if (mat && typeof mat.delete === 'function') {
+                    mat.delete();
+                }
+            });
+        }
+        
+        // Download Corrected Image
+        document.getElementById('downloadButton').addEventListener('click', function() {
+            const canvas = document.getElementById('correctedCanvas');
+            const link = document.createElement('a');
+            link.download = 'rectangulo_corregido.png';
+            link.href = canvas.toDataURL();
+            link.click();
+        });
+    </script>
+    
     <script>
         const socket = io();
         let connectedScreens = new Set();
@@ -656,6 +2704,306 @@
         generateURLs();
         setupGeneralControls();
     updateUI();
+    
+    // ============== AUTOMATIZACIÓN COMPLETA ==============
+    
+    // FUNCIÓN PRINCIPAL: Proceso automático completo
+    async function autoProcessAndApply() {
+        try {
+            updateOpenCVStatus('🔄 Paso 1/4: Detectando rectángulo...', 'normal');
+            
+            // PASO 1: Detectar rectángulo automáticamente
+            const processedImage = await detectAndProcessAutomatically();
+            
+            if (!processedImage) {
+                updateOpenCVStatus('❌ No se pudo detectar el rectángulo automáticamente', 'error');
+                return;
+            }
+            
+            updateOpenCVStatus('🔄 Paso 2/4: Convirtiendo imagen...', 'normal');
+            
+            // PASO 2: Convertir a blob para guardar con composición profesional
+            // Para asegurar fondo blanco puro, dibujamos el resultado sobre un canvas blanco antes de exportar
+            const origCanvas = document.getElementById('correctedCanvas');
+            const tempCanvas = document.createElement('canvas');
+            tempCanvas.width = origCanvas.width;
+            tempCanvas.height = origCanvas.height;
+            const tctx = tempCanvas.getContext('2d');
+            
+            // 1. Fondo blanco absoluto
+            tctx.fillStyle = '#ffffff';
+            tctx.fillRect(0, 0, tempCanvas.width, tempCanvas.height);
+            
+            // 2. Configurar composición para manejar transparencias correctamente
+            tctx.globalCompositeOperation = 'source-over';
+            
+            // 3. Dibujar el canvas corregido (con transparencias) encima
+            tctx.drawImage(origCanvas, 0, 0);
+            
+            // 4. Aplicar un último filtro suave si es necesario
+            const imageData = tctx.getImageData(0, 0, tempCanvas.width, tempCanvas.height);
+            const data = imageData.data;
+            
+            // Forzar cualquier pixel semi-transparente en el fondo a blanco puro
+            for (let i = 0; i < data.length; i += 4) {
+                const alpha = data[i + 3];
+                if (alpha < 255 && alpha > 0) {
+                    // Pixel semi-transparente - mezclar con blanco
+                    const factor = alpha / 255;
+                    data[i] = Math.round(data[i] * factor + 255 * (1 - factor));     // R
+                    data[i + 1] = Math.round(data[i + 1] * factor + 255 * (1 - factor)); // G
+                    data[i + 2] = Math.round(data[i + 2] * factor + 255 * (1 - factor)); // B
+                    data[i + 3] = 255; // Alpha a opaco
+                } else if (alpha === 0) {
+                    // Pixel completamente transparente - hacer blanco
+                    data[i] = 255;     // R
+                    data[i + 1] = 255; // G
+                    data[i + 2] = 255; // B
+                    data[i + 3] = 255; // A
+                }
+            }
+            
+            // Aplicar los cambios finales
+            tctx.putImageData(imageData, 0, 0);
+            
+            const blob = await new Promise(resolve => tempCanvas.toBlob(resolve, 'image/png', 1.0));
+            
+            updateOpenCVStatus('🔄 Paso 3/4: Guardando en /processed...', 'normal');
+            
+            // PASO 3: Guardar en servidor
+            const savedFilename = await saveProcessedImage(blob);
+            
+            if (!savedFilename) {
+                updateOpenCVStatus('❌ Error guardando imagen procesada', 'error');
+                return;
+            }
+            
+            updateOpenCVStatus('🔄 Paso 4/4: Aplicando como nueva imagen del patrón...', 'normal');
+            
+            // PASO 4: Aplicar como nueva imagen del patrón
+            await applyAsNewPatternImage(savedFilename);
+            
+            updateOpenCVStatus('✅ ¡PROCESO AUTOMÁTICO COMPLETADO! Imagen aplicada al patrón.', 'ready');
+            
+            // Cleanup
+            processedImage.delete();
+            
+        } catch (error) {
+            console.error('Error en proceso automático:', error);
+            updateOpenCVStatus('❌ Error en proceso automático: ' + error.message, 'error');
+        }
+    }
+    
+    // FUNCIÓN: Detectar y procesar automáticamente (sin UI)
+    async function detectAndProcessAutomatically() {
+        try {
+            let src = cv.imread(currentImage);
+            let gray = new cv.Mat();
+            let blurred = new cv.Mat();
+            let edges = new cv.Mat();
+            let contours = new cv.MatVector();
+            let hierarchy = new cv.Mat();
+            
+            console.log(`AUTO: Imagen cargada: ${src.cols}x${src.rows}`);
+            
+            cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY, 0);
+            cv.GaussianBlur(gray, blurred, new cv.Size(5, 5), 0, 0, cv.BORDER_DEFAULT);
+            cv.Canny(blurred, edges, 75, 200);
+            
+            cv.findContours(edges, contours, hierarchy, cv.RETR_LIST, cv.CHAIN_APPROX_SIMPLE);
+            console.log(`AUTO: Encontrados ${contours.size()} contornos`);
+            
+            let maxArea = 0;
+            let biggestContour = null;
+            
+            for (let i = 0; i < contours.size(); ++i) {
+                let contour = contours.get(i);
+                let area = cv.contourArea(contour, false);
+                let peri = cv.arcLength(contour, true);
+                let approx = new cv.Mat();
+                cv.approxPolyDP(contour, approx, 0.02 * peri, true);
+                
+                if (approx.rows === 4 && area > maxArea && area > 1000) {
+                    console.log(`AUTO: Mejor candidato: área=${area.toFixed(0)}`);
+                    maxArea = area;
+                    if (biggestContour) biggestContour.delete();
+                    biggestContour = approx.clone();
+                }
+                
+                contour.delete();
+                approx.delete();
+            }
+            
+            if (!biggestContour || maxArea <= 1000) {
+                src.delete();
+                gray.delete();
+                blurred.delete();
+                edges.delete();
+                contours.delete();
+                hierarchy.delete();
+                return null;
+            }
+            
+            console.log('AUTO: Aplicando corrección de perspectiva...');
+            
+            const corners = [];
+            for (let i = 0; i < biggestContour.rows; i++) {
+                corners.push({ 
+                    x: biggestContour.data32S[i * 2], 
+                    y: biggestContour.data32S[i * 2 + 1] 
+                });
+            }
+            
+            corners.sort((a, b) => a.y - b.y);
+            const topCorners = corners.slice(0, 2).sort((a, b) => a.x - b.x);
+            const bottomCorners = corners.slice(2, 4).sort((a, b) => a.x - b.x);
+            const sortedCorners = [topCorners[0], topCorners[1], bottomCorners[1], bottomCorners[0]];
+            
+            const srcCorners = cv.matFromArray(4, 1, cv.CV_32FC2, [
+                sortedCorners[0].x, sortedCorners[0].y,
+                sortedCorners[1].x, sortedCorners[1].y,
+                sortedCorners[2].x, sortedCorners[2].y,
+                sortedCorners[3].x, sortedCorners[3].y
+            ]);
+            
+            // Calcular dimensiones finales manteniendo alta resolución
+            const width = Math.max(
+                Math.abs(sortedCorners[1].x - sortedCorners[0].x), 
+                Math.abs(sortedCorners[2].x - sortedCorners[3].x)
+            );
+            const height = Math.max(
+                Math.abs(sortedCorners[3].y - sortedCorners[0].y), 
+                Math.abs(sortedCorners[2].y - sortedCorners[1].y)
+            );
+
+            // Mantener resolución alta - escalar solo si es demasiado grande
+            let finalWidth = Math.round(width);
+            let finalHeight = Math.round(height);
+            const maxDimension = 2400; // Aumentado para alta resolución
+            
+            if (finalWidth > maxDimension || finalHeight > maxDimension) {
+                const scale = maxDimension / Math.max(finalWidth, finalHeight);
+                finalWidth = Math.round(finalWidth * scale);
+                finalHeight = Math.round(finalHeight * scale);
+                console.log(`AUTO: Escalando de ${width}x${height} a ${finalWidth}x${finalHeight} para optimizar`);
+            } else {
+                console.log(`AUTO: Manteniendo resolución completa: ${finalWidth}x${finalHeight}`);
+            }
+
+            // Ajustar canvas de salida dinámicamente para mejor visualización
+            const correctedCanvas = document.getElementById('correctedCanvas');
+            correctedCanvas.width = finalWidth;
+            correctedCanvas.height = finalHeight;
+            
+            // Mejorar visualización CSS
+            correctedCanvas.style.maxWidth = '100%';
+            correctedCanvas.style.height = 'auto';
+            correctedCanvas.style.minWidth = '600px';
+            correctedCanvas.style.border = '3px solid #28a745';
+            correctedCanvas.style.borderRadius = '8px';
+            correctedCanvas.style.boxShadow = '0 6px 12px rgba(0,0,0,0.15)';
+            correctedCanvas.style.background = '#ffffff';
+            correctedCanvas.style.display = 'block';
+            correctedCanvas.style.margin = '10px auto';
+            
+            console.log(`Canvas configurado para visualización: ${finalWidth}x${finalHeight}`);
+            
+            const dstCorners = cv.matFromArray(4, 1, cv.CV_32FC2, [
+                0, 0, finalWidth, 0, finalWidth, finalHeight, 0, finalHeight
+            ]);
+            
+            const transformMatrix = cv.getPerspectiveTransform(srcCorners, dstCorners);
+            let warped = new cv.Mat();
+            // Use white border scalar to avoid black edges after warp and maintain high resolution
+            cv.warpPerspective(src, warped, transformMatrix, new cv.Size(finalWidth, finalHeight), cv.INTER_LINEAR, cv.BORDER_CONSTANT, new cv.Scalar(255,255,255,255));
+            
+                    console.log('AUTO: Aplicando crop y mejoras...');
+                    const croppedImage = cropBlackBorders(warped);
+                    const processedImage = processInternalBlackBorders(croppedImage);
+                    
+                    cv.imshow(document.getElementById('correctedCanvas'), processedImage);
+                    
+                    // Mejorar la visualización después de mostrar la imagen
+                    optimizeCanvasDisplay('correctedCanvas', processedImage.cols, processedImage.rows);
+                    
+                    console.log(`AUTO: Imagen procesada mostrada: ${processedImage.cols}x${processedImage.rows}`);            src.delete();
+            gray.delete();
+            blurred.delete();
+            edges.delete();
+            contours.delete();
+            hierarchy.delete();
+            biggestContour.delete();
+            warped.delete();
+            croppedImage.delete();
+            transformMatrix.delete();
+            srcCorners.delete();
+            dstCorners.delete();
+            
+            console.log('AUTO: ✓ Detección y procesamiento completados');
+            return processedImage;
+            
+        } catch (error) {
+            console.error('Error en detección automática:', error);
+            return null;
+        }
+    }
+    
+    // FUNCIÓN: Guardar imagen procesada en el servidor usando sockets
+    async function saveProcessedImage(blob) {
+        try {
+            // Convertir blob a data URL
+            const reader = new FileReader();
+            const imageDataUrl = await new Promise((resolve) => {
+                reader.onload = () => resolve(reader.result);
+                reader.readAsDataURL(blob);
+            });
+            
+            // Usar socket en lugar de fetch
+            return new Promise((resolve, reject) => {
+                socket.emit('saveProcessedImage', { imageDataUrl });
+                
+                // Escuchar respuesta única
+                socket.once('processedImageSaved', (response) => {
+                    if (response.success) {
+                        console.log('Imagen guardada:', response.filename);
+                        resolve(response.filename);
+                    } else {
+                        console.error('Error guardando imagen:', response.message);
+                        reject(new Error(response.message));
+                    }
+                });
+            });
+            
+        } catch (error) {
+            console.error('Error guardando imagen:', error);
+            return null;
+        }
+    }
+    
+    // FUNCIÓN: Aplicar como nueva imagen del patrón usando sockets
+    async function applyAsNewPatternImage(filename) {
+        try {
+            // Usar socket sin pasar filename (siempre usa pattern.png)
+            return new Promise((resolve, reject) => {
+                socket.emit('applyProcessedImage', {});
+                
+                // Escuchar respuesta única
+                socket.once('processedImageApplied', (response) => {
+                    if (response.success) {
+                        console.log('Nueva imagen aplicada al patrón:', response);
+                        resolve(true);
+                    } else {
+                        console.error('Error aplicando imagen al patrón:', response.message);
+                        reject(new Error(response.message));
+                    }
+                });
+            });
+            
+        } catch (error) {
+            console.error('Error aplicando imagen al patrón:', error);
+            return false;
+        }
+    }
     </script>
 </body>
 </html>
