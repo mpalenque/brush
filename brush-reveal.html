@@ -49,6 +49,17 @@
         <div class="fps-avg" id="fpsAvg">Avg: --</div>
     </div>
     
+    <script>
+        // Auto-refresh cada 60 segundos (60000 ms)
+        setInterval(function() {
+            console.log('🔄 Auto-refresh activado - Recargando página...');
+            window.location.reload();
+        }, 60000);
+        
+        // Log inicial para confirmar que el auto-refresh está configurado
+        console.log('⏰ Auto-refresh configurado: página se recargará cada 60 segundos');
+    </script>
+    
   <script src="./brush-reveal.js" defer></script>
  </body>
  </html>

@@ -39,7 +39,7 @@
 
         <!-- Sección OpenCV -->
         <div class="section opencv-section">
-            <h2>📷 OpenCV - Detección y Corrección de Perspectiva de Rectángulos</h2>
+            <h2>📷 OpenCV - Procesamiento Automático desde /captura</h2>
             
             <div id="opencvStatus" class="opencv-status">
                 ⏳ Cargando OpenCV.js...
@@ -47,11 +47,15 @@
             
             <div class="opencv-controls">
                 <div class="opencv-input-area">
-                    <h3>📤 Carga de Imagen</h3>
-                    <div class="image-upload" onclick="document.getElementById('imageInput').click()">
-                        <p>📁 Haz clic aquí o arrastra una imagen</p>
-                        <p>Formatos: JPG, PNG, WebP</p>
-                        <input type="file" id="imageInput" accept="image/*">
+                    <h3>⚡ Proceso Automático</h3>
+                    <div class="auto-process-info">
+                        <p><strong>📁 Carpeta de origen:</strong> /captura</p>
+                        <p><strong>⌨️ Activación:</strong> Presiona la tecla <kbd>1</kbd></p>
+                        <p><strong>🔄 Proceso:</strong> Escaneo → Detección → Cropeo → Filtrado → Guardado</p>
+                    </div>
+                    
+                    <div class="process-status" id="processStatus">
+                        🔍 Presiona "1" para escanear /captura y procesar automáticamente
                     </div>
                     
                     <img id="imagePreview" class="image-preview" style="display: none;" alt="Vista previa">
@@ -76,12 +80,8 @@
                         <input type="range" id="aspectRatioTolerance" min="1.0" max="5.0" step="0.1" value="2.0">
                     </div>
                     
-                    <button id="processButton" class="process-button" onclick="detectWhiteRectangleSimple()" disabled>
-                        🔍 Detectar y Corregir Rectángulo
-                    </button>
-                    
-                    <button id="autoProcessButton" class="process-button" onclick="autoProcessAndApply()" disabled>
-                        🚀 PROCESO AUTOMÁTICO COMPLETO
+                    <button id="manualProcessButton" class="process-button" onclick="manualProcessFromCaptura()" disabled>
+                        � Procesar Manualmente desde /captura
                     </button>
                 </div>
                 

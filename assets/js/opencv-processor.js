@@ -29,11 +29,11 @@ function onOpenCvReady() {
     opencvReady = true;
     updateOpenCVStatus('✅ OpenCV.js cargado correctamente', 'ready');
     
-    const processButton = document.getElementById('processButton');
-    const autoProcessButton = document.getElementById('autoProcessButton');
+    const manualProcessButton = document.getElementById('manualProcessButton');
+    if (manualProcessButton) manualProcessButton.disabled = false;
     
-    if (processButton) processButton.disabled = false;
-    if (autoProcessButton) autoProcessButton.disabled = false;
+    // Actualizar status inicial
+    updateProcessStatus('🎹 OpenCV listo. Presiona "1" para proceso automático', 'success');
 }
 
 function loadOpenCV() {
@@ -87,51 +87,15 @@ function loadOpenCV() {
 // ==============================
 
 function setupImageHandlers() {
-    const imageInput = document.getElementById('imageInput');
-    const uploadArea = document.querySelector('.image-upload');
+    // La carga de imágenes ahora es automática desde /captura
+    // Solo configuramos los elementos básicos si existen
+    console.log('🖼️ Configuración de imágenes: Modo automático desde /captura activado');
     
-    if (imageInput) {
-        imageInput.addEventListener('change', function(e) {
-            const file = e.target.files[0];
-            if (file) {
-                const reader = new FileReader();
-                reader.onload = function(event) {
-                    loadImageForProcessing(event.target.result);
-                };
-                reader.readAsDataURL(file);
-            }
-        });
+    // Habilitar botón manual si OpenCV está listo
+    const manualProcessButton = document.getElementById('manualProcessButton');
+    if (manualProcessButton && opencvReady) {
+        manualProcessButton.disabled = false;
     }
-    
-    if (uploadArea) {
-        setupDragAndDrop(uploadArea);
-    }
-}
-
-function setupDragAndDrop(uploadArea) {
-    uploadArea.addEventListener('dragover', function(e) {
-        e.preventDefault();
-        uploadArea.classList.add('dragover');
-    });
-    
-    uploadArea.addEventListener('dragleave', function(e) {
-        e.preventDefault();
-        uploadArea.classList.remove('dragover');
-    });
-    
-    uploadArea.addEventListener('drop', function(e) {
-        e.preventDefault();
-        uploadArea.classList.remove('dragover');
-        
-        const files = e.dataTransfer.files;
-        if (files.length > 0) {
-            const imageInput = document.getElementById('imageInput');
-            if (imageInput) {
-                imageInput.files = files;
-                imageInput.dispatchEvent(new Event('change'));
-            }
-        }
-    });
 }
 
 function loadImageForProcessing(imageSrc) {
@@ -383,7 +347,115 @@ function drawCorrectedResult(correctedMat) {
     const correctedCanvas = document.getElementById('correctedCanvas');
     if (!correctedCanvas) return;
     
-    cv.imshow(correctedCanvas, correctedMat);
+    // Aplicar el mismo procesamiento completo que se usará al guardar
+    const finalPreview = createFinalPreview(correctedMat);
+    
+    // Mostrar el resultado final en el canvas
+    const ctx = correctedCanvas.getContext('2d');
+    correctedCanvas.width = finalPreview.width;
+    correctedCanvas.height = finalPreview.height;
+    ctx.drawImage(finalPreview, 0, 0);
+}
+
+// Nueva función que replica EXACTAMENTE el procesamiento que se hace al guardar
+function createFinalPreview(correctedMat) {
+    try {
+        // PASO 1: Aplicar mejoras de imagen (igual que al guardar)
+        let processed = applyFinalImageProcessing(correctedMat);
+        
+        // PASO 2: Convertir a canvas con el mismo procesamiento que al guardar
+        const tempCanvas = document.createElement('canvas');
+        tempCanvas.width = processed.cols;
+        tempCanvas.height = processed.rows;
+        const tctx = tempCanvas.getContext('2d');
+        
+        // Convertir Mat a canvas
+        cv.imshow(tempCanvas, processed);
+        
+        // PASO 3: Aplicar el mismo procesamiento de píxeles que al guardar
+        const imageData = tctx.getImageData(0, 0, tempCanvas.width, tempCanvas.height);
+        const data = imageData.data;
+        
+        // Solo cambiar píxeles completamente transparentes, preservar todo lo demás
+        for (let i = 0; i < data.length; i += 4) {
+            const alpha = data[i + 3];
+            if (alpha === 0) {
+                data[i] = 255;     // R
+                data[i + 1] = 255; // G
+                data[i + 2] = 255; // B
+                data[i + 3] = 255; // A
+            }
+        }
+        
+        // Aplicar los cambios
+        tctx.putImageData(imageData, 0, 0);
+        
+        // Cleanup
+        processed.delete();
+        
+        return tempCanvas;
+        
+    } catch (error) {
+        console.error('Error creando preview final:', error);
+        // En caso de error, crear un canvas simple
+        const fallbackCanvas = document.createElement('canvas');
+        fallbackCanvas.width = correctedMat.cols;
+        fallbackCanvas.height = correctedMat.rows;
+        cv.imshow(fallbackCanvas, correctedMat);
+        return fallbackCanvas;
+    }
+}
+
+// Nueva función para aplicar el procesamiento final que se mostrará en el preview
+function applyFinalImageProcessing(inputMat) {
+    try {
+        // Crear una copia para no modificar el original
+        let processed = inputMat.clone();
+        
+        // PROCESAMIENTO 1: Realce de contraste y brillo más visible
+        processed.convertTo(processed, -1, 1.2, 15); // Alpha=1.2 (20% más contraste), Beta=15 (más brillo)
+        
+        // PROCESAMIENTO 2: Mejora de nitidez más notable
+        let sharpened = new cv.Mat();
+        let kernel = cv.matFromArray(3, 3, cv.CV_32FC1, [
+            0, -0.7, 0,
+            -0.7, 3.8, -0.7,
+            0, -0.7, 0
+        ]);
+        cv.filter2D(processed, sharpened, cv.CV_8UC4, kernel);
+        kernel.delete();
+        
+        // Mezclar con más nitidez para que sea más visible (50% de nitidez)
+        cv.addWeighted(processed, 0.5, sharpened, 0.5, 0, processed);
+        sharpened.delete();
+        
+        // PROCESAMIENTO 3: Saturación de colores (para preservar y realzar las flores)
+        let hsv = new cv.Mat();
+        cv.cvtColor(processed, hsv, cv.COLOR_RGBA2RGB);
+        cv.cvtColor(hsv, hsv, cv.COLOR_RGB2HSV);
+        
+        // Aumentar ligeramente la saturación para realzar los colores de las flores
+        let channels = new cv.MatVector();
+        cv.split(hsv, channels);
+        let saturation = channels.get(1);
+        saturation.convertTo(saturation, -1, 1.1, 0); // +10% saturación
+        channels.set(1, saturation);
+        cv.merge(channels, hsv);
+        
+        cv.cvtColor(hsv, processed, cv.COLOR_HSV2RGB);
+        cv.cvtColor(processed, processed, cv.COLOR_RGB2RGBA);
+        
+        // Cleanup
+        hsv.delete();
+        channels.delete();
+        saturation.delete();
+        
+        return processed;
+        
+    } catch (error) {
+        console.error('Error en procesamiento final:', error);
+        return inputMat.clone(); // Devolver copia sin procesar en caso de error
+    }
 }
 
 function cleanupMats(mats) {
@@ -409,49 +481,44 @@ async function autoProcessAndApply() {
             return;
         }
         
-        updateOpenCVStatus('🔄 Paso 2/4: Convirtiendo imagen...', 'normal');
+        updateOpenCVStatus('🔄 Paso 2/4: Procesando imagen con preservación de colores...', 'normal');
         
-        // PASO 2: Convertir la imagen procesada correctamente
-        // Verificar que tenemos una imagen procesada válida
-        if (!processedImage || processedImage.cols === 0 || processedImage.rows === 0) {
+        // PASO 2: Aplicar el mismo procesamiento que se muestra en el preview
+        let finalProcessed = applyFinalImageProcessing(processedImage);
+        
+        // PASO 3: Convertir a canvas con mejor preservación de colores
+        if (!finalProcessed || finalProcessed.cols === 0 || finalProcessed.rows === 0) {
             updateOpenCVStatus('❌ Error: Imagen procesada inválida', 'error');
             return;
         }
         
-        // Crear canvas temporal con el tamaño correcto de la imagen procesada
+        // Crear canvas temporal con el tamaño correcto
         const tempCanvas = document.createElement('canvas');
-        tempCanvas.width = processedImage.cols;
-        tempCanvas.height = processedImage.rows;
+        tempCanvas.width = finalProcessed.cols;
+        tempCanvas.height = finalProcessed.rows;
         const tctx = tempCanvas.getContext('2d');
         
-        // Mostrar la imagen procesada en el canvas de corrección primero
-        cv.imshow(document.getElementById('correctedCanvas'), processedImage);
+        // Mostrar la imagen procesada en el canvas de corrección (preview exacto usando la misma función)
+        const previewCanvas = createFinalPreview(processedImage);
+        const correctedCanvas = document.getElementById('correctedCanvas');
+        if (correctedCanvas) {
+            const ctx = correctedCanvas.getContext('2d');
+            correctedCanvas.width = previewCanvas.width;
+            correctedCanvas.height = previewCanvas.height;
+            ctx.drawImage(previewCanvas, 0, 0);
+        }
         
-        // 1. Fondo blanco absoluto en el canvas temporal
-        tctx.fillStyle = '#ffffff';
-        tctx.fillRect(0, 0, tempCanvas.width, tempCanvas.height);
+        // Convertir la imagen procesada final a blob
+        cv.imshow(tempCanvas, finalProcessed);
         
-        // 2. Configurar composición para manejar transparencias correctamente
-        tctx.globalCompositeOperation = 'source-over';
-        
-        // 3. Convertir Mat de OpenCV a canvas correctamente
-        // Crear un canvas auxiliar del tamaño exacto de la imagen
-        const auxCanvas = document.createElement('canvas');
-        auxCanvas.width = processedImage.cols;
-        auxCanvas.height = processedImage.rows;
-        cv.imshow(auxCanvas, processedImage);
-        
-        // Dibujar la imagen del canvas auxiliar al canvas temporal con fondo blanco
-        tctx.drawImage(auxCanvas, 0, 0);
-        
-        // 4. Optimizar píxeles para asegurar fondo blanco puro
+        // Solo ajustar píxeles completamente transparentes (alpha = 0) a blanco
         const imageData = tctx.getImageData(0, 0, tempCanvas.width, tempCanvas.height);
         const data = imageData.data;
         
         for (let i = 0; i < data.length; i += 4) {
             const alpha = data[i + 3];
-            if (alpha < 255) {
-                // Pixel semi-transparente -> blanco puro
+            // Solo cambiar píxeles completamente transparentes, preservar todo lo demás
+            if (alpha === 0) {
                 data[i] = 255;     // R
                 data[i + 1] = 255; // G
                 data[i + 2] = 255; // B
@@ -459,7 +526,7 @@ async function autoProcessAndApply() {
             }
         }
         
-        // Aplicar los cambios finales
+        // Aplicar los cambios mínimos
         tctx.putImageData(imageData, 0, 0);
         const blob = await new Promise(resolve => tempCanvas.toBlob(resolve, 'image/png', 1.0));
         
@@ -477,7 +544,9 @@ async function autoProcessAndApply() {
         
         updateOpenCVStatus('✅ ¡PROCESO AUTOMÁTICO COMPLETADO! Imagen aplicada al patrón.', 'ready');
         
+        // Cleanup de las matrices
         processedImage.delete();
+        finalProcessed.delete();
         
     } catch (error) {
         console.error('Error en proceso automático:', error);
@@ -612,6 +681,194 @@ async function applyAsNewPatternImage(filename) {
 }
 
 // ==============================
+// PROCESO AUTOMÁTICO DESDE CAPTURA
+// ==============================
+
+function updateProcessStatus(message, type = 'normal') {
+    const statusDiv = document.getElementById('processStatus');
+    if (statusDiv) {
+        statusDiv.textContent = message;
+        statusDiv.className = `process-status ${type}`;
+    }
+}
+
+function showKeyIndicator(key) {
+    // Crear indicador visual de tecla presionada
+    const indicator = document.createElement('div');
+    indicator.className = 'key-indicator';
+    indicator.textContent = `Tecla "${key}" presionada - Iniciando proceso automático`;
+    document.body.appendChild(indicator);
+    
+    setTimeout(() => {
+        if (indicator && indicator.parentNode) {
+            indicator.parentNode.removeChild(indicator);
+        }
+    }, 2000);
+}
+
+async function scanCapturaFolder() {
+    try {
+        updateProcessStatus('🔍 Escaneando carpeta /captura...', 'scanning');
+        
+        const response = await fetch('/api/captura/scan');
+        const data = await response.json();
+        
+        if (!data.success) {
+            updateProcessStatus(`❌ ${data.message}`, 'error');
+            return null;
+        }
+        
+        updateProcessStatus(`📷 Imagen encontrada: ${data.filename} (${data.totalImages} total)`, 'success');
+        return data;
+        
+    } catch (error) {
+        console.error('Error escaneando captura:', error);
+        updateProcessStatus('❌ Error al escanear la carpeta /captura', 'error');
+        return null;
+    }
+}
+
+async function loadImageFromCaptura(imagePath) {
+    try {
+        updateProcessStatus('⏳ Cargando imagen desde /captura...', 'processing');
+        
+        return new Promise((resolve, reject) => {
+            const img = new Image();
+            img.onload = function() {
+                currentImage = img;
+                originalImageData = imagePath;
+                
+                // Mostrar preview
+                const previewImg = document.getElementById('imagePreview');
+                if (previewImg) {
+                    previewImg.src = imagePath;
+                    previewImg.style.display = 'block';
+                }
+                
+                updateProcessStatus('✅ Imagen cargada correctamente', 'success');
+                console.log(`Imagen cargada desde captura: ${img.width}x${img.height}`);
+                resolve(img);
+            };
+            
+            img.onerror = function() {
+                updateProcessStatus('❌ Error al cargar la imagen', 'error');
+                reject(new Error('Error cargando imagen'));
+            };
+            
+            img.src = imagePath;
+        });
+        
+    } catch (error) {
+        console.error('Error cargando imagen:', error);
+        updateProcessStatus('❌ Error al cargar la imagen', 'error');
+        return null;
+    }
+}
+
+async function processImageFromCaptura() {
+    try {
+        if (!opencvReady) {
+            updateProcessStatus('❌ OpenCV aún no está listo', 'error');
+            return false;
+        }
+        
+        // Paso 1: Escanear carpeta
+        const scanResult = await scanCapturaFolder();
+        if (!scanResult) return false;
+        
+        // Paso 2: Cargar imagen
+        const loadedImage = await loadImageFromCaptura(scanResult.imagePath);
+        if (!loadedImage) return false;
+        
+        // Paso 3: Procesar automáticamente
+        updateProcessStatus('🔄 Detectando y procesando rectángulo...', 'processing');
+        
+        const processedImage = await detectAndProcessAutomatically();
+        if (!processedImage) {
+            updateProcessStatus('❌ No se pudo detectar/procesar el rectángulo', 'error');
+            return false;
+        }
+        
+        // Paso 4: Aplicar procesamiento final y guardar
+        updateProcessStatus('🔄 Aplicando filtros y guardando...', 'processing');
+        
+        let finalProcessed = applyFinalImageProcessing(processedImage);
+        
+        // Crear preview
+        const previewCanvas = createFinalPreview(processedImage);
+        const correctedCanvas = document.getElementById('correctedCanvas');
+        if (correctedCanvas) {
+            const ctx = correctedCanvas.getContext('2d');
+            correctedCanvas.width = previewCanvas.width;
+            correctedCanvas.height = previewCanvas.height;
+            ctx.drawImage(previewCanvas, 0, 0);
+        }
+        
+        // Convertir a blob y guardar
+        const tempCanvas = document.createElement('canvas');
+        tempCanvas.width = finalProcessed.cols;
+        tempCanvas.height = finalProcessed.rows;
+        const tctx = tempCanvas.getContext('2d');
+        
+        cv.imshow(tempCanvas, finalProcessed);
+        
+        const imageData = tctx.getImageData(0, 0, tempCanvas.width, tempCanvas.height);
+        const data = imageData.data;
+        
+        for (let i = 0; i < data.length; i += 4) {
+            const alpha = data[i + 3];
+            if (alpha === 0) {
+                data[i] = 255;     // R
+                data[i + 1] = 255; // G
+                data[i + 2] = 255; // B
+                data[i + 3] = 255; // A
+            }
+        }
+        
+        tctx.putImageData(imageData, 0, 0);
+        const blob = await new Promise(resolve => tempCanvas.toBlob(resolve, 'image/png', 1.0));
+        
+        const savedFilename = await saveProcessedImage(blob);
+        if (!savedFilename) {
+            updateProcessStatus('❌ Error al guardar la imagen procesada', 'error');
+            return false;
+        }
+        
+        await applyAsNewPatternImage(savedFilename);
+        
+        updateProcessStatus('🎉 ¡PROCESO COMPLETADO! Imagen procesada y aplicada al patrón.', 'success');
+        
+        // Cleanup
+        processedImage.delete();
+        finalProcessed.delete();
+        
+        return true;
+        
+    } catch (error) {
+        console.error('Error en proceso automático desde captura:', error);
+        updateProcessStatus('❌ Error en proceso: ' + error.message, 'error');
+        return false;
+    }
+}
+
+// Función para proceso manual desde captura
+async function manualProcessFromCaptura() {
+    try {
+        const scanResult = await scanCapturaFolder();
+        if (!scanResult) return;
+        
+        const loadedImage = await loadImageFromCaptura(scanResult.imagePath);
+        if (!loadedImage) return;
+        
+        updateProcessStatus('✅ Imagen cargada. Usa los botones de detección manual si es necesario.', 'success');
+        
+    } catch (error) {
+        console.error('Error en carga manual:', error);
+        updateProcessStatus('❌ Error en carga manual: ' + error.message, 'error');
+    }
+}
+
+// ==============================
 // INICIALIZACIÓN
 // ==============================
 
@@ -626,15 +883,38 @@ function initializeOpenCVProcessor() {
     // Configurar manejadores de eventos cuando el DOM esté listo
     if (document.readyState === 'loading') {
         document.addEventListener('DOMContentLoaded', setupImageHandlers);
+        document.addEventListener('DOMContentLoaded', setupKeyboardListener);
     } else {
         setupImageHandlers();
+        setupKeyboardListener();
     }
+}
+
+// Configurar listener de teclado para la tecla "1"
+function setupKeyboardListener() {
+    document.addEventListener('keydown', function(event) {
+        // Verificar que no estemos en un input o textarea
+        if (event.target.tagName === 'INPUT' || event.target.tagName === 'TEXTAREA') {
+            return;
+        }
+        
+        if (event.key === '1' || event.keyCode === 49) {
+            event.preventDefault();
+            console.log('Tecla "1" presionada - Iniciando proceso automático');
+            showKeyIndicator('1');
+            processImageFromCaptura();
+        }
+    });
+    
+    console.log('🎹 Listener de teclado configurado - Presiona "1" para proceso automático');
 }
 
 // Exponer funciones globales necesarias
 window.onOpenCvReady = onOpenCvReady;
 window.detectWhiteRectangleSimple = detectWhiteRectangleSimple;
 window.autoProcessAndApply = autoProcessAndApply;
+window.manualProcessFromCaptura = manualProcessFromCaptura;
+window.processImageFromCaptura = processImageFromCaptura;
 
 // Inicializar automáticamente
 initializeOpenCVProcessor();

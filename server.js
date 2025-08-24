@@ -18,6 +18,56 @@ const io = socketIo(server, {
 app.use(express.static(__dirname));
 app.use('/patterns', express.static(path.join(__dirname, 'patterns')));
 app.use('/processed', express.static(path.join(__dirname, 'processed')));
+app.use('/captura', express.static(path.join(__dirname, 'captura')));
+
+// Nuevo endpoint para escanear la carpeta captura
+app.get('/api/captura/scan', (req, res) => {
+    try {
+        const capturaDir = path.join(__dirname, 'captura');
+        
+        // Crear carpeta si no existe
+        if (!fs.existsSync(capturaDir)) {
+            fs.mkdirSync(capturaDir, { recursive: true });
+        }
+        
+        // Escanear archivos de imagen
+        const files = fs.readdirSync(capturaDir);
+        const imageExtensions = ['.jpg', '.jpeg', '.png', '.webp', '.bmp', '.gif'];
+        
+        const imageFiles = files.filter(file => {
+            const ext = path.extname(file).toLowerCase();
+            return imageExtensions.includes(ext);
+        });
+        
+        if (imageFiles.length === 0) {
+            return res.json({ 
+                success: false, 
+                message: 'No se encontraron imágenes en la carpeta /captura' 
+            });
+        }
+        
+        // Tomar la primera imagen encontrada
+        const firstImage = imageFiles[0];
+        const imagePath = `/captura/${firstImage}`;
+        
+        console.log(`📷 Imagen encontrada en captura: ${firstImage}`);
+        
+        res.json({
+            success: true,
+            imagePath: imagePath,
+            filename: firstImage,
+            totalImages: imageFiles.length,
+            message: `Imagen cargada: ${firstImage}`
+        });
+        
+    } catch (error) {
+        console.error('Error escaneando carpeta captura:', error);
+        res.json({ 
+            success: false, 
+            message: 'Error al escanear la carpeta captura: ' + error.message 
+        });
+    }
+});
 
 // Helper: remove all files in processed/ except pattern.png
 function cleanProcessedDirExceptPattern() {
@@ -362,9 +412,19 @@ async function generatePatternImage() {
     const canvas = createCanvas(width, height);
     const ctx = canvas.getContext('2d');
 
-    // Cargar la imagen principal del patrón (usar perfume.png como base)
+    // Cargar la imagen principal del patrón (usar processed/pattern.png - la misma que usan las pantallas)
     try {
-        const patternImage = await loadImage(path.join(__dirname, 'perfume.png'));
+        const patternPath = path.join(__dirname, 'processed', 'pattern.png');
+        const fallbackPath = path.join(__dirname, 'perfume.png');
+        
+        // Usar la misma lógica que el endpoint /processed/pattern.png
+        let imageToLoad = patternPath;
+        if (!fs.existsSync(patternPath)) {
+            console.log('pattern.png no existe, usando perfume.png como fallback para guardar');
+            imageToLoad = fallbackPath;
+        }
+        
+        const patternImage = await loadImage(imageToLoad);
         
         // Configuración del patrón (usando la imagen pattern.jpg)
         const config = globalState.general;
