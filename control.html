@@ -355,11 +355,10 @@
 
         .image-preview {
             max-width: 100%;
-            max-height: none; /* Removed height constraint to preserve original resolution */
+            max-height: 300px; /* Keep display constrained for UI, but process full resolution internally */
             margin: 10px 0;
             border-radius: 8px;
             box-shadow: 0 2px 8px rgba(0,0,0,0.1);
-            height: auto; /* Let image maintain aspect ratio at full resolution */
         }
 
         .process-button {
@@ -698,6 +697,7 @@
     <script>
         // OpenCV Variables (opencvReady is now declared in head)
         let currentImage = null;
+        let originalImageData = null; // Store original unscaled image data
         
         // File Upload Handler
         document.getElementById('imageInput').addEventListener('change', function(e) {
@@ -705,13 +705,28 @@
             if (file) {
                 const reader = new FileReader();
                 reader.onload = function(event) {
+                    // Store original image data for OpenCV processing
+                    originalImageData = event.target.result;
+                    
                     const img = document.getElementById('sourceImage');
                     img.src = event.target.result;
                     img.style.display = 'block';
                     document.getElementById('uploadText').style.display = 'none';
                     
                     img.onload = function() {
-                        currentImage = img;
+                        // Create a hidden canvas with original dimensions for OpenCV
+                        const hiddenCanvas = document.createElement('canvas');
+                        const hiddenCtx = hiddenCanvas.getContext('2d');
+                        
+                        // Use natural dimensions (original file size)
+                        hiddenCanvas.width = img.naturalWidth;
+                        hiddenCanvas.height = img.naturalHeight;
+                        hiddenCtx.drawImage(img, 0, 0, img.naturalWidth, img.naturalHeight);
+                        
+                        console.log(`Original image dimensions: ${img.naturalWidth} x ${img.naturalHeight}`);
+                        console.log(`Display image dimensions: ${img.width} x ${img.height}`);
+                        
+                        currentImage = hiddenCanvas; // Use hidden canvas instead of scaled DOM image
                         document.getElementById('debugButton').style.display = 'block';
                         if (opencvReady) {
                             document.getElementById('processButton').disabled = false;
@@ -1709,18 +1724,23 @@
             try {
                 updateOpenCVStatus('🔄 Procesando imagen...', 'normal');
                 
-                // Create Mat from image
-                const img = currentImage;
-                const canvas = document.createElement('canvas');
-                const ctx = canvas.getContext('2d');
-                canvas.width = img.width;
-                canvas.height = img.height;
-                ctx.drawImage(img, 0, 0);
+                // Create Mat from image - currentImage is now a canvas with full resolution
+                let imageData;
+                if (currentImage.tagName === 'CANVAS') {
+                    // currentImage is already a canvas with full resolution
+                    imageData = currentImage.getContext('2d').getImageData(0, 0, currentImage.width, currentImage.height);
+                } else {
+                    // Fallback for img elements
+                    const canvas = document.createElement('canvas');
+                    const ctx = canvas.getContext('2d');
+                    canvas.width = currentImage.naturalWidth || currentImage.width;
+                    canvas.height = currentImage.naturalHeight || currentImage.height;
+                    ctx.drawImage(currentImage, 0, 0);
+                    imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+                }
                 
-                const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
                 const mat = cv.matFromImageData(imageData);
-                
-                console.log(`Image size: ${mat.cols} x ${mat.rows}`);
+                console.log(`HIGH RESOLUTION Image size: ${mat.cols} x ${mat.rows}`);
                 
                 // Convert to grayscale
                 const gray = new cv.Mat();
