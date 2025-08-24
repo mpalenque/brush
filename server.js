@@ -16,7 +16,6 @@ const io = socketIo(server, {
 
 // Servir archivos estáticos
 app.use(express.static(__dirname));
-app.use('/sinperfume.png', express.static(path.join(__dirname, 'sinperfume.png')));
 app.use('/patterns', express.static(path.join(__dirname, 'patterns')));
 app.use('/processed', express.static(path.join(__dirname, 'processed')));
 
@@ -41,16 +40,16 @@ function cleanProcessedDirExceptPattern() {
         console.warn('Error limpiando processed/:', e.message);
     }
 
-    // Garantizar que exista pattern.png: copiar sinperfume.png como fallback
+    // Garantizar que exista pattern.png: copiar perfume.png como fallback
     try {
         const processedDir = path.join(__dirname, 'processed');
         if (!fs.existsSync(processedDir)) fs.mkdirSync(processedDir, { recursive: true });
         const patternPath = path.join(processedDir, 'pattern.png');
         if (!fs.existsSync(patternPath)) {
-            const fallback = path.join(__dirname, 'sinperfume.png');
+            const fallback = path.join(__dirname, 'perfume.png');
             if (fs.existsSync(fallback)) {
                 fs.copyFileSync(fallback, patternPath);
-                console.log('Copiado sinperfume.png -> processed/pattern.png (fallback)');
+                console.log('Copiado perfume.png -> processed/pattern.png (fallback)');
             }
         }
     } catch (e) {
@@ -61,13 +60,13 @@ function cleanProcessedDirExceptPattern() {
 // Ruta especial para pattern.png con fallback
 app.get('/processed/pattern.png', (req, res) => {
     const patternPath = path.join(__dirname, 'processed', 'pattern.png');
-    const fallbackPath = path.join(__dirname, 'sinperfume.png');
+    const fallbackPath = path.join(__dirname, 'perfume.png');
     
-    // Si existe pattern.png, usarlo; si no, usar sinperfume.png como fallback
+    // Si existe pattern.png, usarlo; si no, usar perfume.png como fallback
     if (fs.existsSync(patternPath)) {
         res.sendFile(patternPath);
     } else {
-        console.log('pattern.png no existe, usando sinperfume.png como fallback');
+        console.log('pattern.png no existe, usando perfume.png como fallback');
         res.sendFile(fallbackPath);
     }
 });
@@ -130,7 +129,7 @@ let connectedClients = new Map();
 
 // Rutas
 app.get('/', (req, res) => {
-    res.sendFile(path.join(__dirname, 'wallpaper-animated.html'));
+    res.sendFile(path.join(__dirname, 'brush-reveal.html'));
 });
 
 app.get('/control', (req, res) => {
@@ -146,19 +145,8 @@ app.get('/screen/:id', (req, res) => {
     }
 });
 
-// New: screen-reveal pages (1..9)
-app.get('/screen-reveal/:id', (req, res) => {
-    const screenId = req.params.id;
-    if (screenId >= 1 && screenId <= 9) {
-        res.sendFile(path.join(__dirname, 'screen-reveal.html'));
-    } else {
-        res.status(404).send('Screen-reveal ID must be between 1 and 9');
-    }
-});
-
-// New: pattern-reveal page  
-app.get('/pattern-reveal', (req, res) => {
-    res.sendFile(path.join(__dirname, 'pattern-reveal.html'));
+app.get('/brush-reveal', (req, res) => {
+    res.sendFile(path.join(__dirname, 'brush-reveal.html'));
 });
 
 // API endpoints
@@ -374,9 +362,9 @@ async function generatePatternImage() {
     const canvas = createCanvas(width, height);
     const ctx = canvas.getContext('2d');
 
-    // Cargar la imagen principal del patrón (usar la misma que /screen: sinperfume.png)
+    // Cargar la imagen principal del patrón (usar perfume.png como base)
     try {
-        const patternImage = await loadImage(path.join(__dirname, 'sinperfume.png'));
+        const patternImage = await loadImage(path.join(__dirname, 'perfume.png'));
         
         // Configuración del patrón (usando la imagen pattern.jpg)
         const config = globalState.general;
