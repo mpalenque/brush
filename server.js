@@ -489,8 +489,8 @@ io.on('connection', (socket) => {
             // Usar siempre el mismo nombre: wallpaper.jpg
             const filename = 'wallpaper.jpg';
             
-            // Decodificar base64 (quitar prefijo data:image/png;base64,)
-            const base64Data = data.imageData.replace(/^data:image\/png;base64,/, '');
+            // Decodificar base64 (quitar prefijo data:image/jpeg;base64,)
+            const base64Data = data.imageData.replace(/^data:image\/jpeg;base64,/, '');
             const buffer = Buffer.from(base64Data, 'base64');
             
             // Guardar en la carpeta patterns como JPG
@@ -499,40 +499,31 @@ io.on('connection', (socket) => {
                 fs.mkdirSync(patternsDir, { recursive: true });
             }
             
-            // Convertir PNG a JPG con fondo blanco y REDIMENSIONAR a 2160x3840
+            // LA IMAGEN YA VIENE A 2160x3840 DESDE SCREEN.HTML - GUARDAR DIRECTAMENTE
             const img = await loadImage(buffer);
             
-            // FORZAR dimensiones específicas: 2160x3840
-            const targetWidth = 2160;
-            const targetHeight = 3840;
-            const canvas = createCanvas(targetWidth, targetHeight);
-            const ctx = canvas.getContext('2d');
+            console.log(`📐 Dimensiones recibidas: ${img.width}x${img.height}`);
             
-            // Fondo blanco para el JPG
-            ctx.fillStyle = '#FFFFFF';
-            ctx.fillRect(0, 0, targetWidth, targetHeight);
+            // Verificar que las dimensiones sean correctas
+            if (img.width !== 2160 || img.height !== 3840) {
+                console.warn(`⚠️ ADVERTENCIA: Dimensiones incorrectas ${img.width}x${img.height}, esperadas 2160x3840`);
+            }
             
-            // Redimensionar imagen para ajustar a 2160x3840
-            ctx.drawImage(img, 0, 0, targetWidth, targetHeight);
-            
-            const jpgBuffer = canvas.toBuffer('image/jpeg', { quality: 0.95 });
+            // Guardar directamente sin redimensionar
             const outPath = path.join(patternsDir, filename);
-            fs.writeFileSync(outPath, jpgBuffer);
+            fs.writeFileSync(outPath, buffer);
             
             console.log(`✅ Canvas completo guardado: ${filename}`);
-            console.log(`📐 Dimensiones FORZADAS: ${targetWidth}x${targetHeight}`);
+            console.log(`📐 Dimensiones finales: ${img.width}x${img.height}`);
             
-            // Notificar a todos los clientes sobre el nuevo patrón
+            // SOLO enviar newPatternReady - NO imageUpdated para evitar eventos duplicados
             io.emit('newPatternReady', {
                 patternId: 'wallpaper',
                 filename: filename,
                 timestamp: Date.now()
             });
             
-            io.emit('imageUpdated', {
-                filename: filename,
-                timestamp: Date.now()
-            });
+            console.log('📢 Evento newPatternReady enviado para brush-reveal (SIN duplicar imageUpdated)');
             
             console.log('📢 Evento newPatternReady emitido (desde canvas completo)');
             

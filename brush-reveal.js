@@ -149,11 +149,14 @@ function setupWebSocket() {
       loadNewPatternAndAnimate(data.filename);
     });
 
-    // Cuando se actualiza la imagen procesada (tecla 9), cargar el último patrón de /patterns
+    // COMENTADO: Este evento causa conflicto con newPatternReady
+    // brush-reveal solo debe escuchar newPatternReady para evitar animaciones duplicadas
+    /*
     socket.on('imageUpdated', (data) => {
       console.log('🆕 Imagen procesada actualizada - coloreando encima con wallpaper.jpg:', data);
       loadLatestPatternAndAnimate();
     });
+    */
     
     // NUEVO: Escuchar orden desde /control para iniciar animación con último patrón
     socket.on('requestAnimationStart', (data) => {
@@ -1215,15 +1218,18 @@ function colorOnTop(){
   // NO resetear estado de animación - mantener lo que ya está dibujado
   animationFinished = false;
   
+  // IMPORTANTE: NO resetear isFirstAnimation - mantener el estado para NO limpiar canvas
+  // isFirstAnimation ya se configuró como false después de la primera animación
+  
   // NO hacer resize() ni limpiar el canvas principal - MANTENER wallpaper dibujado
   // Solo limpiar la máscara para nueva animación encima
   maskCtx.clearRect(0,0,size.w,size.h); 
   
-  console.log('🎨 COLOREANDO ENCIMA del wallpaper existente - 15 SEGUNDOS...');
+  console.log('🎨 COLOREANDO ENCIMA del wallpaper existente - 30 SEGUNDOS...');
   
-  // GENERAR ELEMENTOS BALANCEADOS PARA 15 SEGUNDOS
+  // GENERAR ELEMENTOS BALANCEADOS PARA 30 SEGUNDOS (DURATION_MS)
   kickstartMask();
-  makeSeeds(15); // semillas balanceadas para 15 segundos
+  makeSeeds(30); // semillas balanceadas para 30 segundos
   makeStrokes(); 
   makeSpirals();
   makeRadiants();
