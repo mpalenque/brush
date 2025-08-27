@@ -677,14 +677,14 @@ async function generatePatternImage(uniqueId = 'pattern', opts = {}) {
         
         // Configuración del patrón - ULTRA-REDUCIDA para velocidad extrema
         const config = globalState.general;
-        let repX = Math.min(parseInt(config.repetitionX || 20), 30); // Límite ultra-agresivo para velocidad
-        let repY = Math.min(parseInt(config.repetitionY || 8), 12); // Límite ultra-agresivo para velocidad
+        let repX = Math.min(parseInt(config.repetitionX || 20), 20); // Límite ultra-agresivo para velocidad
+        let repY = Math.min(parseInt(config.repetitionY || 8), 8); // Límite ultra-agresivo para velocidad
         const maxElements = repX * repY;
-        if (maxElements > 360) { // Límite total de elementos para velocidad extrema
-            const ratio = Math.sqrt(360 / maxElements);
+        if (maxElements > 120) { // Límite total de elementos ULTRA-AGRESIVO para velocidad extrema
+            const ratio = Math.sqrt(120 / maxElements);
             repX = Math.floor(repX * ratio);
             repY = Math.floor(repY * ratio);
-            console.log(`⚡ LÍMITE VELOCIDAD: Reducido a ${repX}x${repY} = ${repX*repY} elementos`);
+            console.log(`⚡ LÍMITE VELOCIDAD EXTREMA: Reducido a ${repX}x${repY} = ${repX*repY} elementos`);
         }
         const size = parseInt(config.patternSize || 245);
         const dpr = 1; // Equivalente al device pixel ratio
@@ -734,146 +734,32 @@ async function generatePatternImage(uniqueId = 'pattern', opts = {}) {
 
             let counter = 0;
 
-            // SISTEMA OPTIMIZADO: Menos elementos para mayor velocidad
-            const totalSystemWidth = 8640; // Reducido para velocidad (4 pantallas en lugar de 9)
+            // SISTEMA ULTRA-OPTIMIZADO: Mínimos elementos para velocidad extrema
+            const totalSystemWidth = 6480; // Reducido drásticamente 
             const totalSystemHeight = 3840;  // Alto de una pantalla
             
-            // Calcular elementos necesarios - REDUCIDOS para velocidad
-            const elementsX = Math.min(Math.ceil((totalSystemWidth + spacingX * 5) / spacingX), 40); // Máximo 40
-            const elementsY = Math.min(Math.ceil((totalSystemHeight + spacingY * 2) / spacingY), 15); // Máximo 15
+            // Calcular elementos necesarios - ULTRA-REDUCIDOS para velocidad extrema
+            const elementsX = Math.min(Math.ceil((totalSystemWidth + spacingX * 3) / spacingX), 20); // Máximo 20
+            const elementsY = Math.min(Math.ceil((totalSystemHeight + spacingY * 1) / spacingY), 8); // Máximo 8
             
-            console.log(`⚡ Generando ${elementsX}x${elementsY} = ${elementsX * elementsY} elementos`);
+            console.log(`⚡ Generando ${elementsX}x${elementsY} = ${elementsX * elementsY} elementos (ULTRA-OPTIMIZADO)`);
             
-            // Punto de inicio que cubra todo el offset más negativo
-            const startX = -totalSystemWidth / 6; // Reducido
-            const startY = -spacingY; // Reducido
+            // Punto de inicio optimizado
+            const startX = -totalSystemWidth / 8; // Más reducido
+            const startY = -spacingY / 2; // Más reducido
 
-            // Generar el patrón principal (exactamente igual que screen.html)
+            // Generar el patrón principal - ULTRA OPTIMIZADO
             for (let j = 0; j < elementsY; j++) {
                 for (let i = 0; i < elementsX; i++) {
                     let x, y, instRotation = rotationVal, scaleMod = 1;
 
-                    // Calcular posición según el tipo de patrón (idéntico a screen.html)
-                    switch (config.patternType) {
-                        case 'grid':
-                            x = startX + i * spacingX;
-                            y = startY + j * spacingY;
-                            break;
-                        case 'brick':
-                            x = startX + i * spacingX + (j % 2 === 1 ? spacingX * 0.5 : 0);
-                            y = startY + j * spacingY;
-                            break;
-                        case 'hexagon':
-                            x = startX + i * spacingX + (j % 2 === 1 ? spacingX * 0.5 : 0);
-                            y = startY + j * spacingY * 0.866;
-                            break;
-                        case 'diamond':
-                            x = startX + i * spacingX + (j % 2 === 1 ? spacingX * 0.5 : 0);
-                            y = startY + j * spacingY * 0.8;
-                            break;
-                        case 'mirror-horizontal':
-                            if (i % 2 !== 0) instRotation += 180;
-                            x = startX + i * spacingX;
-                            y = startY + j * spacingY;
-                            break;
-                        case 'mirror-vertical':
-                            if (j % 2 !== 0) instRotation += 180;
-                            x = startX + i * spacingX;
-                            y = startY + j * spacingY;
-                            break;
-                        case 'mirror-both':
-                            if (i % 2 !== 0) instRotation += 180;
-                            if (j % 2 !== 0) instRotation += 180;
-                            x = startX + i * spacingX;
-                            y = startY + j * spacingY;
-                            break;
-                        case 'rotate-90':
-                            instRotation += (counter % 4) * 90;
-                            x = startX + i * spacingX;
-                            y = startY + j * spacingY;
-                            break;
-                        case 'rotate-180':
-                            if (counter % 2 !== 0) instRotation += 180;
-                            x = startX + i * spacingX;
-                            y = startY + j * spacingY;
-                            break;
-                        case 'rotate-mixed':
-                            instRotation += [0, 90, 270, 180][counter % 4];
-                            x = startX + i * spacingX;
-                            y = startY + j * spacingY;
-                            break;
-                        case 'scale-varied':
-                            scaleMod = [1, 0.6, 1.4, 0.8][counter % 4];
-                            x = startX + i * spacingX;
-                            y = startY + j * spacingY;
-                            break;
-                        case 'alternating-scale':
-                            const scaleDiff = parseFloat(config.scaleDifference || 1.5);
-                            scaleMod = (counter % 2 === 0) ? 1 : scaleDiff;
-                            x = startX + i * spacingX;
-                            y = startY + j * spacingY;
-                            break;
-                        case 'organic-complex':
-                            // Patrón orgánico determinístico usando coordenadas absolutas
-                            // IMPORTANTE: Usar coordenadas absolutas para que todas las pantallas 
-                            // generen exactamente el mismo patrón
-                            
-                            const patterns = [
-                                { offsetX: 0, offsetY: 0, rotation: 0, scale: 1 },
-                                { offsetX: spacingX * 0.3, offsetY: spacingY * 0.2, rotation: 180, scale: 0.8 },
-                                { offsetX: -spacingX * 0.1, offsetY: spacingY * 0.4, rotation: 90, scale: 1.2 },
-                                { offsetX: spacingX * 0.2, offsetY: -spacingY * 0.1, rotation: 270, scale: 0.9 },
-                                { offsetX: -spacingX * 0.2, offsetY: -spacingY * 0.3, rotation: 45, scale: 1.1 },
-                                { offsetX: spacingX * 0.4, offsetY: spacingY * 0.1, rotation: 135, scale: 0.7 },
-                                // Patrones adicionales para mayor extensión lateral
-                                { offsetX: spacingX * 0.6, offsetY: spacingY * 0.3, rotation: 225, scale: 0.9 },
-                                { offsetX: -spacingX * 0.4, offsetY: spacingY * 0.5, rotation: 315, scale: 1.0 },
-                                { offsetX: spacingX * 0.8, offsetY: -spacingY * 0.2, rotation: 60, scale: 0.85 },
-                                { offsetX: -spacingX * 0.6, offsetY: -spacingY * 0.4, rotation: 120, scale: 1.15 },
-                                { offsetX: spacingX * 1.0, offsetY: spacingY * 0.6, rotation: 200, scale: 0.75 },
-                                { offsetX: -spacingX * 0.8, offsetY: spacingY * 0.1, rotation: 280, scale: 1.05 }
-                            ];
-                            
-                            // Usar coordenadas absolutas para determinismo
-                            const baseX = startX + i * spacingX;
-                            const baseY = startY + j * spacingY;
-                            
-                            // Crear un índice determinístico basado en coordenadas absolutas
-                            // Usar coordenadas redondeadas para evitar problemas de punto flotante
-                            const absoluteX = Math.round(baseX);
-                            const absoluteY = Math.round(baseY);
-                            
-                            // Generar índices determinísticos basados en posición absoluta
-                            // Usar Math.abs para evitar índices negativos
-                            const patternIndex = Math.abs((absoluteX + absoluteY * 2)) % patterns.length;
-                            const rowVariationIndex = Math.abs(Math.floor(absoluteY / spacingY)) % 5;
-                            const colVariationIndex = Math.abs(Math.floor(absoluteX / spacingX)) % 3;
-                            const lateralSpreadIndex = Math.abs((absoluteX + absoluteY)) % 7;
-                            
-                            const pattern = patterns[patternIndex];
-                            
-                            // Verificación de seguridad
-                            if (!pattern) {
-                                console.error(`❌ Pattern undefined at index ${patternIndex}, patterns length: ${patterns.length}`);
-                                x = baseX;
-                                y = baseY;
-                                instRotation = 0;
-                                scaleMod = 1;
-                            } else {
-                                // Variaciones determinísticas basadas en coordenadas absolutas
-                                const rowVariation = rowVariationIndex * spacingX * 0.25;
-                                const colVariation = colVariationIndex * spacingY * 0.15;
-                                const lateralSpread = lateralSpreadIndex * spacingX * 0.1;
-                                
-                                x = baseX + pattern.offsetX + rowVariation + lateralSpread;
-                                y = baseY + pattern.offsetY + colVariation;
-                                instRotation += pattern.rotation;
-                                scaleMod = pattern.scale;
-                            }
-                            break;
-                        default:
-                            x = startX + i * spacingX;
-                            y = startY + j * spacingY;
+                    // OPTIMIZACIÓN EXTREMA: Solo grid simple para máxima velocidad
+                    x = startX + i * spacingX;
+                    y = startY + j * spacingY;
+                    
+                    // Solo brick si es absolutamente necesario (patrón más simple)
+                    if (config.patternType === 'brick') {
+                        x += (j % 2 === 1 ? spacingX * 0.5 : 0);
                     }
                     
                     // Aplicar offset de pantalla (0 para imagen única)
