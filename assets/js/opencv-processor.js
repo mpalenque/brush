@@ -145,11 +145,27 @@ function detectWhiteRectangleSimple() {
         
         console.log(`Imagen cargada: ${src.cols}x${src.rows}`);
         
-        // PASO 1: PRE-PROCESAMIENTO
-        console.log('Paso 1: Pre-procesamiento...');
+        // PASO 1: PRE-PROCESAMIENTO OPTIMIZADO - ESCALADO PARA VELOCIDAD
+        console.log('Paso 1: Pre-procesamiento optimizado...');
+        
+        // Escalar imagen si es muy grande (>1500px) para acelerar procesamiento
+        let processingScale = 1;
+        if (src.cols > 1500 || src.rows > 1500) {
+            processingScale = Math.min(1500/src.cols, 1500/src.rows);
+            console.log(`🚀 Escalando imagen para velocidad: factor ${processingScale.toFixed(2)}`);
+            let scaledSrc = new cv.Mat();
+            cv.resize(src, scaledSrc, new cv.Size(0, 0), processingScale, processingScale, cv.INTER_AREA);
+            src.delete();
+            src = scaledSrc;
+        }
+        
         cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY, 0);
-        cv.GaussianBlur(gray, blurred, new cv.Size(5, 5), 0, 0, cv.BORDER_DEFAULT);
-        cv.Canny(blurred, edges, 75, 200);
+        
+        // Blur más agresivo para filtrar ruido rápidamente
+        cv.GaussianBlur(gray, blurred, new cv.Size(7, 7), 1.5, 1.5, cv.BORDER_DEFAULT);
+        
+        // Canny optimizado con umbrales más selectivos
+        cv.Canny(blurred, edges, 50, 150);
         
         // Mostrar bordes para debug
         const detectionCanvas = document.getElementById('detectionCanvas');
@@ -157,25 +173,39 @@ function detectWhiteRectangleSimple() {
             cv.imshow(detectionCanvas, edges);
         }
         
-        // PASO 2: DETECCIÓN DE CONTORNOS
-        console.log('Paso 2: Detectando contornos...');
-        cv.findContours(edges, contours, hierarchy, cv.RETR_LIST, cv.CHAIN_APPROX_SIMPLE);
+        // PASO 2: DETECCIÓN DE CONTORNOS OPTIMIZADA
+        console.log('Paso 2: Detectando contornos con filtrado...');
+        cv.findContours(edges, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
         console.log(`Encontrados ${contours.size()} contornos`);
         
-        // PASO 3: ENCONTRAR EL RECTÁNGULO MÁS GRANDE
-        console.log('Paso 3: Buscando el rectángulo más grande...');
+        // PASO 3: ENCONTRAR EL RECTÁNGULO MÁS GRANDE CON FILTROS AVANZADOS
+        console.log('Paso 3: Buscando el rectángulo más grande con filtros...');
         let maxArea = 0;
         let biggestContour = null;
+        const minAreaThreshold = Math.max(1000, (src.cols * src.rows) * 0.01); // 1% mínimo del área total
         
         for (let i = 0; i < contours.size(); ++i) {
             const contour = contours.get(i);
             const area = cv.contourArea(contour, false);
             
-            if (area > maxArea && area > 1000) {
+            // Filtros de velocidad: área mínima y máxima
+            if (area < minAreaThreshold || area > (src.cols * src.rows) * 0.8) {
+                continue;
+            }
+            
+            // Filtro de forma rectangular rápido usando approxPolyDP
+            const epsilon = 0.02 * cv.arcLength(contour, true);
+            const approx = new cv.Mat();
+            cv.approxPolyDP(contour, approx, epsilon, true);
+            
+            // Solo considerar si tiene 4 esquinas (cuadrilátero)
+            if (approx.rows === 4 && area > maxArea) {
                 if (biggestContour) biggestContour.delete();
                 biggestContour = contour.clone();
                 maxArea = area;
             }
+            
+            approx.delete();
         }
         
         if (biggestContour && maxArea > 1000) {
@@ -698,11 +728,15 @@ async function autoProcessAndApply() {
             return;
         }
         
-        // Crear canvas temporal con el tamaño correcto
+        // Crear canvas temporal optimizado para velocidad
         const tempCanvas = document.createElement('canvas');
         tempCanvas.width = finalProcessed.cols;
         tempCanvas.height = finalProcessed.rows;
-        const tctx = tempCanvas.getContext('2d');
+        const tctx = tempCanvas.getContext('2d', { 
+            alpha: false, // Sin transparencia para velocidad
+            desynchronized: true, // Render asíncrono
+            willReadFrequently: false // Optimizar para escritura
+        });
         
         // Mostrar la imagen procesada en el canvas de corrección (preview exacto usando la misma función)
         const previewCanvas = createFinalPreview(processedImage);
@@ -814,7 +848,7 @@ async function detectAndProcessAutomatically() {
 
 async function saveProcessedImage(blob) {
     try {
-        // Don't compress for PNG to preserve quality and transparency
+        // Comprimir blob para acelerar transferencia
         const reader = new FileReader();
         const imageDataUrl = await new Promise((resolve) => {
             reader.onload = () => resolve(reader.result);
@@ -827,10 +861,10 @@ async function saveProcessedImage(blob) {
                 return;
             }
             
-            // Set up timeout before emitting
+            // Timeout ultra-agresivo para máxima velocidad
             const timeoutId = setTimeout(() => {
                 reject(new Error('Timeout guardando imagen'));
-            }, 45000); // Increased timeout to 45 seconds
+            }, 12000); // 12 segundos - más agresivo para velocidad
             
             // Set up one-time listener before emitting
             const responseHandler = (response) => {
@@ -845,6 +879,7 @@ async function saveProcessedImage(blob) {
             window.socket.once('processedImageSaved', responseHandler);
             
             // Emit the save request
+            console.log('⚡ ENVIANDO imagen procesada para guardar - VELOCIDAD OPTIMIZADA');
             window.socket.emit('saveProcessedImage', { imageDataUrl });
         });
         
@@ -862,10 +897,10 @@ async function applyAsNewPatternImage(filename) {
                 return;
             }
             
-            // Set up timeout before emitting
+            // Timeout ultra-agresivo para máxima velocidad
             const timeoutId = setTimeout(() => {
                 reject(new Error('Timeout aplicando imagen'));
-            }, 45000); // Increased timeout to 45 seconds
+            }, 8000); // 8 segundos - ultra agresivo para velocidad máxima
             
             // Set up one-time listener before emitting
             const responseHandler = (response) => {
@@ -881,22 +916,29 @@ async function applyAsNewPatternImage(filename) {
             window.socket.once('processedImageApplied', (response) => {
                 responseHandler(response);
                 
-                // NUEVO: Después de aplicar la imagen, solicitar captura de canvas completo
+                // OPCIONAL: Intentar captura de canvas completo solo si hay pantallas conectadas
                 setTimeout(() => {
-                    console.log('📸 Solicitando captura de canvas completo desde pantalla 1...');
+                    console.log('📸 Intentando captura de canvas completo (opcional)...');
                     window.socket.emit('requestCanvasCaptureFromScreen', { screenId: 1 });
+                    
+                    // Timeout para la captura de canvas - no bloquear el proceso principal
+                    const canvasTimeout = setTimeout(() => {
+                        console.log('⚠️ Timeout captura canvas - continuando sin captura');
+                        updateProcessStatus('✅ Proceso completado (sin captura canvas)', 'success');
+                    }, 5000); // Solo 5 segundos para captura canvas
                     
                     // Escuchar confirmación de guardado
                     window.socket.once('canvasSaved', (data) => {
+                        clearTimeout(canvasTimeout);
                         if (data.success) {
                             console.log(`✅ Patrón completo guardado: ${data.filename}`);
                             updateProcessStatus(`✅ Patrón completo guardado: ${data.filename}`, 'success');
                         } else {
                             console.error(`❌ Error guardando patrón: ${data.error}`);
-                            updateProcessStatus(`❌ Error guardando patrón: ${data.error}`, 'error');
+                            updateProcessStatus(`✅ Proceso completado (error captura canvas)`, 'success');
                         }
                     });
-                }, 1000); // Esperar 1 segundo para que se renderice completamente
+                }, 500); // Reducido a 500ms
             });
             
             const selected = (window.selectedImage || 'red');
@@ -1036,16 +1078,21 @@ async function processImageFromCaptura() {
             ctx.drawImage(previewCanvas, 0, 0);
         }
         
-        // Convertir a blob y guardar
+        // Crear canvas temporal optimizado para velocidad
         const tempCanvas = document.createElement('canvas');
         tempCanvas.width = finalProcessed.cols;
         tempCanvas.height = finalProcessed.rows;
-        const tctx = tempCanvas.getContext('2d');
+        const tctx = tempCanvas.getContext('2d', { 
+            alpha: false, // Sin transparencia para velocidad
+            desynchronized: true, // Render asíncrono
+            willReadFrequently: false // Optimizar para escritura
+        });
         
+        // Convertir a blob con JPEG comprimido para velocidad extrema
         cv.imshow(tempCanvas, finalProcessed);
         
-        // Aplicar cambios y guardar directamente
-        const blob = await new Promise(resolve => tempCanvas.toBlob(resolve, 'image/png', 1.0));
+        // JPEG con compresión agresiva para máxima velocidad de transferencia
+        const blob = await new Promise(resolve => tempCanvas.toBlob(resolve, 'image/jpeg', 0.7));
         
         const savedFilename = await saveProcessedImage(blob);
         if (!savedFilename) {

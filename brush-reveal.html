@@ -50,8 +50,37 @@
     </div>
     
     <script>
-        // Sistema controlado desde /control - sin auto-refresh
+        // Sistema controlado desde /control - sin auto-reload constante
         console.log('⏸️ Sistema de brush-reveal listo - esperando órdenes desde /control');
+        
+        // Variables para control de conexión
+        let connectionCheckCount = 0;
+        let maxDisconnectionChecks = 3; // Solo reload después de 3 checks fallidos consecutivos
+        
+        function ensureConnection() {
+            if (!window.socket) {
+                // Socket aún no inicializado, no hacer nada todavía
+                return;
+            }
+            
+            if (window.socket.disconnected) {
+                connectionCheckCount++;
+                console.log(`⚠️ Conexión perdida (${connectionCheckCount}/${maxDisconnectionChecks})`);
+                
+                // Solo recargar después de múltiples checks fallidos
+                if (connectionCheckCount >= maxDisconnectionChecks) {
+                    console.log('🔄 Reconectando al servidor después de múltiples intentos fallidos...');
+                    location.reload();
+                }
+            } else {
+                // Conexión OK, resetear contador
+                connectionCheckCount = 0;
+                console.log('✅ Conexión al servidor activa');
+            }
+        }
+        
+        // Verificar conexión cada 10 segundos (menos frecuente)
+        setInterval(ensureConnection, 10000);
     </script>
     
     <!-- Socket.IO para comunicación en tiempo real -->

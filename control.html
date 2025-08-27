@@ -294,6 +294,40 @@
 
     <!-- Scripts -->
     <script src="/socket.io/socket.io.js"></script>
+    <script>
+        // Sistema de conexión mejorado - sin reloads constantes
+        let connectionCheckCount = 0;
+        let maxDisconnectionChecks = 3;
+        
+        function ensureControlConnection() {
+            if (!window.socket) {
+                // Socket aún no inicializado
+                return;
+            }
+            
+            if (window.socket.disconnected) {
+                connectionCheckCount++;
+                console.log(`⚠️ Control: Conexión perdida (${connectionCheckCount}/${maxDisconnectionChecks})`);
+                
+                // Solo recargar después de múltiples checks fallidos
+                if (connectionCheckCount >= maxDisconnectionChecks) {
+                    console.log('🔄 Control: Reconectando después de múltiples intentos fallidos...');
+                    location.reload();
+                }
+            } else {
+                connectionCheckCount = 0;
+                console.log('✅ Control: Conexión al servidor activa');
+            }
+        }
+        
+        // Verificar conexión cada 10 segundos (menos frecuente)
+        const connectionCheckInterval = setInterval(ensureControlConnection, 10000);
+        
+        // Limpiar interval al cerrar
+        window.addEventListener('beforeunload', () => {
+            if (connectionCheckInterval) clearInterval(connectionCheckInterval);
+        });
+    </script>
     <script src="assets/js/opencv-processor.js"></script>
     <script src="assets/js/control.js"></script>
 </body>

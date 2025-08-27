@@ -499,22 +499,28 @@ io.on('connection', (socket) => {
                 fs.mkdirSync(patternsDir, { recursive: true });
             }
             
-            // Convertir PNG a JPG con fondo blanco
+            // Convertir PNG a JPG con fondo blanco y REDIMENSIONAR a 2160x3840
             const img = await loadImage(buffer);
-            const canvas = createCanvas(img.width, img.height);
+            
+            // FORZAR dimensiones específicas: 2160x3840
+            const targetWidth = 2160;
+            const targetHeight = 3840;
+            const canvas = createCanvas(targetWidth, targetHeight);
             const ctx = canvas.getContext('2d');
             
             // Fondo blanco para el JPG
             ctx.fillStyle = '#FFFFFF';
-            ctx.fillRect(0, 0, img.width, img.height);
-            ctx.drawImage(img, 0, 0);
+            ctx.fillRect(0, 0, targetWidth, targetHeight);
             
-            const jpgBuffer = canvas.toBuffer('image/jpeg', { quality: 0.9 });
+            // Redimensionar imagen para ajustar a 2160x3840
+            ctx.drawImage(img, 0, 0, targetWidth, targetHeight);
+            
+            const jpgBuffer = canvas.toBuffer('image/jpeg', { quality: 0.95 });
             const outPath = path.join(patternsDir, filename);
             fs.writeFileSync(outPath, jpgBuffer);
             
             console.log(`✅ Canvas completo guardado: ${filename}`);
-            console.log(`📐 Dimensiones: ${img.width}x${img.height}`);
+            console.log(`📐 Dimensiones FORZADAS: ${targetWidth}x${targetHeight}`);
             
             // Notificar a todos los clientes sobre el nuevo patrón
             io.emit('newPatternReady', {
@@ -638,12 +644,19 @@ io.on('connection', (socket) => {
     });
 });
 
-// Función para generar la imagen del patrón
+// Función para generar la imagen del patrón - OPTIMIZADA
 async function generatePatternImage(uniqueId = 'pattern', opts = {}) {
+    console.log('⚡ INICIANDO generatePatternImage - MODO OPTIMIZADO');
+    const startTime = Date.now();
+    
     const width = 2160;
     const height = 3840;
     const canvas = createCanvas(width, height);
     const ctx = canvas.getContext('2d');
+    
+    // Fondo blanco inmediato
+    ctx.fillStyle = '#FFFFFF';
+    ctx.fillRect(0, 0, width, height);
 
     // Cargar la imagen principal del patrón (usar processed/processed.png o la imagen seleccionada)
     try {
@@ -658,18 +671,29 @@ async function generatePatternImage(uniqueId = 'pattern', opts = {}) {
             imageToLoad = selectedImagePath;
         }
         
+        console.log(`⚡ Cargando imagen: ${imageToLoad}`);
         const patternImage = await loadImage(imageToLoad);
+        console.log(`⚡ Imagen cargada en ${Date.now() - startTime}ms`);
         
-        // Configuración del patrón (usando la imagen pattern.jpg)
+        // Configuración del patrón - ULTRA-REDUCIDA para velocidad extrema
         const config = globalState.general;
-        const repX = parseInt(config.repetitionX || 20); // Aumentado para cubrir múltiples pantallas
-        const repY = parseInt(config.repetitionY || 8);
+        let repX = Math.min(parseInt(config.repetitionX || 20), 30); // Límite ultra-agresivo para velocidad
+        let repY = Math.min(parseInt(config.repetitionY || 8), 12); // Límite ultra-agresivo para velocidad
+        const maxElements = repX * repY;
+        if (maxElements > 360) { // Límite total de elementos para velocidad extrema
+            const ratio = Math.sqrt(360 / maxElements);
+            repX = Math.floor(repX * ratio);
+            repY = Math.floor(repY * ratio);
+            console.log(`⚡ LÍMITE VELOCIDAD: Reducido a ${repX}x${repY} = ${repX*repY} elementos`);
+        }
         const size = parseInt(config.patternSize || 245);
         const dpr = 1; // Equivalente al device pixel ratio
         const rotationVal = parseInt(config.rotation || 0);
         
         // Sin offset de pantalla (guardamos como imagen única)
         const offsetXVal = 0;
+        
+        console.log(`⚡ Configuración: ${repX}x${repY} repeticiones, tamaño ${size}px`);
         
         // CAMBIO IMPORTANTE: Usar spacing fijo basado en el tamaño del patrón
         // No dependiente del tamaño de la ventana para que todas las pantallas sean iguales
@@ -691,6 +715,9 @@ async function generatePatternImage(uniqueId = 'pattern', opts = {}) {
         ctx.fillStyle = config.backgroundColor || '#F5DDC7';
         ctx.fillRect(0, 0, width, height);
 
+        // Inicializar tiempo de render
+        const renderStartTime = Date.now();
+
         // Solo dibujar si el wallpaper está activo (replicando la lógica de screen.html)
         if (globalState.wallpaper?.isActive) {
             // Efectos globales
@@ -707,18 +734,19 @@ async function generatePatternImage(uniqueId = 'pattern', opts = {}) {
 
             let counter = 0;
 
-            // SISTEMA CORREGIDO: Usar una grilla fija muy grande que cubra todas las pantallas
-            // Esto asegura que el servidor genere suficientes elementos para todas las pantallas
-            const totalSystemWidth = 20112; // Ancho total del sistema de 9 pantallas
+            // SISTEMA OPTIMIZADO: Menos elementos para mayor velocidad
+            const totalSystemWidth = 8640; // Reducido para velocidad (4 pantallas en lugar de 9)
             const totalSystemHeight = 3840;  // Alto de una pantalla
             
-            // Calcular elementos necesarios para cubrir todo el sistema + margen
-            const elementsX = Math.ceil((totalSystemWidth + spacingX * 10) / spacingX);
-            const elementsY = Math.ceil((totalSystemHeight + spacingY * 5) / spacingY);
+            // Calcular elementos necesarios - REDUCIDOS para velocidad
+            const elementsX = Math.min(Math.ceil((totalSystemWidth + spacingX * 5) / spacingX), 40); // Máximo 40
+            const elementsY = Math.min(Math.ceil((totalSystemHeight + spacingY * 2) / spacingY), 15); // Máximo 15
+            
+            console.log(`⚡ Generando ${elementsX}x${elementsY} = ${elementsX * elementsY} elementos`);
             
             // Punto de inicio que cubra todo el offset más negativo
-            const startX = -totalSystemWidth / 4; // Margen amplio hacia la izquierda
-            const startY = -spacingY * 2; // Margen hacia arriba
+            const startX = -totalSystemWidth / 6; // Reducido
+            const startY = -spacingY; // Reducido
 
             // Generar el patrón principal (exactamente igual que screen.html)
             for (let j = 0; j < elementsY; j++) {
@@ -913,11 +941,16 @@ async function generatePatternImage(uniqueId = 'pattern', opts = {}) {
 
         ctx.restore();
 
-        // Guardar siempre como wallpaper.jpg
-        const buffer = canvas.toBuffer('image/jpeg', { quality: 0.9 });
+        console.log(`⚡ Render completado en ${Date.now() - renderStartTime}ms`);
+
+        // Guardar siempre como wallpaper.jpg - OPTIMIZADO
+        const saveStartTime = Date.now();
+        const buffer = canvas.toBuffer('image/jpeg', { quality: 0.85 }); // Calidad reducida para velocidad
         const outputPath = path.join(__dirname, 'patterns', 'wallpaper.jpg');
         fs.writeFileSync(outputPath, buffer);
         
+        console.log(`⚡ Archivo guardado en ${Date.now() - saveStartTime}ms`);
+        console.log(`⚡ TOTAL generatePatternImage: ${Date.now() - startTime}ms`);
         console.log('Patrón guardado en:', outputPath);
         console.log('Estado del wallpaper al guardar:', globalState.wallpaper?.isActive ? 'ACTIVO' : 'INACTIVO');
         

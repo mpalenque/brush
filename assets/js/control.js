@@ -121,7 +121,13 @@ function initializeDOMElements() {
 // ==============================
 
 function setupWebSocket() {
-    socket = io();
+    socket = io({
+        autoConnect: true,
+        reconnection: true,
+        reconnectionDelay: 1000,
+        reconnectionAttempts: 10,
+        timeout: 5000
+    });
     
     // Exponer socket globalmente para el procesador OpenCV
     window.socket = socket;
@@ -133,13 +139,24 @@ function setupWebSocket() {
             elements.connectionStatus.className = 'connection-status connected';
         }
         socket.emit('registerScreen', { screenId: 0, type: 'control' });
+        console.log('🔌 Control panel conectado al servidor');
     });
 
     socket.on('disconnect', () => {
         if (elements.connectionStatus) {
-            elements.connectionStatus.textContent = '❌ Desconectado del servidor';
+            elements.connectionStatus.textContent = '❌ Desconectado del servidor - reconectando...';
             elements.connectionStatus.className = 'connection-status disconnected';
         }
+        console.log('🔌 Control panel desconectado - intentando reconectar...');
+    });
+    
+    socket.on('reconnect', () => {
+        if (elements.connectionStatus) {
+            elements.connectionStatus.textContent = '✅ Reconectado al servidor';
+            elements.connectionStatus.className = 'connection-status connected';
+        }
+        socket.emit('registerScreen', { screenId: 0, type: 'control' });
+        console.log('🔌 Control panel reconectado al servidor');
     });
 
     socket.on('initialState', (state) => {

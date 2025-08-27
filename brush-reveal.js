@@ -1,15 +1,15 @@
-// Ajustes generales - suavizados para mejor calidad visual
-const DURATION_MS = 35000; // 35s para más tiempo de desarrollo suave
+// Ajustes generales - OPTIMIZADOS PARA VELOCIDAD CONTROLADA
+const DURATION_MS = 30000; // 30s - el doble de tiempo para coloreado
 const DPR = 1; // cap para rendimiento
-const MASK_SCALE = 0.85; // máscara a mayor resolución para mejor calidad
-const MAX_UNITS_PER_FRAME = 320; // menos trabajo por frame para suavidad
-const FINAL_SEAL_START = 0.80; // iniciar antes para asegurar cobertura completa
-const FINAL_SEAL_ALPHA_MIN = 0.08;
-const FINAL_SEAL_ALPHA_MAX = 0.15;
-const FINAL_SEAL_CHUNK_BASE = 4; // más trabajo de sellado
-const WASH_START = 0.75; // iniciar antes
-const WASH_CHUNK_BASE = 6;
-const MAX_STEPS_PER_ENTITY_FRAME = 3; // un poco más de trabajo por entidad
+const MASK_SCALE = 0.7; // máscara a menor resolución para velocidad
+const MAX_UNITS_PER_FRAME = 600; // trabajo optimizado por frame
+const FINAL_SEAL_START = 0.70; // iniciar antes para terminar en tiempo
+const FINAL_SEAL_ALPHA_MIN = 0.12;
+const FINAL_SEAL_ALPHA_MAX = 0.20;
+const FINAL_SEAL_CHUNK_BASE = 6; // trabajo de sellado balanceado
+const WASH_START = 0.65; // iniciar antes
+const WASH_CHUNK_BASE = 10;
+const MAX_STEPS_PER_ENTITY_FRAME = 5; // trabajo por entidad balanceado
 const container = document.getElementById('container');
 const canvas = document.querySelector('.js-canvas');
 const ctx = canvas.getContext('2d', { alpha: true, desynchronized: true });
@@ -20,6 +20,9 @@ let drawEvents = [];
 
 // Imagen seleccionada actual
 let selectedImage = 'red';
+
+// Control de inicialización
+let hasInitialAnimationStarted = false;
 
 // Patrones para alternar secuencialmente
 const patterns = [];
@@ -113,17 +116,28 @@ async function loadLatestPatterns() {
 
 function setupWebSocket() {
   try {
-    // Conectar al servidor WebSocket
-    socket = io();
+    // Conectar al servidor WebSocket con reconexión automática
+    socket = io({
+      autoConnect: true,
+      reconnection: true,
+      reconnectionDelay: 1000,
+      reconnectionAttempts: 10,
+      timeout: 5000
+    });
     
     socket.on('connect', () => {
       console.log('🔌 Conectado al servidor WebSocket');
-      // No registrarse como pantalla específica, solo como brush-reveal
+      // Registrarse como brush-reveal
       socket.emit('register', { type: 'brush-reveal' });
     });
     
     socket.on('disconnect', () => {
-      console.log('🔌 Desconectado del servidor WebSocket');
+      console.log('🔌 Desconectado del servidor WebSocket - intentando reconectar...');
+    });
+    
+    socket.on('reconnect', () => {
+      console.log('🔌 Reconectado al servidor WebSocket');
+      socket.emit('register', { type: 'brush-reveal' });
     });
     
     // Escuchar cuando hay un nuevo patrón listo
@@ -131,19 +145,19 @@ function setupWebSocket() {
       console.log(`🎨 Nuevo patrón recibido:`, data);
       latestPatternId = data.patternId;
       
-      // Cargar el nuevo patrón y iniciar animación
+      // Cargar el nuevo patrón y iniciar animación ENCIMA
       loadNewPatternAndAnimate(data.filename);
     });
 
     // Cuando se actualiza la imagen procesada (tecla 9), cargar el último patrón de /patterns
     socket.on('imageUpdated', (data) => {
-      console.log('🆕 Imagen procesada actualizada - recargando último patrón de /patterns:', data);
+      console.log('🆕 Imagen procesada actualizada - coloreando encima con wallpaper.jpg:', data);
       loadLatestPatternAndAnimate();
     });
     
     // NUEVO: Escuchar orden desde /control para iniciar animación con último patrón
     socket.on('requestAnimationStart', (data) => {
-      console.log('🎬 Orden recibida desde /control - iniciando animación con último patrón de /patterns');
+      console.log('🎬 Orden recibida desde /control - coloreando encima con último patrón');
       loadLatestPatternAndAnimate();
     });
     
@@ -1205,11 +1219,11 @@ function colorOnTop(){
   // Solo limpiar la máscara para nueva animación encima
   maskCtx.clearRect(0,0,size.w,size.h); 
   
-  console.log('🎨 COLOREANDO ENCIMA del wallpaper existente...');
+  console.log('🎨 COLOREANDO ENCIMA del wallpaper existente - 15 SEGUNDOS...');
   
-  // golpe inicial en el centro para que empiece a mostrarse de inmediato
+  // GENERAR ELEMENTOS BALANCEADOS PARA 15 SEGUNDOS
   kickstartMask();
-  makeSeeds(12); // Aumentamos las semillas para una mejor distribución final
+  makeSeeds(15); // semillas balanceadas para 15 segundos
   makeStrokes(); 
   makeSpirals();
   makeRadiants();
@@ -1391,10 +1405,13 @@ async function updateFallbackPattern() {
     
     console.log(`✅ ${maskBrushes.length} brochas cargadas.`);
     
-    // SIEMPRE iniciar animación si hay wallpaper.jpg
-    if (patterns.length > 0) {
-      console.log('🚀 INICIANDO ANIMACIÓN AUTOMÁTICA CON WALLPAPER.JPG');
+    // SOLO iniciar animación automáticamente la PRIMERA VEZ si hay wallpaper.jpg
+    if (patterns.length > 0 && !hasInitialAnimationStarted) {
+      console.log('🚀 PRIMERA CARGA - INICIANDO ANIMACIÓN AUTOMÁTICA CON WALLPAPER.JPG');
+      hasInitialAnimationStarted = true;
       start();
+    } else if (hasInitialAnimationStarted) {
+      console.log('⏸️ Sistema ya inicializado - esperando eventos de control...');
     } else {
       console.log('⏸️ No hay patrones disponibles, esperando eventos...');
     }
