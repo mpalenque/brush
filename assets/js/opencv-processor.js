@@ -265,23 +265,39 @@ function applyPerspectiveCorrection(mat, contour) {
             distance(sortedCorners[3], sortedCorners[0])
         );
         
+        // CROP MEJORADO: Reducir 10px más en cada lado para eliminar mejor los bordes negros
+        const cropInward = 15; // Aumentar crop de 10px a 15px para eliminar mejor los bordes
+        const croppedWidth = Math.max(50, width - (cropInward * 2));
+        const croppedHeight = Math.max(50, height - (cropInward * 2));
+        
         const dstCorners = cv.matFromArray(4, 1, cv.CV_32FC2, [
-            0, 0, width, 0, width, height, 0, height
+            cropInward, cropInward, 
+            croppedWidth + cropInward, cropInward, 
+            croppedWidth + cropInward, croppedHeight + cropInward, 
+            cropInward, croppedHeight + cropInward
         ]);
         
-        // Aplicar transformación de perspectiva
+        // Aplicar transformación de perspectiva con el nuevo tamaño cropeado
         const transformMatrix = cv.getPerspectiveTransform(srcCorners, dstCorners);
         let warped = new cv.Mat();
-        cv.warpPerspective(mat, warped, transformMatrix, new cv.Size(width, height));
+        cv.warpPerspective(mat, warped, transformMatrix, new cv.Size(croppedWidth + (cropInward * 2), croppedHeight + (cropInward * 2)));
+        
+        // Ahora hacer el crop final para eliminar los bordes del crop interno
+        let finalCropped = new cv.Mat();
+        let cropRect = new cv.Rect(cropInward, cropInward, croppedWidth, croppedHeight);
+        finalCropped = warped.roi(cropRect);
+        let result = finalCropped.clone();
         
         // Cleanup
         approx.delete();
         srcCorners.delete();
         dstCorners.delete();
         transformMatrix.delete();
+        warped.delete();
+        finalCropped.delete();
         
-        console.log(`Imagen corregida: ${width}x${height}`);
-        return warped;
+        console.log(`Imagen corregida y cropeada: ${croppedWidth}x${croppedHeight} (crop: ${cropInward}px)`);
+        return result;
         
     } catch (error) {
         console.error('Error en corrección de perspectiva:', error);
@@ -376,14 +392,37 @@ function createFinalPreview(correctedMat) {
         const imageData = tctx.getImageData(0, 0, tempCanvas.width, tempCanvas.height);
         const data = imageData.data;
         
-        // Solo cambiar píxeles completamente transparentes, preservar todo lo demás
+        // MISMO PROCESAMIENTO MEJORADO: Eliminar bordes negros y aumentar saturación
         for (let i = 0; i < data.length; i += 4) {
+            const r = data[i];
+            const g = data[i + 1];
+            const b = data[i + 2];
             const alpha = data[i + 3];
-            if (alpha === 0) {
-                data[i] = 255;     // R
-                data[i + 1] = 255; // G
-                data[i + 2] = 255; // B
-                data[i + 3] = 255; // A
+            
+            // Calcular brillo del píxel
+            const brightness = (r + g + b) / 3;
+            
+            // Si el píxel es transparente O muy oscuro (borde negro), convertir a blanco puro
+            if (alpha === 0 || brightness < 70) { // MÁS AGRESIVO para blanco puro
+                data[i] = 255;     // R = blanco
+                data[i + 1] = 255; // G = blanco
+                data[i + 2] = 255; // B = blanco
+                data[i + 3] = 255; // A = opaco
+            } else {
+                // Para píxeles con color, aumentar ligeramente la saturación
+                const max = Math.max(r, g, b);
+                const min = Math.min(r, g, b);
+                const saturation = max === 0 ? 0 : (max - min) / max;
+                
+                if (saturation > 0.1) { // Solo si tiene algo de color
+                    // Aumentar saturación manteniendo el tono
+                    const factor = 1.15; // +15% saturación adicional
+                    const gray = 0.299 * r + 0.587 * g + 0.114 * b;
+                    
+                    data[i] = Math.min(255, Math.max(0, gray + factor * (r - gray)));
+                    data[i + 1] = Math.min(255, Math.max(0, gray + factor * (g - gray)));
+                    data[i + 2] = Math.min(255, Math.max(0, gray + factor * (b - gray)));
+                }
             }
         }
         
@@ -412,43 +451,210 @@ function applyFinalImageProcessing(inputMat) {
         // Crear una copia para no modificar el original
         let processed = inputMat.clone();
         
-        // PROCESAMIENTO 1: Realce de contraste y brillo más visible
-        processed.convertTo(processed, -1, 1.2, 15); // Alpha=1.2 (20% más contraste), Beta=15 (más brillo)
+        // NUEVO: Crear máscara para detectar bordes negros/oscuros y reemplazarlos por blanco
+        let gray = new cv.Mat();
+        cv.cvtColor(processed, gray, cv.COLOR_RGBA2GRAY);
         
-        // PROCESAMIENTO 2: Mejora de nitidez más notable
-        let sharpened = new cv.Mat();
-        let kernel = cv.matFromArray(3, 3, cv.CV_32FC1, [
-            0, -0.7, 0,
-            -0.7, 3.8, -0.7,
-            0, -0.7, 0
-        ]);
-        cv.filter2D(processed, sharpened, cv.CV_8UC4, kernel);
-        kernel.delete();
+        // Crear máscara para píxeles muy oscuros Y FONDO BEIGE - THRESHOLD AJUSTADO
+        let darkMask = new cv.Mat();
+        cv.threshold(gray, darkMask, 85, 255, cv.THRESH_BINARY_INV); // Más agresivo: de 75 a 85 para incluir más grises
         
-        // Mezclar con más nitidez para que sea más visible (50% de nitidez)
-        cv.addWeighted(processed, 0.5, sharpened, 0.5, 0, processed);
-        sharpened.delete();
+        // Aplicar fondo blanco puro a píxeles oscuros y beige
+        for (let y = 0; y < processed.rows; y++) {
+            for (let x = 0; x < processed.cols; x++) {
+                const maskValue = darkMask.ucharPtr(y, x)[0];
+                if (maskValue > 0) { // Si es un píxel oscuro o beige
+                    const pixelPtr = processed.ucharPtr(y, x);
+                    pixelPtr[0] = 255; // R = blanco puro
+                    pixelPtr[1] = 255; // G = blanco puro
+                    pixelPtr[2] = 255; // B = blanco puro
+                    pixelPtr[3] = 255; // A = opaco
+                }
+            }
+        }
         
-        // PROCESAMIENTO 3: Saturación de colores (para preservar y realzar las flores)
-        let hsv = new cv.Mat();
-        cv.cvtColor(processed, hsv, cv.COLOR_RGBA2RGB);
-        cv.cvtColor(hsv, hsv, cv.COLOR_RGB2HSV);
+        // PROCESAMIENTO SIMPLIFICADO: Solo realce mínimo de contraste
+        processed.convertTo(processed, -1, 1.15, 15); // Aumentar brillo de +10 a +15 para esquinas más blancas
         
-        // Aumentar ligeramente la saturación para realzar los colores de las flores
-        let channels = new cv.MatVector();
-        cv.split(hsv, channels);
-        let saturation = channels.get(1);
-        saturation.convertTo(saturation, -1, 1.1, 0); // +10% saturación
-        channels.set(1, saturation);
-        cv.merge(channels, hsv);
+        // PASO FINAL: Limpieza AGRESIVA de bordes negros y preservación de verdes
+        for (let y = 0; y < processed.rows; y++) {
+            for (let x = 0; x < processed.cols; x++) {
+                const pixelPtr = processed.ucharPtr(y, x);
+                const r = pixelPtr[0];
+                const g = pixelPtr[1];
+                const b = pixelPtr[2];
+                const brightness = (r + g + b) / 3;
+                
+                // Detectar fondo beige RGB(252,240,239)
+                const isBeige = (r > 240 && g > 230 && b > 230 && r > g && r > b);
+                
+                // DETECCIÓN MÁS AGRESIVA de bordes negros y esquinas grises
+                const isBlackBorder = (
+                    brightness < 65 ||  // Más agresivo: de 50 a 65
+                    (r < 75 && g < 75 && b < 75) ||  // Expandir rango: de 60 a 75
+                    (Math.max(r, g, b) < 85) ||  // Más agresivo: de 70 a 85
+                    // NUEVO: Detectar específicamente bordes de la imagen
+                    (x < 3 || x >= processed.cols - 3 || y < 3 || y >= processed.rows - 3) && brightness < 200
+                );
+                
+                if (isBlackBorder || isBeige) {
+                    pixelPtr[0] = 255; // R = blanco puro
+                    pixelPtr[1] = 255; // G = blanco puro  
+                    pixelPtr[2] = 255; // B = blanco puro
+                    pixelPtr[3] = 255; // A = opaco
+                } else {
+                    // PRESERVAR VERDES específicamente
+                    if (g > r && g > b && g - Math.max(r, b) > 12 && brightness > 50) {
+                        // Potenciar verdes +25%
+                        pixelPtr[1] = Math.min(255, g * 1.25);
+                    }
+                }
+            }
+        }
         
-        cv.cvtColor(hsv, processed, cv.COLOR_HSV2RGB);
-        cv.cvtColor(processed, processed, cv.COLOR_RGB2RGBA);
+        // PASO ADICIONAL: Filtro radial para blanquear bordes sin afectar el centro
+        const centerX = processed.cols / 2;
+        const centerY = processed.rows / 2;
+        const maxRadius = Math.sqrt(centerX * centerX + centerY * centerY);
+        const borderThreshold = 0.70; // Solo afectar el 30% exterior (70%-100% del radio)
+        
+        for (let y = 0; y < processed.rows; y++) {
+            for (let x = 0; x < processed.cols; x++) {
+                // Calcular distancia desde el centro (normalizada 0-1)
+                const dx = x - centerX;
+                const dy = y - centerY;
+                const distance = Math.sqrt(dx * dx + dy * dy);
+                const normalizedDistance = distance / maxRadius;
+                
+                // Solo procesar píxeles en el borde exterior (70%-100% del radio)
+                if (normalizedDistance > borderThreshold) {
+                    const pixelPtr = processed.ucharPtr(y, x);
+                    const r = pixelPtr[0];
+                    const g = pixelPtr[1];
+                    const b = pixelPtr[2];
+                    const brightness = (r + g + b) / 3;
+                    
+                    // Calcular factor de blanqueado radial (más fuerte hacia los bordes)
+                    const borderFactor = (normalizedDistance - borderThreshold) / (1 - borderThreshold);
+                    const whiteningFactor = borderFactor * borderFactor; // Cuadrático para transición suave
+                    
+                    // Detectar halos azulados/negros en los bordes
+                    const isHalo = (
+                        brightness < 120 || // Píxeles no suficientemente blancos
+                        (b > r && b > g) || // Predominio azul (halo azulado)
+                        (r < 100 && g < 100 && b < 100) // Píxeles oscuros
+                    );
+                    
+                    if (isHalo) {
+                        // Blanquear completamente el halo
+                        pixelPtr[0] = 255;
+                        pixelPtr[1] = 255;
+                        pixelPtr[2] = 255;
+                        pixelPtr[3] = 255;
+                    } else {
+                        // Para píxeles no-halo, aplicar blanqueado gradual radial
+                        const targetWhite = 255;
+                        pixelPtr[0] = Math.round(r + (targetWhite - r) * whiteningFactor * 0.4);
+                        pixelPtr[1] = Math.round(g + (targetWhite - g) * whiteningFactor * 0.4);
+                        pixelPtr[2] = Math.round(b + (targetWhite - b) * whiteningFactor * 0.4);
+                    }
+                }
+            }
+        }
+        
+        // PASO FINAL: FORZADO ULTRA AGRESIVO - ESQUINAS Y BORDES 100% BLANCOS
+        const edgeBlanking = 25; // 25px de borde FORZADO a blanco absoluto
+        const cornerBlanking = 80; // AUMENTAR a 80px para esquinas (era 50px)
+        
+        for (let y = 0; y < processed.rows; y++) {
+            for (let x = 0; x < processed.cols; x++) {
+                // Distancias desde cada borde
+                const distFromLeft = x;
+                const distFromRight = processed.cols - 1 - x;
+                const distFromTop = y;
+                const distFromBottom = processed.rows - 1 - y;
+                
+                // Distancia mínima desde cualquier borde
+                const minDistFromEdge = Math.min(distFromLeft, distFromRight, distFromTop, distFromBottom);
+                
+                // DETECCIÓN MÁS AGRESIVA DE ESQUINAS con distancia radial
+                let isInCorner = false;
+                
+                // Esquina superior izquierda
+                if (distFromLeft < cornerBlanking && distFromTop < cornerBlanking) {
+                    const cornerDist = Math.sqrt(distFromLeft * distFromLeft + distFromTop * distFromTop);
+                    if (cornerDist < cornerBlanking) isInCorner = true;
+                }
+                // Esquina superior derecha  
+                if (distFromRight < cornerBlanking && distFromTop < cornerBlanking) {
+                    const cornerDist = Math.sqrt(distFromRight * distFromRight + distFromTop * distFromTop);
+                    if (cornerDist < cornerBlanking) isInCorner = true;
+                }
+                // Esquina inferior izquierda
+                if (distFromLeft < cornerBlanking && distFromBottom < cornerBlanking) {
+                    const cornerDist = Math.sqrt(distFromLeft * distFromLeft + distFromBottom * distFromBottom);
+                    if (cornerDist < cornerBlanking) isInCorner = true;
+                }
+                // Esquina inferior derecha
+                if (distFromRight < cornerBlanking && distFromBottom < cornerBlanking) {
+                    const cornerDist = Math.sqrt(distFromRight * distFromRight + distFromBottom * distFromBottom);
+                    if (cornerDist < cornerBlanking) isInCorner = true;
+                }
+                
+                // FORZAR BLANCO ABSOLUTO sin excepciones
+                const needsForcedWhite = isInCorner || minDistFromEdge < edgeBlanking;
+                
+                if (needsForcedWhite) {
+                    const pixelPtr = processed.ucharPtr(y, x);
+                    
+                    // BLANCO ABSOLUTO - SIN EXCEPCIONES
+                    pixelPtr[0] = 255; // R = BLANCO TOTAL
+                    pixelPtr[1] = 255; // G = BLANCO TOTAL
+                    pixelPtr[2] = 255; // B = BLANCO TOTAL
+                    pixelPtr[3] = 255; // A = OPACO TOTAL
+                }
+            }
+        }
+        
+        // PASO EXTRA: Segunda pasada ESPECÍFICA para esquinas con área aún mayor
+        const megaCornerSize = 100; // 100px para eliminar cualquier halo residual
+        
+        for (let y = 0; y < processed.rows; y++) {
+            for (let x = 0; x < processed.cols; x++) {
+                const distFromLeft = x;
+                const distFromRight = processed.cols - 1 - x;
+                const distFromTop = y;
+                const distFromBottom = processed.rows - 1 - y;
+                
+                // Detectar si está en zona de mega-esquina
+                const isMegaCorner = (
+                    (distFromLeft < megaCornerSize && distFromTop < megaCornerSize) ||      // Superior izquierda
+                    (distFromRight < megaCornerSize && distFromTop < megaCornerSize) ||     // Superior derecha  
+                    (distFromLeft < megaCornerSize && distFromBottom < megaCornerSize) ||   // Inferior izquierda
+                    (distFromRight < megaCornerSize && distFromBottom < megaCornerSize)     // Inferior derecha
+                );
+                
+                if (isMegaCorner) {
+                    const pixelPtr = processed.ucharPtr(y, x);
+                    const r = pixelPtr[0];
+                    const g = pixelPtr[1]; 
+                    const b = pixelPtr[2];
+                    const brightness = (r + g + b) / 3;
+                    
+                    // Si NO es suficientemente blanco, forzar a blanco
+                    if (brightness < 240) { // Cualquier cosa menos que casi-blanco
+                        pixelPtr[0] = 255;
+                        pixelPtr[1] = 255;
+                        pixelPtr[2] = 255;
+                        pixelPtr[3] = 255;
+                    }
+                }
+            }
+        }
         
         // Cleanup
-        hsv.delete();
-        channels.delete();
-        saturation.delete();
+        gray.delete();
+        darkMask.delete();
         
         return processed;
         
@@ -511,23 +717,7 @@ async function autoProcessAndApply() {
         // Convertir la imagen procesada final a blob
         cv.imshow(tempCanvas, finalProcessed);
         
-        // Solo ajustar píxeles completamente transparentes (alpha = 0) a blanco
-        const imageData = tctx.getImageData(0, 0, tempCanvas.width, tempCanvas.height);
-        const data = imageData.data;
-        
-        for (let i = 0; i < data.length; i += 4) {
-            const alpha = data[i + 3];
-            // Solo cambiar píxeles completamente transparentes, preservar todo lo demás
-            if (alpha === 0) {
-                data[i] = 255;     // R
-                data[i + 1] = 255; // G
-                data[i + 2] = 255; // B
-                data[i + 3] = 255; // A
-            }
-        }
-        
-        // Aplicar los cambios mínimos
-        tctx.putImageData(imageData, 0, 0);
+        // Aplicar los cambios y guardar directamente
         const blob = await new Promise(resolve => tempCanvas.toBlob(resolve, 'image/png', 1.0));
         
         updateOpenCVStatus('🔄 Paso 3/4: Guardando en /processed...', 'normal');
@@ -614,10 +804,17 @@ async function detectAndProcessAutomatically() {
 
 // ==============================
 // COMUNICACIÓN CON SERVIDOR
+// FLUJO COMPLETO DE PROCESAMIENTO:
+// 1. OpenCV procesa imagen desde /captura → genera canvas
+// 2. saveProcessedImage() → guarda canvas como processed/processed.png (temporal)
+// 3. applyAsNewPatternImage() → server genera JPG final en /patterns
+// 4. brush-reveal.html se actualiza con último JPG de /patterns
+// 5. screen.html usa processed/processed.png para vista en vivo
 // ==============================
 
 async function saveProcessedImage(blob) {
     try {
+        // Don't compress for PNG to preserve quality and transparency
         const reader = new FileReader();
         const imageDataUrl = await new Promise((resolve) => {
             reader.onload = () => resolve(reader.result);
@@ -630,19 +827,25 @@ async function saveProcessedImage(blob) {
                 return;
             }
             
-            window.socket.emit('saveProcessedImage', { imageDataUrl });
+            // Set up timeout before emitting
+            const timeoutId = setTimeout(() => {
+                reject(new Error('Timeout guardando imagen'));
+            }, 45000); // Increased timeout to 45 seconds
             
-            window.socket.once('processedImageSaved', (response) => {
+            // Set up one-time listener before emitting
+            const responseHandler = (response) => {
+                clearTimeout(timeoutId);
                 if (response.success) {
                     resolve(response.filename);
                 } else {
-                    reject(new Error(response.message));
+                    reject(new Error(response.message || 'Error desconocido al guardar'));
                 }
-            });
+            };
             
-            setTimeout(() => {
-                reject(new Error('Timeout guardando imagen'));
-            }, 30000);
+            window.socket.once('processedImageSaved', responseHandler);
+            
+            // Emit the save request
+            window.socket.emit('saveProcessedImage', { imageDataUrl });
         });
         
     } catch (error) {
@@ -659,19 +862,48 @@ async function applyAsNewPatternImage(filename) {
                 return;
             }
             
-            window.socket.emit('applyProcessedImage', {});
+            // Set up timeout before emitting
+            const timeoutId = setTimeout(() => {
+                reject(new Error('Timeout aplicando imagen'));
+            }, 45000); // Increased timeout to 45 seconds
             
-            window.socket.once('processedImageApplied', (response) => {
+            // Set up one-time listener before emitting
+            const responseHandler = (response) => {
+                clearTimeout(timeoutId);
                 if (response.success) {
+                    console.log('✅ Imagen aplicada exitosamente:', response);
                     resolve(true);
                 } else {
-                    reject(new Error(response.message));
+                    reject(new Error(response.message || 'Error desconocido al aplicar'));
                 }
+            };
+            
+            window.socket.once('processedImageApplied', (response) => {
+                responseHandler(response);
+                
+                // NUEVO: Después de aplicar la imagen, solicitar captura de canvas completo
+                setTimeout(() => {
+                    console.log('📸 Solicitando captura de canvas completo desde pantalla 1...');
+                    window.socket.emit('requestCanvasCaptureFromScreen', { screenId: 1 });
+                    
+                    // Escuchar confirmación de guardado
+                    window.socket.once('canvasSaved', (data) => {
+                        if (data.success) {
+                            console.log(`✅ Patrón completo guardado: ${data.filename}`);
+                            updateProcessStatus(`✅ Patrón completo guardado: ${data.filename}`, 'success');
+                        } else {
+                            console.error(`❌ Error guardando patrón: ${data.error}`);
+                            updateProcessStatus(`❌ Error guardando patrón: ${data.error}`, 'error');
+                        }
+                    });
+                }, 1000); // Esperar 1 segundo para que se renderice completamente
             });
             
-            setTimeout(() => {
-                reject(new Error('Timeout aplicando imagen'));
-            }, 30000);
+            const selected = (window.selectedImage || 'red');
+            console.log(`🎨 Aplicando imagen como patrón con imagen seleccionada: ${selected}`);
+            
+            // Emit the apply request
+            window.socket.emit('applyProcessedImage', { selectedImage: selected });
         });
         
     } catch (error) {
@@ -812,20 +1044,7 @@ async function processImageFromCaptura() {
         
         cv.imshow(tempCanvas, finalProcessed);
         
-        const imageData = tctx.getImageData(0, 0, tempCanvas.width, tempCanvas.height);
-        const data = imageData.data;
-        
-        for (let i = 0; i < data.length; i += 4) {
-            const alpha = data[i + 3];
-            if (alpha === 0) {
-                data[i] = 255;     // R
-                data[i + 1] = 255; // G
-                data[i + 2] = 255; // B
-                data[i + 3] = 255; // A
-            }
-        }
-        
-        tctx.putImageData(imageData, 0, 0);
+        // Aplicar cambios y guardar directamente
         const blob = await new Promise(resolve => tempCanvas.toBlob(resolve, 'image/png', 1.0));
         
         const savedFilename = await saveProcessedImage(blob);
@@ -890,7 +1109,7 @@ function initializeOpenCVProcessor() {
     }
 }
 
-// Configurar listener de teclado para la tecla "1"
+// Configurar listener de teclado para la tecla "9"
 function setupKeyboardListener() {
     document.addEventListener('keydown', function(event) {
         // Verificar que no estemos en un input o textarea
@@ -898,15 +1117,15 @@ function setupKeyboardListener() {
             return;
         }
         
-        if (event.key === '1' || event.keyCode === 49) {
+        if (event.key === '9' || event.keyCode === 57) {
             event.preventDefault();
-            console.log('Tecla "1" presionada - Iniciando proceso automático');
-            showKeyIndicator('1');
+            console.log('Tecla "9" presionada - Iniciando proceso automático');
+            showKeyIndicator('9');
             processImageFromCaptura();
         }
     });
     
-    console.log('🎹 Listener de teclado configurado - Presiona "1" para proceso automático');
+    console.log('🎹 Listener de teclado configurado - Presiona "9" para proceso automático');
 }
 
 // Exponer funciones globales necesarias

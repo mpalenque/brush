@@ -82,7 +82,7 @@ El servidor se ejecutará en `http://localhost:3000`
 - `control.html` - Panel de control principal
 - `screen.html` - Cliente para pantallas individuales
 - `wallpaper-animated.html` - Versión original standalone
-- `pattern.png` - Imagen del patrón a repetir
+- `processed.png` - Imagen del patrón a repetir
 
 ### Comunicación:
 - **Express.js**: Servidor HTTP y API REST
@@ -143,7 +143,7 @@ Si el servidor está en `192.168.1.100`:
 ## 🐛 Troubleshooting
 
 ### Problemas Comunes:
-1. **"pattern.png no encontrado"**: Asegúrate de que el archivo esté en la carpeta raíz
+1. **"processed.png no encontrado"**: Asegúrate de que el archivo esté en la carpeta raíz
 2. **Pantallas no sincronizadas**: Verifica la conexión WebSocket en el estado de conexión
 3. **Animación no funciona**: Revisa que el servidor esté funcionando y las pantallas conectadas
 

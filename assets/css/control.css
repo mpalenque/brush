@@ -331,6 +331,132 @@ h1 {
     color: #721c24;
 }
 
+/* Selección de imagen */
+.image-selection-info {
+    background: #e3f2fd;
+    border: 1px solid #90caf9;
+    border-radius: 8px;
+    padding: 15px;
+    margin: 15px 0;
+}
+
+.image-selection-info h4 {
+    color: #1976d2;
+    margin-bottom: 10px;
+}
+
+.selected-image-display {
+    display: flex;
+    align-items: center;
+    gap: 15px;
+    flex-wrap: wrap;
+}
+
+#selectedImageName {
+    font-weight: bold;
+    color: #1976d2;
+    background: #fff;
+    padding: 8px 12px;
+    border-radius: 5px;
+    border: 2px solid #90caf9;
+}
+
+.image-buttons {
+    display: flex;
+    gap: 10px;
+    flex-wrap: wrap;
+}
+
+.image-btn {
+    padding: 8px 16px;
+    border: 2px solid #ccc;
+    border-radius: 25px;
+    background: #fff;
+    color: #666;
+    cursor: pointer;
+    transition: all 0.3s ease;
+    font-size: 14px;
+    font-weight: bold;
+}
+
+.image-btn:hover {
+    background: #f0f0f0;
+    border-color: #999;
+}
+
+.image-btn.selected {
+    background: #1976d2;
+    color: #fff;
+    border-color: #1976d2;
+    box-shadow: 0 2px 8px rgba(25, 118, 210, 0.3);
+}
+
+/* Menú desplegable para parámetros de detección */
+.detection-parameters {
+    background: #f8f9fa;
+    border: 1px solid #dee2e6;
+    border-radius: 8px;
+    margin: 15px 0;
+}
+
+.detection-summary {
+    padding: 12px 15px;
+    background: #e9ecef;
+    border-radius: 8px 8px 0 0;
+    cursor: pointer;
+    font-weight: bold;
+    color: #495057;
+    list-style: none;
+    user-select: none;
+}
+
+.detection-summary:hover {
+    background: #dee2e6;
+}
+
+.detection-summary::-webkit-details-marker {
+    display: none;
+}
+
+.parameters-content {
+    padding: 15px;
+    border-top: 1px solid #dee2e6;
+}
+
+/* Imagen preview más pequeña */
+.image-preview-small {
+    max-width: 200px;
+    max-height: 150px;
+    border: 2px solid #ddd;
+    border-radius: 8px;
+    margin: 10px 0;
+}
+
+/* Contenedores de resultado más pequeños */
+.result-container-small {
+    text-align: center;
+    flex: 1;
+    min-width: 250px;
+    max-width: 350px;
+    margin: 0 auto;
+}
+
+.result-canvas-small {
+    max-width: 250px;
+    max-height: 200px;
+    border: 1px solid #ddd;
+    border-radius: 5px;
+    margin: 10px 0;
+}
+
+/* Grilla 3x3 para botones de pantallas */
+.screens-grid-3x3 {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 10px;
+    margin: 20px 0;
+}
+
 /* Resultados de imágenes */
 .result-images {
     display: flex;
@@ -666,4 +792,173 @@ canvas {
     20% { opacity: 1; transform: translateY(0); }
     80% { opacity: 1; transform: translateY(0); }
     100% { opacity: 0; transform: translateY(-20px); }
+}
+
+/* ==============================
+   STATUS WIDGET (control.html)
+   ============================== */
+.status-widget {
+    background: #ffffff;
+    border: 1px solid #e0e0e0;
+    border-radius: 10px;
+    padding: 12px;
+    margin: 10px 0;
+}
+
+.status-widget h4 {
+    margin-bottom: 8px;
+    color: #333;
+}
+
+.status-row {
+    display: flex;
+    gap: 16px;
+    flex-wrap: wrap;
+}
+
+.status-item {
+    background: #f9fafb;
+    border: 1px solid #ececec;
+    border-radius: 8px;
+    padding: 10px;
+    width: 220px;
+}
+
+.status-label {
+    font-size: 12px;
+    color: #555;
+    margin-bottom: 6px;
+}
+
+.status-thumb {
+    width: 100%;
+    height: 120px;
+    object-fit: contain;
+    background: #fff;
+    border: 1px solid #e5e7eb;
+    border-radius: 6px;
+}
+
+.status-timestamp {
+    margin-top: 6px;
+    font-size: 12px;
+    color: #666;
+}
+
+/* ========================================
+   CONTROLES DE OFFSET MANUAL
+   ======================================== */
+
+.screens-offset-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+    gap: 15px;
+    margin: 20px 0;
+}
+
+.offset-control-group {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px;
+    background: white;
+    border-radius: 8px;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+}
+
+.offset-control-group label {
+    min-width: 120px;
+    font-weight: bold;
+    color: #333;
+    font-size: 14px;
+}
+
+.offset-control-group input[type="range"] {
+    flex: 1;
+    height: 6px;
+    background: #ddd;
+    border-radius: 5px;
+    outline: none;
+    -webkit-appearance: none;
+    appearance: none;
+}
+
+.offset-control-group input[type="range"]::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 20px;
+    height: 20px;
+    border-radius: 50%;
+    background: #007bff;
+    cursor: pointer;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+}
+
+.offset-control-group input[type="range"]::-moz-range-thumb {
+    width: 20px;
+    height: 20px;
+    border-radius: 50%;
+    background: #007bff;
+    cursor: pointer;
+    border: none;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+}
+
+.offset-value {
+    min-width: 80px;
+    text-align: right;
+    font-family: monospace;
+    font-weight: bold;
+    color: #007bff;
+    font-size: 13px;
+}
+
+.offset-buttons {
+    display: flex;
+    justify-content: center;
+    gap: 10px;
+    flex-wrap: wrap;
+}
+
+.offset-buttons button {
+    transition: all 0.3s ease;
+    font-weight: bold;
+    border-radius: 5px;
+    cursor: pointer;
+}
+
+.offset-buttons button:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 8px rgba(0,0,0,0.2);
+}
+
+/* Responsive para controles de offset */
+@media (max-width: 768px) {
+    .screens-offset-grid {
+        grid-template-columns: 1fr;
+    }
+    
+    .offset-control-group {
+        flex-direction: column;
+        align-items: stretch;
+        gap: 8px;
+    }
+    
+    .offset-control-group label {
+        min-width: auto;
+        text-align: center;
+    }
+    
+    .offset-value {
+        text-align: center;
+        min-width: auto;
+    }
+    
+    .offset-buttons {
+        flex-direction: column;
+    }
+    
+    .offset-buttons button {
+        width: 100%;
+    }
 }

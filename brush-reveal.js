@@ -18,7 +18,13 @@ const maskCtx = maskCanvas.getContext('2d', { alpha: true, desynchronized: true 
 // Eventos de dibujo del frame actual (para depuración exacta)
 let drawEvents = [];
 
-const BG = new Image(); BG.src = 'patterns/pattern.jpg';
+// Imagen seleccionada actual
+let selectedImage = 'red';
+
+// Patrones para alternar secuencialmente
+const patterns = [];
+let currentPatternIndex = 0; // Índice del patrón actual
+
 const brushSrcs = [
   'Stroke/blue-watercolor-brush-stroke-1.png',
   'Stroke/blue-watercolor-brush-stroke-2.png',
@@ -28,6 +34,208 @@ const brushSrcs = [
 ];
 let maskBrushes = [];
 
+// Función para obtener el patrón actual
+function getCurrentPattern() {
+  if (patterns.length === 0) {
+    console.error('⚠️ NO HAY PATRONES CARGADOS - SISTEMA INOPERATIVO');
+    return null;
+  }
+  const currentPattern = patterns[currentPatternIndex];
+  console.log(`🎯 CONFIRMADO - Usando patrón: ${currentPattern.src} (${currentPattern.filename || 'sin nombre'}) - índice: ${currentPatternIndex}/${patterns.length - 1}`);
+  return currentPattern.image;
+}
+
+// ==============================
+// PATTERN MANAGEMENT
+// ==============================
+
+async function checkIfFileExists(url) {
+  try {
+    const response = await fetch(url, { method: 'HEAD' });
+    return response.ok;
+  } catch (error) {
+    return false;
+  }
+}
+
+async function loadLatestPatterns() {
+  try {
+    console.log('🔍 Cargando wallpaper.jpg...');
+    
+    // Verificar si existe wallpaper.jpg
+    const wallpaperExists = await checkIfFileExists('/patterns/wallpaper.jpg');
+    
+    if (wallpaperExists) {
+      console.log(`🎯 Cargando wallpaper.jpg`);
+      
+      // Limpiar patrones existentes
+      patterns.length = 0;
+      
+      const img = new Image();
+      await new Promise((resolve, reject) => {
+        img.onload = () => {
+          console.log(`✅ wallpaper.jpg cargado exitosamente`);
+          resolve();
+        };
+        img.onerror = (err) => {
+          console.error(`❌ Error cargando wallpaper.jpg`, err);
+          reject(err);
+        };
+        img.src = `patterns/wallpaper.jpg?t=${Date.now()}`;
+      });
+      
+      patterns.push({
+        src: `patterns/wallpaper.jpg`,
+        image: img,
+        filename: 'wallpaper.jpg'
+      });
+      
+      // Usar el patrón recién cargado
+      currentPatternIndex = 0;
+      console.log(`🎨 CONFIRMADO - Usando patrón más reciente: ${patterns[0].src}`);
+      console.log(`📊 Total de patrones cargados: ${patterns.length}`);
+      
+      return true;
+    } else {
+      console.warn('❌ No se encontraron patrones válidos en la respuesta del servidor');
+      console.warn('Data recibida:', data);
+      return false;
+    }
+  } catch (error) {
+    console.error('❌ Error cargando patrones:', error);
+    return false;
+  }
+}
+
+// ==============================
+// WEBSOCKET FUNCTIONALITY
+// ==============================
+
+function setupWebSocket() {
+  try {
+    // Conectar al servidor WebSocket
+    socket = io();
+    
+    socket.on('connect', () => {
+      console.log('🔌 Conectado al servidor WebSocket');
+      // No registrarse como pantalla específica, solo como brush-reveal
+      socket.emit('register', { type: 'brush-reveal' });
+    });
+    
+    socket.on('disconnect', () => {
+      console.log('🔌 Desconectado del servidor WebSocket');
+    });
+    
+    // Escuchar cuando hay un nuevo patrón listo
+    socket.on('newPatternReady', (data) => {
+      console.log(`🎨 Nuevo patrón recibido:`, data);
+      latestPatternId = data.patternId;
+      
+      // Cargar el nuevo patrón y iniciar animación
+      loadNewPatternAndAnimate(data.filename);
+    });
+
+    // Cuando se actualiza la imagen procesada (tecla 9), cargar el último patrón de /patterns
+    socket.on('imageUpdated', (data) => {
+      console.log('🆕 Imagen procesada actualizada - recargando último patrón de /patterns:', data);
+      loadLatestPatternAndAnimate();
+    });
+    
+    // NUEVO: Escuchar orden desde /control para iniciar animación con último patrón
+    socket.on('requestAnimationStart', (data) => {
+      console.log('🎬 Orden recibida desde /control - iniciando animación con último patrón de /patterns');
+      loadLatestPatternAndAnimate();
+    });
+    
+    // Escuchar cambios en la selección de imagen
+    socket.on('imageSelected', (data) => {
+      console.log(`🖼️ Imagen seleccionada cambiada a: ${data.image}.png`);
+      selectedImage = data.image;
+      updateFallbackPattern();
+    });
+    
+  } catch (error) {
+    console.warn('Error configurando WebSocket:', error);
+  }
+}
+
+// Cargar wallpaper.jpg y animar por encima
+async function loadLatestPatternAndAnimate() {
+  try {
+    console.log('🔄 Recargando wallpaper.jpg DESDE CONTROL...');
+    
+    // Cargar wallpaper.jpg directamente
+    const wallpaperExists = await checkIfFileExists('/patterns/wallpaper.jpg');
+    
+    if (wallpaperExists) {
+      console.log(`📥 Cargando nuevo wallpaper.jpg`);
+      
+      const newImg = new Image();
+      await new Promise((resolve, reject) => {
+        newImg.onload = resolve;
+        newImg.onerror = reject;
+        newImg.src = `patterns/wallpaper.jpg?t=${Date.now()}`;
+      });
+
+      // Reemplazar último patrón con wallpaper.jpg actualizado
+      patterns.push({ src: `patterns/wallpaper.jpg`, image: newImg, filename: 'wallpaper.jpg' });
+      if (patterns.length > 3) {
+        patterns.shift();
+      }
+      currentPatternIndex = patterns.length - 1;
+      
+      console.log('✅ Nuevo wallpaper.jpg cargado. COLOREANDO ENCIMA del wallpaper existente...');
+      colorOnTop(); // USAR colorOnTop() para colorear encima sin resetear
+    } else {
+      console.warn('❌ No se pudo obtener el último patrón de /patterns');
+    }
+  } catch (err) {
+    console.error('❌ Error cargando último patrón de /patterns:', err);
+  }
+}
+
+async function loadNewPatternAndAnimate(filename) {
+  try {
+    console.log(`🖼️ Cargando nuevo patrón DESDE EVENTO: ${filename}`);
+    
+    // Crear nueva imagen para el patrón
+    const newPatternImage = new Image();
+    
+    await new Promise((resolve, reject) => {
+      newPatternImage.onload = resolve;
+      newPatternImage.onerror = reject;
+      newPatternImage.src = `patterns/${filename}?t=${Date.now()}`; // Cache busting
+    });
+    
+    // Agregar el nuevo patrón al array
+    patterns.push({
+      src: `patterns/${filename}`,
+      image: newPatternImage,
+      filename: filename
+    });
+    
+    // Mantener solo los últimos 3 patrones para evitar acumulación de memoria
+    if (patterns.length > 3) {
+      patterns.shift();
+      // Ajustar índice si es necesario
+      if (currentPatternIndex > 0) {
+        currentPatternIndex--;
+      }
+    }
+    
+    // Cambiar al nuevo patrón (último agregado)
+    currentPatternIndex = patterns.length - 1;
+    
+    console.log(`✅ Nuevo patrón cargado (${patterns.length} total). COLOREANDO ENCIMA...`);
+    
+    // COLOREAR ENCIMA del wallpaper existente sin resetear
+    colorOnTop();
+    
+  } catch (error) {
+    console.error('❌ Error cargando nuevo patrón:', error);
+  }
+}
+
 // Estado
 let size = { wCSS: 0, hCSS: 0, w: 0, h: 0 };
 let layout = { dx: 0, dy: 0, dw: 0, dh: 0 };
@@ -36,6 +244,9 @@ let fpsMonitorRafId = 0; // RAF separado para el monitor FPS
 let seeds = [], strokes = [], sweeps = [], wash = [], spirals = [], radiants = [], connectors = [], droplets = [], waves = [];
 let finalSealing = [];
 let animationFinished = false; // Flag para indicar que la animación terminó
+let isFirstAnimation = true; // Flag para controlar si es la primera animación
+let latestPatternId = null; // ID del patrón más reciente
+let socket = null; // Conexión WebSocket
 
 // Pool de canvas temporales para optimización (reutilizar en lugar de crear cada frame)
 const canvasPool = {
@@ -181,9 +392,10 @@ function resize(){
   // Dibujo en coordenadas full-res, pero el contexto de máscara se escala
   maskCtx.setTransform(MASK_SCALE,0,0,MASK_SCALE,0,0);
   
-  if (BG.naturalWidth && BG.naturalHeight){
-    const s = Math.max(size.w/BG.naturalWidth, size.h/BG.naturalHeight);
-    const dw = Math.ceil(BG.naturalWidth*s), dh = Math.ceil(BG.naturalHeight*s);
+  const currentBG = getCurrentPattern();
+  if (currentBG && currentBG.naturalWidth && currentBG.naturalHeight){
+    const s = Math.max(size.w/currentBG.naturalWidth, size.h/currentBG.naturalHeight);
+    const dw = Math.ceil(currentBG.naturalWidth*s), dh = Math.ceil(currentBG.naturalHeight*s);
     layout.dx = Math.floor((size.w-dw)/2); layout.dy = Math.floor((size.h-dh)/2); layout.dw = dw; layout.dh = dh;
   }
 }
@@ -850,17 +1062,50 @@ function drawProgress(p){
 }
 
 function render(){
-  ctx.clearRect(0,0,size.w,size.h);
+  const currentBG = getCurrentPattern();
   
-  // Dibujar imagen de fondo
-  if (layout.dw && layout.dh) ctx.drawImage(BG, layout.dx, layout.dy, layout.dw, layout.dh);
+  if (!currentBG) {
+    console.warn('⚠️ No hay patrón disponible para renderizar');
+    return;
+  }
   
-  // Aplicar máscara del efecto original
-  ctx.globalCompositeOperation='destination-in';
-  ctx.drawImage(maskCanvas, 0,0, maskCanvas.width, maskCanvas.height, 0,0, size.w, size.h);
-  ctx.globalCompositeOperation='destination-over'; 
-  ctx.fillStyle='#F5DDC7'; 
-  ctx.fillRect(0,0,size.w,size.h);
+  // Solo limpiar el canvas en la primera animación
+  if (isFirstAnimation) {
+    ctx.clearRect(0,0,size.w,size.h);
+    
+    // Dibujar imagen de fondo solo en la primera vez
+    if (layout.dw && layout.dh) ctx.drawImage(currentBG, layout.dx, layout.dy, layout.dw, layout.dh);
+    
+    // Aplicar máscara del efecto original
+    ctx.globalCompositeOperation='destination-in';
+    ctx.drawImage(maskCanvas, 0,0, maskCanvas.width, maskCanvas.height, 0,0, size.w, size.h);
+    ctx.globalCompositeOperation='destination-over'; 
+    ctx.fillStyle='#F5DDC7'; 
+    ctx.fillRect(0,0,size.w,size.h);
+  } else {
+    // Para animaciones posteriores: DIBUJAR DIRECTAMENTE SOBRE LA IMAGEN ANTERIOR
+    // NO hacer clearRect() - esto permite que se dibuje sobre la imagen existente
+    
+    // Crear un canvas temporal para la nueva imagen con máscara
+    const tempCanvas = document.createElement('canvas');
+    tempCanvas.width = size.w;
+    tempCanvas.height = size.h;
+    const tempCtx = tempCanvas.getContext('2d');
+    
+    // Dibujar la imagen de fondo en el canvas temporal
+    if (layout.dw && layout.dh) tempCtx.drawImage(currentBG, layout.dx, layout.dy, layout.dw, layout.dh);
+    
+    // Aplicar máscara al canvas temporal
+    tempCtx.globalCompositeOperation='destination-in';
+    tempCtx.drawImage(maskCanvas, 0,0, maskCanvas.width, maskCanvas.height, 0,0, size.w, size.h);
+    
+    // Dibujar el canvas temporal SOBRE el canvas principal (source-over = dibuja encima)
+    ctx.globalCompositeOperation='source-over';
+    ctx.drawImage(tempCanvas, 0, 0);
+  }
+  
+  // Restaurar modo de composición normal
+  ctx.globalCompositeOperation='source-over';
 }
 function loop(ts){
   // Si la animación ya terminó, no procesar más frames
@@ -893,6 +1138,13 @@ function loop(ts){
     // Cancelar cualquier frame pendiente
     cancelAnimationFrame(rafId);
     rafId = 0;
+    
+    // Marcar que ya no es la primera animación para que la siguiente se dibuje por encima
+    isFirstAnimation = false;
+    
+    // NO programar automáticamente la siguiente animación
+    // Ahora esperará comando desde control
+    console.log('🎨 Animación completada. Esperando comando desde control para nueva animación...');
   }
 }
 
@@ -941,6 +1193,80 @@ function start(){
   fpsMonitorRafId=requestAnimationFrame(fpsMonitorLoop); 
 }
 
+// NUEVA FUNCIÓN: Colorear ENCIMA del wallpaper existente sin resetear
+function colorOnTop(){ 
+  cancelAnimationFrame(rafId); 
+  cancelAnimationFrame(fpsMonitorRafId);
+  
+  // NO resetear estado de animación - mantener lo que ya está dibujado
+  animationFinished = false;
+  
+  // NO hacer resize() ni limpiar el canvas principal - MANTENER wallpaper dibujado
+  // Solo limpiar la máscara para nueva animación encima
+  maskCtx.clearRect(0,0,size.w,size.h); 
+  
+  console.log('🎨 COLOREANDO ENCIMA del wallpaper existente...');
+  
+  // golpe inicial en el centro para que empiece a mostrarse de inmediato
+  kickstartMask();
+  makeSeeds(12); // Aumentamos las semillas para una mejor distribución final
+  makeStrokes(); 
+  makeSpirals();
+  makeRadiants();
+  makeDroplets();
+  makeConnectors();
+  makeSweeps(); 
+  makeWaves();
+  makeWash(); 
+  makeFinalSealing();
+  
+  // render inmediato para que se vea el golpe inicial antes del primer frame
+  render();
+  startedAt=0; 
+  rafId=requestAnimationFrame(loop);
+  
+  // Iniciar monitor FPS por separado
+  fpsMonitorRafId=requestAnimationFrame(fpsMonitorLoop); 
+}
+
+function startNewAnimation(){ 
+  cancelAnimationFrame(rafId); 
+  
+  // NO cambiar al siguiente patrón automáticamente - ya se cambió en loadNewPatternAndAnimate
+  
+  // Recalcular layout para el nuevo patrón
+  const currentBG = getCurrentPattern();
+  if (currentBG.naturalWidth && currentBG.naturalHeight){
+    const s = Math.max(size.w/currentBG.naturalWidth, size.h/currentBG.naturalHeight);
+    const dw = Math.ceil(currentBG.naturalWidth*s), dh = Math.ceil(currentBG.naturalHeight*s);
+    layout.dx = Math.floor((size.w-dw)/2); layout.dy = Math.floor((size.h-dh)/2); layout.dw = dw; layout.dh = dh;
+  }
+  
+  // Resetear estado de animación
+  animationFinished = false;
+  
+  // NO hacer resize() ni limpiar el canvas principal - solo limpiar la máscara
+  maskCtx.clearRect(0,0,size.w,size.h); 
+  
+  // golpe inicial en el centro para que empiece a mostrarse de inmediato
+  kickstartMask();
+  makeSeeds(12); // Aumentamos las semillas para una mejor distribución final
+  makeStrokes(); 
+  makeSpirals();
+  makeRadiants();
+  makeDroplets();
+  makeConnectors();
+  makeSweeps(); 
+  makeWaves();
+  makeWash(); 
+  makeFinalSealing();
+  
+  // render inmediato para que se vea el golpe inicial antes del primer frame
+  render();
+  startedAt=0; 
+  rafId=requestAnimationFrame(loop);
+}
+
 window.addEventListener('resize',()=>{ 
   // Si la animación ya terminó, solo redimensionar y renderizar una vez
   if (animationFinished) {
@@ -971,6 +1297,33 @@ window.addEventListener('resize',()=>{
 function loadImage(src){ return new Promise((res,rej)=>{ const im=new Image(); im.onload=()=>res(im); im.onerror=rej; im.src=src; }); }
 function toWhiteMask(image){ const c=document.createElement('canvas'); c.width=image.naturalWidth; c.height=image.naturalHeight; const g=c.getContext('2d'); g.drawImage(image,0,0); const d=g.getImageData(0,0,c.width,c.height); const a=d.data; for(let i=0;i<a.length;i+=4){ if(a[i+3]>0){a[i]=255;a[i+1]=255;a[i+2]=255;} } g.putImageData(d,0,0); return c; }
 
+// Función para actualizar el patrón fallback cuando cambia la imagen seleccionada
+async function updateFallbackPattern() {
+  // Si no hay patrones generados y estamos usando el fallback, actualizarlo
+  if (patterns.length > 0 && patterns[patterns.length - 1].src.includes('.png')) {
+    try {
+      const newFallbackSrc = `${selectedImage}.png`;
+      const img = await loadImage(newFallbackSrc);
+      
+      // Actualizar el último patrón (que debería ser el fallback)
+      patterns[patterns.length - 1] = {
+        src: newFallbackSrc,
+        image: img
+      };
+      
+      console.log(`✅ Patrón fallback actualizado a: ${newFallbackSrc}`);
+      
+      // Si estamos usando el patrón fallback, usarlo inmediatamente
+      if (currentPatternIndex === patterns.length - 1) {
+        console.log('🔄 Coloreando encima con nueva imagen fallback...');
+        colorOnTop(); // COLOREAR ENCIMA sin resetear
+      }
+    } catch (error) {
+      console.warn(`❌ Error actualizando patrón fallback a ${selectedImage}.png:`, error);
+    }
+  }
+}
+
 (async function init(){
   // Inicializar monitor de FPS
   fpsMonitor.init();
@@ -978,42 +1331,87 @@ function toWhiteMask(image){ const c=document.createElement('canvas'); c.width=i
   // Inicializar pool de canvas temporales
   canvasPool.init();
   
+  // Configurar WebSocket
+  setupWebSocket();
+  
   try {
-    const bg = await loadImage('patterns/pattern.jpg');
-    BG.src = bg.src;
+    // Cargar wallpaper.jpg desde el servidor
+    console.log('🖼️ Cargando wallpaper.jpg...');
+    const patternsLoaded = await loadLatestPatterns();
     
-    // Empezar de inmediato con fallback (sin brochas) para evitar pantalla en blanco
-    start();
-    // Cargar brochas en paralelo y suavemente reconstruir al llegar la primera
-    let firstApplied = false;
+    if (!patternsLoaded || patterns.length === 0) {
+      // Fallback: intentar cargar directamente wallpaper.jpg
+      console.log('📁 loadLatestPatterns falló, intentando cargar wallpaper.jpg directamente...');
+      
+      try {
+        console.log(`🔄 Intentando cargar wallpaper.jpg directamente`);
+        const img = new Image();
+        await new Promise((resolve, reject) => {
+          img.onload = () => {
+            console.log(`✅ wallpaper.jpg cargado exitosamente (fallback)`);
+            resolve();
+          };
+          img.onerror = (err) => {
+            console.error(`❌ Error cargando wallpaper.jpg (fallback):`, err);
+            reject(err);
+          };
+          img.src = `patterns/wallpaper.jpg?t=${Date.now()}`;
+        });
+        
+        patterns.push({
+          src: `patterns/wallpaper.jpg`,
+          image: img,
+          filename: 'wallpaper.jpg'
+        });
+        
+        console.log(`✅ Patrón fallback cargado: wallpaper.jpg`);
+      } catch (error) {
+        console.error(`❌ Error cargando wallpaper.jpg directamente:`, error);
+      }
+    }
+    
+    if (patterns.length === 0) {
+      console.error('❌ No se pudo cargar ningún patrón');
+      return;
+    }
+    
+    console.log(`🎨 Patrón inicial cargado: ${patterns[currentPatternIndex].src}`);
+    
+    // Cargar brochas en paralelo
     await Promise.all(brushSrcs.map(async (src)=>{
       try{
         const im = await loadImage(src);
         const m = toWhiteMask(im);
         maskBrushes.push(m);
-        if (!firstApplied){
-          firstApplied = true;
-          // reconstrucción suave manteniendo el progreso actual
-          const now = performance.now();
-          const p = startedAt? Math.max(0, Math.min(1, (now-startedAt)/DURATION_MS)) : 0;
-          // Re-generar elementos con brochas disponibles y dibujar hasta p
-          maskCtx.clearRect(0,0,size.w,size.h);
-          makeSeeds(12);
-          makeStrokes();
-          makeSpirals();
-          makeRadiants();
-          makeDroplets();
-          makeConnectors();
-          makeSweeps();
-          makeWaves();
-          makeWash();
-          makeFinalSealing();
-          drawProgress(p); render();
-        }
-      }catch(err){ /* ignorar errores de carga individuales */ }
+        console.log(`🖌️ Brocha cargada: ${src}`);
+      }catch(err){ 
+        console.warn(`❌ Error cargando brocha ${src}:`, err);
+      }
     }));
+    
+    console.log(`✅ ${maskBrushes.length} brochas cargadas.`);
+    
+    // SIEMPRE iniciar animación si hay wallpaper.jpg
+    if (patterns.length > 0) {
+      console.log('🚀 INICIANDO ANIMACIÓN AUTOMÁTICA CON WALLPAPER.JPG');
+      start();
+    } else {
+      console.log('⏸️ No hay patrones disponibles, esperando eventos...');
+    }
+    
   } catch(e) {
-    console.warn('Error cargando BG, iniciando sin brochas.', e);
-    maskBrushes=[]; start();
+    console.warn('Error en inicialización, iniciando sin brochas.', e);
+    maskBrushes=[]; 
   }
 })();
+
+// Forzar recarga de patrones más recientes cuando la página esté completamente cargada
+window.addEventListener('load', async () => {
+  console.log('🔄 Página completamente cargada - verificando patrones más recientes...');
+  try {
+    await loadLatestPatterns();
+    console.log(`✅ Patrones actualizados. Usando: ${patterns[currentPatternIndex]?.src || 'ninguno'}`);
+  } catch (error) {
+    console.error('❌ Error al recargar patrones:', error);
+  }
+});

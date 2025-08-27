@@ -10,6 +10,9 @@
 
 let socket;
 let connectedScreens = new Set();
+let selectedImage = 'red'; // Imagen seleccionada por defecto
+// Exponer selección inicial globalmente para otros scripts (opencv-processor.js)
+window.selectedImage = selectedImage;
 
 // Elementos del DOM
 const elements = {
@@ -17,6 +20,7 @@ const elements = {
     patternType: null,
     repetitionX: null,
     repetitionY: null,
+    separationX: null,
     patternSize: null,
     rotation: null,
     zoom: null,
@@ -26,14 +30,14 @@ const elements = {
     backgroundColor: null,
     toggleWallpaper: null,
     savePattern: null,
-    screensGrid: null,
-    urlList: null
+    screensGrid: null
 };
 
 // Valores mostrados
 const values = {
     repetitionXValue: null,
     repetitionYValue: null,
+    separationXValue: null,
     sizeValue: null,
     rotationValue: null,
     zoomValue: null,
@@ -61,13 +65,19 @@ function initializeControlPanel() {
     // Configurar WebSocket
     setupWebSocket();
     
+    // Configurar controles de teclado
+    setupKeyboardControls();
+    
+    // Configurar botones de selección de imagen
+    setupImageSelectionButtons();
+    
     // Configurar controles
     setupGeneralControls();
     setupEventListeners();
+    setupOffsetControls(); // Agregar controles de offset manual
     
     // Generar UI
     generateScreenControls();
-    generateURLs();
     updateUI();
     
     console.log('Panel de control inicializado correctamente');
@@ -79,6 +89,7 @@ function initializeDOMElements() {
     elements.patternType = document.getElementById('patternType');
     elements.repetitionX = document.getElementById('repetitionX');
     elements.repetitionY = document.getElementById('repetitionY');
+    elements.separationX = document.getElementById('separationX');
     elements.patternSize = document.getElementById('patternSize');
     elements.rotation = document.getElementById('rotation');
     elements.zoom = document.getElementById('zoom');
@@ -89,11 +100,11 @@ function initializeDOMElements() {
     elements.toggleWallpaper = document.getElementById('toggleWallpaper');
     elements.savePattern = document.getElementById('savePattern');
     elements.screensGrid = document.getElementById('screensGrid');
-    elements.urlList = document.getElementById('urlList');
 
     // Valores mostrados
     values.repetitionXValue = document.getElementById('repetitionXValue');
     values.repetitionYValue = document.getElementById('repetitionYValue');
+    values.separationXValue = document.getElementById('separationXValue');
     values.sizeValue = document.getElementById('sizeValue');
     values.rotationValue = document.getElementById('rotationValue');
     values.zoomValue = document.getElementById('zoomValue');
@@ -132,9 +143,25 @@ function setupWebSocket() {
     });
 
     socket.on('initialState', (state) => {
+        // Sync selected image from server state (in case it differs)
+        if (state?.general?.selectedImage) {
+            selectedImage = state.general.selectedImage;
+            window.selectedImage = selectedImage;
+            updateImageSelection();
+            // Update selected image thumb
+            const selThumb = document.getElementById('selectedImageThumb');
+            if (selThumb) selThumb.src = `/${selectedImage}.png`;
+        }
+
         loadGeneralConfig(state.general);
         updateWallpaperButtonState(state.wallpaper?.isActive || false);
         updateUI();
+
+        // Initialize pattern preview thumb to current processed pattern (with fallback on server)
+        const patThumb = document.getElementById('patternPreviewThumb');
+        if (patThumb) patThumb.src = `/processed/processed.png?t=${Date.now()}`;
+        const tsEl = document.getElementById('patternLastUpdated');
+        if (tsEl) tsEl.textContent = 'inicializado';
     });
 
     // Eventos específicos
@@ -144,6 +171,23 @@ function setupWebSocket() {
 
     socket.on('patternSaved', (data) => {
         handlePatternSavedResponse(data);
+    });
+
+    // Reflect image selection changes coming from this or other control clients
+    socket.on('imageSelected', (data) => {
+        if (!data?.image) return;
+        selectedImage = data.image;
+        updateImageSelection();
+        const selThumb = document.getElementById('selectedImageThumb');
+        if (selThumb) selThumb.src = `/${selectedImage}.png`;
+    });
+
+    // When a new processed pattern is applied, refresh the preview
+    socket.on('imageUpdated', (data) => {
+        const patThumb = document.getElementById('patternPreviewThumb');
+        if (patThumb) patThumb.src = `/processed/processed.png?t=${Date.now()}`;
+        const tsEl = document.getElementById('patternLastUpdated');
+        if (tsEl) tsEl.textContent = new Date().toLocaleTimeString();
     });
 }
 
@@ -170,7 +214,7 @@ function loadGeneralConfig(config) {
 
 function setupGeneralControls() {
     const generalControls = [
-        'patternType', 'repetitionX', 'repetitionY', 'patternSize', 
+        'patternType', 'repetitionX', 'repetitionY', 'separationX', 'patternSize', 
         'rotation', 'zoom', 'perfumeSpacingH', 'perfumeSpacingV', 'perfumeSizeFactor'
     ];
 
@@ -199,7 +243,7 @@ function setupEventListeners() {
         elements.savePattern.addEventListener('click', () => {
             elements.savePattern.textContent = '⏳ Guardando patrón...';
             elements.savePattern.disabled = true;
-            socket?.emit('savePattern');
+            socket?.emit('savePattern', { selectedImage });
         });
     }
 
@@ -269,6 +313,9 @@ function updateUI() {
     }
     if (values.repetitionYValue && elements.repetitionY) {
         values.repetitionYValue.textContent = elements.repetitionY.value;
+    }
+    if (values.separationXValue && elements.separationX) {
+        values.separationXValue.textContent = elements.separationX.value + 'px';
     }
     if (values.sizeValue && elements.patternSize) {
         values.sizeValue.textContent = elements.patternSize.value + 'px';
@@ -341,28 +388,6 @@ function generateScreenControls() {
         `;
         elements.screensGrid.appendChild(screenDiv);
     }
-}
-
-function generateURLs() {
-    if (!elements.urlList) return;
-    
-    elements.urlList.innerHTML = '';
-    const baseUrl = window.location.origin;
-    
-    for (let i = 1; i <= 9; i++) {
-        const urlDiv = document.createElement('div');
-        urlDiv.className = 'url-item';
-        urlDiv.textContent = `${baseUrl}/screen/${i}`;
-        urlDiv.onclick = () => window.open(`${baseUrl}/screen/${i}`);
-        elements.urlList.appendChild(urlDiv);
-    }
-    
-    // Agregar URL de brush-reveal
-    const brushUrlDiv = document.createElement('div');
-    brushUrlDiv.className = 'url-item';
-    brushUrlDiv.textContent = `${baseUrl}/brush-reveal`;
-    brushUrlDiv.onclick = () => window.open(`${baseUrl}/brush-reveal`);
-    elements.urlList.appendChild(brushUrlDiv);
 }
 
 // ==============================
@@ -438,10 +463,161 @@ function handlePatternSavedResponse(data) {
 // FUNCIONES GLOBALES (para HTML inline)
 // ==============================
 
+// Configurar botones de selección de imagen
+function setupImageSelectionButtons() {
+    const imageButtons = document.querySelectorAll('.image-btn');
+    imageButtons.forEach(btn => {
+        btn.addEventListener('click', () => {
+            const imageType = btn.dataset.image;
+            selectImage(imageType);
+        });
+    });
+    
+    // Inicializar selección por defecto
+    updateImageSelection();
+}
+
+// ==============================
+// MANEJO DE TECLAS
+// ==============================
+
+function setupKeyboardControls() {
+    document.addEventListener('keydown', (e) => {
+        // Teclas "1", "2", "3" - Selección de imagen
+        if (e.key === '1') {
+            e.preventDefault();
+            selectImage('red');
+        } else if (e.key === '2') {
+            e.preventDefault();
+            selectImage('pink');
+        } else if (e.key === '3') {
+            e.preventDefault();
+            selectImage('blue');
+        }
+        // Tecla "9" - Procesar desde /captura con la imagen seleccionada
+        else if (e.key === '9') {
+            e.preventDefault();
+            console.log('🎨 Tecla "9" presionada - Proceso AUTOMÁTICO (scan → detectar → guardar → aplicar)');
+            if (window.processImageFromCaptura) {
+                window.processImageFromCaptura();
+            } else if (window.autoProcessAndApply) {
+                window.autoProcessAndApply();
+            } else {
+                console.warn('Funciones de proceso automático no disponibles');
+            }
+        }
+    });
+}
+
+// Función para seleccionar imagen
+function selectImage(imageType) {
+    selectedImage = imageType;
+    window.selectedImage = selectedImage;
+    console.log(`🖼️ Imagen seleccionada: ${imageType}.png`);
+    
+    // Actualizar UI
+    updateImageSelection();
+    
+    // Enviar selección al servidor
+    if (socket && socket.connected) {
+        socket.emit('selectImage', { image: imageType });
+    }
+    
+    // Mostrar feedback visual
+    const status = document.getElementById('connectionStatus');
+    if (status) {
+        const originalText = status.textContent;
+        status.textContent = `🖼️ Imagen seleccionada: ${imageType}.png`;
+        status.style.background = '#28a745';
+        
+        setTimeout(() => {
+            status.textContent = originalText;
+            status.style.background = '';
+        }, 1500);
+    }
+}
+
+// Actualizar la visualización de la imagen seleccionada
+function updateImageSelection() {
+    // Actualizar el nombre de la imagen
+    const selectedImageName = document.getElementById('selectedImageName');
+    if (selectedImageName) {
+        selectedImageName.textContent = `${selectedImage}.png`;
+    }
+    
+    // Actualizar botones
+    const imageButtons = document.querySelectorAll('.image-btn');
+    imageButtons.forEach(btn => {
+        btn.classList.remove('selected');
+        if (btn.dataset.image === selectedImage) {
+            btn.classList.add('selected');
+        }
+    });
+}
+
+// ==============================
+// FUNCIONES UTILITARIAS
+// ==============================
+
 // Exponer funciones necesarias globalmente
 window.openScreen = openScreen;
 window.openAllScreens = openAllScreens;
 window.openBrushReveal = openBrushReveal;
+
+// ==============================
+// ==============================
+// CONTROLES DE OFFSET MANUAL
+// ==============================
+
+function setupOffsetControls() {
+    // Configurar controles para cada pantalla
+    for (let i = 1; i <= 9; i++) {
+        const offsetSlider = document.getElementById(`offset${i}`);
+        const offsetValue = document.getElementById(`offset${i}Value`);
+        
+        if (offsetSlider && offsetValue) {
+            // Actualizar display al cambiar
+            offsetSlider.addEventListener('input', (e) => {
+                const value = parseInt(e.target.value);
+                offsetValue.textContent = `${value}px`;
+                
+                // Enviar actualización al servidor
+                updateScreenOffset(i, value);
+            });
+            
+            // Inicializar display
+            offsetValue.textContent = `${offsetSlider.value}px`;
+        }
+    }
+}
+
+function updateScreenOffset(screenId, offsetX) {
+    if (socket) {
+        socket.emit('updateScreenConfig', {
+            screenId: screenId,
+            config: { offsetX: offsetX }
+        });
+        console.log(`Offset actualizado - Pantalla ${screenId}: ${offsetX}px`);
+    }
+}
+
+function zeroAllOffsets() {
+    for (let i = 1; i <= 9; i++) {
+        const offsetSlider = document.getElementById(`offset${i}`);
+        const offsetValue = document.getElementById(`offset${i}Value`);
+        
+        if (offsetSlider && offsetValue) {
+            offsetSlider.value = 0;
+            offsetValue.textContent = '0px';
+            updateScreenOffset(i, 0);
+        }
+    }
+    
+    console.log('Todos los offsets puestos en 0');
+}
+
+// Hacer funciones accesibles globalmente para los botones
+window.zeroAllOffsets = zeroAllOffsets;
 
 // ==============================
 // INICIALIZACIÓN AUTOMÁTICA

@@ -7,11 +7,18 @@ const { createCanvas, loadImage } = require('canvas');
 
 const app = express();
 const server = http.createServer(app);
+
+// Increase payload limits for large images
+app.use(express.json({ limit: '50mb' }));
+app.use(express.urlencoded({ limit: '50mb', extended: true }));
 const io = socketIo(server, {
     cors: {
         origin: "*",
         methods: ["GET", "POST"]
-    }
+    },
+    maxHttpBufferSize: 50 * 1024 * 1024, // 50MB for large images
+    pingTimeout: 60000,
+    pingInterval: 25000
 });
 
 // Servir archivos estáticos
@@ -19,6 +26,40 @@ app.use(express.static(__dirname));
 app.use('/patterns', express.static(path.join(__dirname, 'patterns')));
 app.use('/processed', express.static(path.join(__dirname, 'processed')));
 app.use('/captura', express.static(path.join(__dirname, 'captura')));
+
+// Endpoint para listar patrones disponibles
+app.get('/api/patterns/list', (req, res) => {
+    try {
+        const patternsDir = path.join(__dirname, 'patterns');
+        
+        // Crear carpeta si no existe
+        if (!fs.existsSync(patternsDir)) {
+            fs.mkdirSync(patternsDir, { recursive: true });
+            return res.json({ success: true, patterns: [] });
+        }
+        
+        // Verificar si existe wallpaper.jpg
+        const wallpaperPath = path.join(patternsDir, 'wallpaper.jpg');
+        
+        if (fs.existsSync(wallpaperPath)) {
+            console.log('📋 Patrón wallpaper.jpg encontrado');
+            return res.json({ 
+                success: true, 
+                patterns: ['wallpaper.jpg'] 
+            });
+        } else {
+            console.log('📋 No se encontró wallpaper.jpg');
+            return res.json({ 
+                success: true, 
+                patterns: [] 
+            });
+        }
+        
+    } catch (error) {
+        console.error('Error listando patrones:', error);
+        res.json({ success: false, error: error.message });
+    }
+});
 
 // Nuevo endpoint para escanear la carpeta captura
 app.get('/api/captura/scan', (req, res) => {
@@ -69,14 +110,14 @@ app.get('/api/captura/scan', (req, res) => {
     }
 });
 
-// Helper: remove all files in processed/ except pattern.png
+// Helper: Clean temp processing directory, keeping only the latest processed pattern
 function cleanProcessedDirExceptPattern() {
     try {
-        const processedDir = path.join(__dirname, 'processed');
+        const processedDir = path.join(__dirname, 'processed'); // Temporary processing folder
         if (!fs.existsSync(processedDir)) return;
         const files = fs.readdirSync(processedDir);
         for (const f of files) {
-            if (f === 'pattern.png') continue;
+            if (f === 'processed.png') continue; // Keep the current processed pattern
             const p = path.join(processedDir, f);
             try {
                 const stat = fs.statSync(p);
@@ -90,66 +131,72 @@ function cleanProcessedDirExceptPattern() {
         console.warn('Error limpiando processed/:', e.message);
     }
 
-    // Garantizar que exista pattern.png: copiar perfume.png como fallback
+    // Ensure processed.png exists: copy selected image as fallback
     try {
         const processedDir = path.join(__dirname, 'processed');
         if (!fs.existsSync(processedDir)) fs.mkdirSync(processedDir, { recursive: true });
-        const patternPath = path.join(processedDir, 'pattern.png');
+        const patternPath = path.join(processedDir, 'processed.png');
         if (!fs.existsSync(patternPath)) {
-            const fallback = path.join(__dirname, 'perfume.png');
+            const fallback = path.join(__dirname, `${globalState.general.selectedImage}.png`);
             if (fs.existsSync(fallback)) {
                 fs.copyFileSync(fallback, patternPath);
-                console.log('Copiado perfume.png -> processed/pattern.png (fallback)');
+                console.log(`📋 Copiado ${globalState.general.selectedImage}.png -> processed/processed.png (fallback inicial)`);
             }
         }
     } catch (e) {
-        console.warn('Error asegurando pattern.png:', e.message);
+        console.warn('Error asegurando processed.png:', e.message);
     }
 }
 
-// Ruta especial para pattern.png con fallback
-app.get('/processed/pattern.png', (req, res) => {
-    const patternPath = path.join(__dirname, 'processed', 'pattern.png');
-    const fallbackPath = path.join(__dirname, 'perfume.png');
+// Ruta especial para processed.png con fallback a imagen seleccionada
+app.get('/processed/processed.png', (req, res) => {
+    const patternPath = path.join(__dirname, 'processed', 'processed.png');
+    const selectedImagePath = path.join(__dirname, `${globalState.general.selectedImage}.png`);
     
-    // Si existe pattern.png, usarlo; si no, usar perfume.png como fallback
+    // Si existe processed.png, usarlo; si no, usar la imagen seleccionada como fallback
     if (fs.existsSync(patternPath)) {
         res.sendFile(patternPath);
     } else {
-        console.log('pattern.png no existe, usando perfume.png como fallback');
-        res.sendFile(fallbackPath);
+        console.log(`processed.png no existe, usando ${globalState.general.selectedImage}.png como fallback`);
+        res.sendFile(selectedImagePath);
     }
 });
 
 app.use(express.json());
 
-// Estado global del sistema
+// Estado global del sistema - CON OFFSETS MANUALES
 let globalState = {
     // Configuración general (aplicada a todas las pantallas)
     general: {
-    patternType: 'organic-complex',
-    repetitionX: 13,
-    repetitionY: 12,
-    patternSize: 300,
-    rotation: 0,
+        patternType: 'organic-complex',
+        repetitionX: 200,        // Aumentado a 200 para mayor extensión
+        repetitionY: 8,
+        patternSize: 300,
+        separationX: 300,        // Solo separación horizontal configurable
+        rotation: 0,
         zoom: 2.3,
         blendMode: 'multiply',
         perfumeSpacingH: 0.45,
         perfumeSpacingV: 0.7,
         perfumeSizeFactor: 0.85,
-    backgroundColor: '#F5DDC7'
+        backgroundColor: '#F5DDC7',
+        selectedImage: 'red' // Imagen seleccionada: red, pink, o blue
     },
-    // Configuración específica de cada pantalla (solo offset horizontal)
+    // Configuración específica de cada pantalla (solo offset horizontal manual)
     screens: {
-        1: { offsetX: -50 },
-        2: { offsetX: -30 },
-        3: { offsetX: -10 },
-        4: { offsetX: 10 },
-        5: { offsetX: 30 },
-        6: { offsetX: 50 },
-        7: { offsetX: 70 },
-        8: { offsetX: 90 },
-        9: { offsetX: 110 }
+        1: { offsetX: 0 },
+        2: { offsetX: 0 },
+        3: { offsetX: 0 },
+        4: { offsetX: 0 },
+        5: { offsetX: 0 },
+        6: { offsetX: 0 },
+        7: { offsetX: 0 },
+        8: { offsetX: 0 },
+        9: { offsetX: 0 }
+    },
+    // Wallpaper state
+    wallpaper: {
+        isActive: true
     },
     // Estado de animación
     animation: {
@@ -211,7 +258,7 @@ app.post('/api/general', (req, res) => {
 });
 
 app.post('/api/screen/:id', (req, res) => {
-    const screenId = req.params.id;
+    const screenId = parseInt(req.params.id);
     if (screenId >= 1 && screenId <= 9) {
         globalState.screens[screenId] = { ...globalState.screens[screenId], ...req.body };
         io.emit('screenConfigUpdate', { screenId, config: globalState.screens[screenId] });
@@ -246,12 +293,12 @@ io.on('connection', (socket) => {
         const { screenId, type } = data;
         connectedClients.set(socket.id, { screenId, type, socket });
         
-        // Enviar estado inicial
+        // Enviar estado inicial con configuración de pantalla
         socket.emit('initialState', {
             general: globalState.general,
-            screen: globalState.screens[screenId] || {},
+            screen: globalState.screens[screenId] || { offsetX: 0 },
             animation: globalState.animation,
-            wallpaper: globalState.wallpaper
+            wallpaper: { isActive: true }
         });
         
         console.log(`${type} registered with screen ID: ${screenId}`);
@@ -276,6 +323,14 @@ io.on('connection', (socket) => {
                     sequence: globalState.animation.sequence,
                     delayPattern: globalState.animation.delayPattern
                 });
+                
+                // NUEVO: También enviar comando específico para brush-reveal
+                io.emit('requestAnimationStart', {
+                    timestamp: Date.now(),
+                    message: 'Iniciar animación desde control'
+                });
+                
+                console.log('🎬 Comando de animación enviado a todas las pantallas y brush-reveal');
             } else {
                 // Apagar wallpaper
                 globalState.animation.isRunning = false;
@@ -307,12 +362,46 @@ io.on('connection', (socket) => {
         }
     });
 
+    socket.on('selectImage', (data) => {
+        const client = connectedClients.get(socket.id);
+        if (client && client.type === 'control') {
+            const { image } = data;
+            if (['red', 'pink', 'blue'].includes(image)) {
+                globalState.general.selectedImage = image;
+                console.log(`🖼️ Imagen seleccionada: ${image}.png`);
+                // Notificar a todos los clientes sobre el cambio
+                io.emit('imageSelected', { image });
+            }
+        }
+    });
+
     socket.on('savePattern', async (data) => {
         const client = connectedClients.get(socket.id);
         if (client && client.type === 'control') {
             try {
-                await generatePatternImage();
-                socket.emit('patternSaved', { success: true, message: 'Patrón guardado como pattern.jpg' });
+                // Generar ID único basado en timestamp
+                const timestamp = Date.now();
+                const uniqueId = `pattern_${timestamp}`;
+                
+                // Permitir forzar la imagen seleccionada enviada por el control
+                const selectedImageArg = (data && ['red', 'pink', 'blue'].includes(data.selectedImage))
+                    ? data.selectedImage
+                    : undefined;
+
+                await generatePatternImage(uniqueId, { selectedImage: selectedImageArg });
+                
+                // Notificar a todas las páginas brush-reveal que hay un nuevo patrón
+                io.emit('newPatternReady', { 
+                    patternId: uniqueId,
+                    filename: `${uniqueId}.jpg`,
+                    timestamp: timestamp
+                });
+                
+                socket.emit('patternSaved', { 
+                    success: true, 
+                    message: `Patrón guardado como ${uniqueId}.jpg`,
+                    patternId: uniqueId
+                });
             } catch (error) {
                 console.error('Error saving pattern:', error);
                 socket.emit('patternSaved', { success: false, message: 'Error al guardar el patrón' });
@@ -320,82 +409,226 @@ io.on('connection', (socket) => {
         }
     });
 
-    // Nuevo evento para guardar imagen procesada por OpenCV
+    // ========================================
+    // STEP 1: Save OpenCV processed image to temp folder
+    // ========================================
     socket.on('saveProcessedImage', async (data) => {
-        const client = connectedClients.get(socket.id);
-        if (client && client.type === 'control') {
-            try {
+        console.log('📥 PASO 1: Recibiendo imagen procesada por OpenCV...');
+        try {
                 const { imageDataUrl } = data;
                 
                 if (!imageDataUrl) {
+                    console.log('❌ No se recibieron datos de imagen');
                     socket.emit('processedImageSaved', { success: false, message: 'No se recibieron datos de imagen' });
                     return;
                 }
 
-                // Crear directorio si no existe
+                console.log(`📏 Tamaño de datos recibidos: ${(imageDataUrl.length / 1024 / 1024).toFixed(2)} MB`);
+
+                // Create temp processing directory if it doesn't exist
                 const processedDir = path.join(__dirname, 'processed');
                 if (!fs.existsSync(processedDir)) {
                     fs.mkdirSync(processedDir, { recursive: true });
+                    console.log('📁 Directorio processed/ creado');
                 }
 
-                // Usar siempre el mismo nombre: pattern.png (sobrescribir)
-                const filename = 'pattern.png';
+                // Always use the same name: processed.png (temporary processed file)
+                const filename = 'processed.png';
                 const filepath = path.join(processedDir, filename);
 
-                // Convertir data URL a buffer y guardar (sobrescribiendo)
-                const base64Data = imageDataUrl.replace(/^data:image\/png;base64,/, '');
+                // Convert data URL to buffer and save (overwriting)
+                const base64Data = imageDataUrl.replace(/^data:image\/[a-z]+;base64,/, '');
                 const buffer = Buffer.from(base64Data, 'base64');
+                
+                console.log(`💾 Guardando imagen temporal: ${filepath} (${(buffer.length / 1024 / 1024).toFixed(2)} MB)`);
                 fs.writeFileSync(filepath, buffer);
 
-                // Después de guardar, limpiar otros archivos en processed/
+                // Clean up other files in processed/ directory
                 cleanProcessedDirExceptPattern();
 
-                console.log('Imagen procesada guardada como:', filename);
+                console.log('✅ PASO 1 COMPLETADO: Imagen procesada guardada como processed.png temporal');
                 socket.emit('processedImageSaved', { 
                     success: true, 
                     message: 'Imagen procesada guardada exitosamente',
                     filename: filename
                 });
 
-            } catch (error) {
-                console.error('Error saving processed image:', error);
-                socket.emit('processedImageSaved', { success: false, message: 'Error al guardar imagen procesada' });
-            }
+        } catch (error) {
+            console.error('❌ Error saving processed image:', error);
+            socket.emit('processedImageSaved', { success: false, message: 'Error al guardar imagen procesada: ' + error.message });
         }
     });
 
-    // Nuevo evento para aplicar imagen procesada (ya no necesita copiar, screen.html lee directamente)
+    // ========================================
+    // STEP 2: Generate final pattern JPG and save to /patterns folder
+    // ========================================
+    
+    // NUEVO: Solicitar captura de canvas a una pantalla específica
+    socket.on('requestCanvasCaptureFromScreen', (data) => {
+        const targetScreenId = data.screenId || 1;
+        console.log(`📸 Solicitando captura de canvas a pantalla ${targetScreenId}...`);
+        
+        // Enviar solo a las pantallas con el screenId específico
+        connectedClients.forEach((client) => {
+            if (client.type === 'screen' && client.screenId === targetScreenId) {
+                client.socket.emit('requestCanvasCapture');
+                console.log(`✅ Solicitud enviada a pantalla ${targetScreenId}`);
+            }
+        });
+    });
+
+    // NUEVO: Endpoint para recibir canvas completo desde screen.html
+    socket.on('saveScreenCanvas', async (data) => {
+        try {
+            console.log('🖼️ Recibiendo canvas completo desde screen.html...');
+            
+            if (!data.imageData) {
+                throw new Error('No image data received');
+            }
+            
+            // Usar siempre el mismo nombre: wallpaper.jpg
+            const filename = 'wallpaper.jpg';
+            
+            // Decodificar base64 (quitar prefijo data:image/png;base64,)
+            const base64Data = data.imageData.replace(/^data:image\/png;base64,/, '');
+            const buffer = Buffer.from(base64Data, 'base64');
+            
+            // Guardar en la carpeta patterns como JPG
+            const patternsDir = path.join(__dirname, 'patterns');
+            if (!fs.existsSync(patternsDir)) {
+                fs.mkdirSync(patternsDir, { recursive: true });
+            }
+            
+            // Convertir PNG a JPG con fondo blanco
+            const img = await loadImage(buffer);
+            const canvas = createCanvas(img.width, img.height);
+            const ctx = canvas.getContext('2d');
+            
+            // Fondo blanco para el JPG
+            ctx.fillStyle = '#FFFFFF';
+            ctx.fillRect(0, 0, img.width, img.height);
+            ctx.drawImage(img, 0, 0);
+            
+            const jpgBuffer = canvas.toBuffer('image/jpeg', { quality: 0.9 });
+            const outPath = path.join(patternsDir, filename);
+            fs.writeFileSync(outPath, jpgBuffer);
+            
+            console.log(`✅ Canvas completo guardado: ${filename}`);
+            console.log(`📐 Dimensiones: ${img.width}x${img.height}`);
+            
+            // Notificar a todos los clientes sobre el nuevo patrón
+            io.emit('newPatternReady', {
+                patternId: 'wallpaper',
+                filename: filename,
+                timestamp: Date.now()
+            });
+            
+            io.emit('imageUpdated', {
+                filename: filename,
+                timestamp: Date.now()
+            });
+            
+            console.log('📢 Evento newPatternReady emitido (desde canvas completo)');
+            
+            socket.emit('canvasSaved', {
+                success: true,
+                filename: filename,
+                timestamp: Date.now()
+            });
+            
+        } catch (error) {
+            console.error('❌ Error guardando canvas:', error);
+            socket.emit('canvasSaved', {
+                success: false,
+                error: error.message
+            });
+        }
+    });
+
     socket.on('applyProcessedImage', async (data) => {
-        const client = connectedClients.get(socket.id);
-        if (client && client.type === 'control') {
-            try {
-                // Verificar que pattern.png existe
-                const patternPath = path.join(__dirname, 'processed', 'pattern.png');
+        console.log('🎨 PASO 2: Generando patrón final desde imagen procesada...');
+        try {
+                // Verify that processed.png exists in temp folder
+                const patternPath = path.join(__dirname, 'processed', 'processed.png');
 
                 if (!fs.existsSync(patternPath)) {
-                    socket.emit('processedImageApplied', { success: false, message: 'Archivo pattern.png no encontrado en processed/' });
+                    console.log('❌ Archivo processed.png no encontrado en processed/');
+                    socket.emit('processedImageApplied', { success: false, message: 'Archivo processed.png no encontrado en processed/' });
                     return;
                 }
 
-                console.log('Imagen del patrón lista: pattern.png');
+                console.log('✅ Imagen temporal lista: processed/processed.png');
 
-                // Notificar a todas las pantallas conectadas que actualicen la imagen
+                // Usar siempre el mismo nombre: wallpaper.jpg
+                const filename = 'wallpaper';
+                console.log(`💾 Generando patrón final JPG: wallpaper.jpg`);
+                
+                try {
+                    const selectedImageArg = (data && ['red', 'pink', 'blue'].includes(data.selectedImage)) ? data.selectedImage : undefined;
+                    console.log(`🖼️ Usando imagen seleccionada: ${selectedImageArg || globalState.general.selectedImage}`);
+                    
+                    await generatePatternImage(filename, { selectedImage: selectedImageArg });
+                    
+                    console.log('✅ PASO 2 COMPLETADO: Patrón final JPG generado en /patterns');
+                    
+                    // Notify Brush Reveal and other clients about the new final pattern
+                    io.emit('newPatternReady', {
+                        patternId: 'wallpaper',
+                        filename: 'wallpaper.jpg',
+                        timestamp: Date.now()
+                    });
+                    console.log('📢 Evento newPatternReady emitido para brush-reveal');
+                    
+                } catch (e) {
+                    console.warn('⚠️ No se pudo generar el JPG del patrón tras applyProcessedImage (intento fallback):', e.message);
+                    // Fallback: convert processed/processed.png to simple JPG in /patterns/
+                    try {
+                        const pngImg = await loadImage(patternPath);
+                        const w = pngImg.width || 2160;
+                        const h = pngImg.height || 3840;
+                        const c = createCanvas(w, h);
+                        const cx = c.getContext('2d');
+                        // White background to ensure JPEG without transparencies
+                        cx.fillStyle = '#FFFFFF';
+                        cx.fillRect(0, 0, w, h);
+                        cx.drawImage(pngImg, 0, 0, w, h);
+                        const buffer = c.toBuffer('image/jpeg', { quality: 0.9 });
+                        const patternsDir = path.join(__dirname, 'patterns');
+                        if (!fs.existsSync(patternsDir)) fs.mkdirSync(patternsDir, { recursive: true });
+                        const outPath = path.join(patternsDir, 'wallpaper.jpg');
+                        fs.writeFileSync(outPath, buffer);
+                        console.log('✅ Fallback JPG guardado: wallpaper.jpg');
+                        
+                        io.emit('newPatternReady', {
+                            patternId: 'wallpaper',
+                            filename: 'wallpaper.jpg',
+                            timestamp: Date.now()
+                        });
+                        console.log('📢 Evento newPatternReady emitido (fallback)');
+                    } catch (ef) {
+                        console.error('❌ Fallback también falló al guardar JPG desde processed/processed.png:', ef.message);
+                    }
+                }
+
+                // Notify all connected screens to update their display (using temp processed.png)
                 io.emit('imageUpdated', { 
                     message: 'Nueva imagen aplicada directamente',
-                    filename: 'pattern.png',
+                    filename: 'processed.png',
                     timestamp: new Date().toISOString()
                 });
+                console.log('📢 Evento imageUpdated emitido para screens');
 
                 socket.emit('processedImageApplied', { 
                     success: true, 
                     message: 'Imagen aplicada como nuevo patrón exitosamente',
-                    appliedFile: 'pattern.png'
+                    appliedFile: 'processed.png',
+                    patternSavedAs: 'wallpaper.jpg'
                 });
+                console.log('✅ Respuesta processedImageApplied enviada');
 
-            } catch (error) {
-                console.error('Error applying processed image:', error);
-                socket.emit('processedImageApplied', { success: false, message: 'Error al aplicar imagen procesada' });
-            }
+        } catch (error) {
+            console.error('❌ Error applying processed image:', error);
+            socket.emit('processedImageApplied', { success: false, message: 'Error al aplicar imagen procesada: ' + error.message });
         }
     });
 
@@ -406,29 +639,30 @@ io.on('connection', (socket) => {
 });
 
 // Función para generar la imagen del patrón
-async function generatePatternImage() {
+async function generatePatternImage(uniqueId = 'pattern', opts = {}) {
     const width = 2160;
     const height = 3840;
     const canvas = createCanvas(width, height);
     const ctx = canvas.getContext('2d');
 
-    // Cargar la imagen principal del patrón (usar processed/pattern.png - la misma que usan las pantallas)
+    // Cargar la imagen principal del patrón (usar processed/processed.png o la imagen seleccionada)
     try {
-        const patternPath = path.join(__dirname, 'processed', 'pattern.png');
-        const fallbackPath = path.join(__dirname, 'perfume.png');
+    const patternPath = path.join(__dirname, 'processed', 'processed.png');
+    const selectedForThisSave = opts.selectedImage || globalState.general.selectedImage;
+    const selectedImagePath = path.join(__dirname, `${selectedForThisSave}.png`);
         
-        // Usar la misma lógica que el endpoint /processed/pattern.png
+        // Usar processed/processed.png si existe, si no usar la imagen seleccionada
         let imageToLoad = patternPath;
         if (!fs.existsSync(patternPath)) {
-            console.log('pattern.png no existe, usando perfume.png como fallback para guardar');
-            imageToLoad = fallbackPath;
+            console.log(`processed.png no existe, usando ${selectedForThisSave}.png como imagen base`);
+            imageToLoad = selectedImagePath;
         }
         
         const patternImage = await loadImage(imageToLoad);
         
         // Configuración del patrón (usando la imagen pattern.jpg)
         const config = globalState.general;
-        const repX = parseInt(config.repetitionX || 10);
+        const repX = parseInt(config.repetitionX || 20); // Aumentado para cubrir múltiples pantallas
         const repY = parseInt(config.repetitionY || 8);
         const size = parseInt(config.patternSize || 245);
         const dpr = 1; // Equivalente al device pixel ratio
@@ -437,8 +671,10 @@ async function generatePatternImage() {
         // Sin offset de pantalla (guardamos como imagen única)
         const offsetXVal = 0;
         
-        const spacingX = width / repX;
-        const spacingY = height / repY;
+        // CAMBIO IMPORTANTE: Usar spacing fijo basado en el tamaño del patrón
+        // No dependiente del tamaño de la ventana para que todas las pantallas sean iguales
+        const spacingX = size * 1.5; // Spacing fijo basado en tamaño del patrón
+        const spacingY = size * 1.2; // Spacing fijo basado en tamaño del patrón
         
         // Calcular dimensiones de la imagen base manteniendo aspect ratio
         const imgAspect = patternImage.width / patternImage.height;
@@ -471,96 +707,145 @@ async function generatePatternImage() {
 
             let counter = 0;
 
+            // SISTEMA CORREGIDO: Usar una grilla fija muy grande que cubra todas las pantallas
+            // Esto asegura que el servidor genere suficientes elementos para todas las pantallas
+            const totalSystemWidth = 20112; // Ancho total del sistema de 9 pantallas
+            const totalSystemHeight = 3840;  // Alto de una pantalla
+            
+            // Calcular elementos necesarios para cubrir todo el sistema + margen
+            const elementsX = Math.ceil((totalSystemWidth + spacingX * 10) / spacingX);
+            const elementsY = Math.ceil((totalSystemHeight + spacingY * 5) / spacingY);
+            
+            // Punto de inicio que cubra todo el offset más negativo
+            const startX = -totalSystemWidth / 4; // Margen amplio hacia la izquierda
+            const startY = -spacingY * 2; // Margen hacia arriba
+
             // Generar el patrón principal (exactamente igual que screen.html)
-            for (let j = 0; j < repY; j++) {
-                for (let i = 0; i < repX; i++) {
+            for (let j = 0; j < elementsY; j++) {
+                for (let i = 0; i < elementsX; i++) {
                     let x, y, instRotation = rotationVal, scaleMod = 1;
 
                     // Calcular posición según el tipo de patrón (idéntico a screen.html)
                     switch (config.patternType) {
                         case 'grid':
-                            x = i * spacingX;
-                            y = j * spacingY;
+                            x = startX + i * spacingX;
+                            y = startY + j * spacingY;
                             break;
                         case 'brick':
-                            x = i * spacingX + (j % 2 === 1 ? spacingX * 0.5 : 0);
-                            y = j * spacingY;
+                            x = startX + i * spacingX + (j % 2 === 1 ? spacingX * 0.5 : 0);
+                            y = startY + j * spacingY;
                             break;
                         case 'hexagon':
-                            x = i * spacingX + (j % 2 === 1 ? spacingX * 0.5 : 0);
-                            y = j * spacingY * 0.866;
+                            x = startX + i * spacingX + (j % 2 === 1 ? spacingX * 0.5 : 0);
+                            y = startY + j * spacingY * 0.866;
                             break;
                         case 'diamond':
-                            x = i * spacingX + (j % 2 === 1 ? spacingX * 0.5 : 0);
-                            y = j * spacingY * 0.8;
+                            x = startX + i * spacingX + (j % 2 === 1 ? spacingX * 0.5 : 0);
+                            y = startY + j * spacingY * 0.8;
                             break;
                         case 'mirror-horizontal':
                             if (i % 2 !== 0) instRotation += 180;
-                            x = i * spacingX;
-                            y = j * spacingY;
+                            x = startX + i * spacingX;
+                            y = startY + j * spacingY;
                             break;
                         case 'mirror-vertical':
                             if (j % 2 !== 0) instRotation += 180;
-                            x = i * spacingX;
-                            y = j * spacingY;
+                            x = startX + i * spacingX;
+                            y = startY + j * spacingY;
                             break;
                         case 'mirror-both':
                             if (i % 2 !== 0) instRotation += 180;
                             if (j % 2 !== 0) instRotation += 180;
-                            x = i * spacingX;
-                            y = j * spacingY;
+                            x = startX + i * spacingX;
+                            y = startY + j * spacingY;
                             break;
                         case 'rotate-90':
                             instRotation += (counter % 4) * 90;
-                            x = i * spacingX;
-                            y = j * spacingY;
+                            x = startX + i * spacingX;
+                            y = startY + j * spacingY;
                             break;
                         case 'rotate-180':
                             if (counter % 2 !== 0) instRotation += 180;
-                            x = i * spacingX;
-                            y = j * spacingY;
+                            x = startX + i * spacingX;
+                            y = startY + j * spacingY;
                             break;
                         case 'rotate-mixed':
                             instRotation += [0, 90, 270, 180][counter % 4];
-                            x = i * spacingX;
-                            y = j * spacingY;
+                            x = startX + i * spacingX;
+                            y = startY + j * spacingY;
                             break;
                         case 'scale-varied':
                             scaleMod = [1, 0.6, 1.4, 0.8][counter % 4];
-                            x = i * spacingX;
-                            y = j * spacingY;
+                            x = startX + i * spacingX;
+                            y = startY + j * spacingY;
                             break;
                         case 'alternating-scale':
                             const scaleDiff = parseFloat(config.scaleDifference || 1.5);
                             scaleMod = (counter % 2 === 0) ? 1 : scaleDiff;
-                            x = i * spacingX;
-                            y = j * spacingY;
+                            x = startX + i * spacingX;
+                            y = startY + j * spacingY;
                             break;
                         case 'organic-complex':
-                            // Patrón orgánico complejo (idéntico a screen.html)
+                            // Patrón orgánico determinístico usando coordenadas absolutas
+                            // IMPORTANTE: Usar coordenadas absolutas para que todas las pantallas 
+                            // generen exactamente el mismo patrón
+                            
                             const patterns = [
                                 { offsetX: 0, offsetY: 0, rotation: 0, scale: 1 },
                                 { offsetX: spacingX * 0.3, offsetY: spacingY * 0.2, rotation: 180, scale: 0.8 },
                                 { offsetX: -spacingX * 0.1, offsetY: spacingY * 0.4, rotation: 90, scale: 1.2 },
                                 { offsetX: spacingX * 0.2, offsetY: -spacingY * 0.1, rotation: 270, scale: 0.9 },
                                 { offsetX: -spacingX * 0.2, offsetY: -spacingY * 0.3, rotation: 45, scale: 1.1 },
-                                { offsetX: spacingX * 0.4, offsetY: spacingY * 0.1, rotation: 135, scale: 0.7 }
+                                { offsetX: spacingX * 0.4, offsetY: spacingY * 0.1, rotation: 135, scale: 0.7 },
+                                // Patrones adicionales para mayor extensión lateral
+                                { offsetX: spacingX * 0.6, offsetY: spacingY * 0.3, rotation: 225, scale: 0.9 },
+                                { offsetX: -spacingX * 0.4, offsetY: spacingY * 0.5, rotation: 315, scale: 1.0 },
+                                { offsetX: spacingX * 0.8, offsetY: -spacingY * 0.2, rotation: 60, scale: 0.85 },
+                                { offsetX: -spacingX * 0.6, offsetY: -spacingY * 0.4, rotation: 120, scale: 1.15 },
+                                { offsetX: spacingX * 1.0, offsetY: spacingY * 0.6, rotation: 200, scale: 0.75 },
+                                { offsetX: -spacingX * 0.8, offsetY: spacingY * 0.1, rotation: 280, scale: 1.05 }
                             ];
-                            const patternIndex = counter % patterns.length;
+                            
+                            // Usar coordenadas absolutas para determinismo
+                            const baseX = startX + i * spacingX;
+                            const baseY = startY + j * spacingY;
+                            
+                            // Crear un índice determinístico basado en coordenadas absolutas
+                            // Usar coordenadas redondeadas para evitar problemas de punto flotante
+                            const absoluteX = Math.round(baseX);
+                            const absoluteY = Math.round(baseY);
+                            
+                            // Generar índices determinísticos basados en posición absoluta
+                            // Usar Math.abs para evitar índices negativos
+                            const patternIndex = Math.abs((absoluteX + absoluteY * 2)) % patterns.length;
+                            const rowVariationIndex = Math.abs(Math.floor(absoluteY / spacingY)) % 5;
+                            const colVariationIndex = Math.abs(Math.floor(absoluteX / spacingX)) % 3;
+                            const lateralSpreadIndex = Math.abs((absoluteX + absoluteY)) % 7;
+                            
                             const pattern = patterns[patternIndex];
                             
-                            // Agregar variación adicional basada en la posición de la fila/columna
-                            const rowVariation = (j % 3) * spacingX * 0.15;
-                            const colVariation = (i % 2) * spacingY * 0.1;
-                            
-                            x = i * spacingX + pattern.offsetX + rowVariation;
-                            y = j * spacingY + pattern.offsetY + colVariation;
-                            instRotation += pattern.rotation;
-                            scaleMod = pattern.scale;
+                            // Verificación de seguridad
+                            if (!pattern) {
+                                console.error(`❌ Pattern undefined at index ${patternIndex}, patterns length: ${patterns.length}`);
+                                x = baseX;
+                                y = baseY;
+                                instRotation = 0;
+                                scaleMod = 1;
+                            } else {
+                                // Variaciones determinísticas basadas en coordenadas absolutas
+                                const rowVariation = rowVariationIndex * spacingX * 0.25;
+                                const colVariation = colVariationIndex * spacingY * 0.15;
+                                const lateralSpread = lateralSpreadIndex * spacingX * 0.1;
+                                
+                                x = baseX + pattern.offsetX + rowVariation + lateralSpread;
+                                y = baseY + pattern.offsetY + colVariation;
+                                instRotation += pattern.rotation;
+                                scaleMod = pattern.scale;
+                            }
                             break;
                         default:
-                            x = i * spacingX;
-                            y = j * spacingY;
+                            x = startX + i * spacingX;
+                            y = startY + j * spacingY;
                     }
                     
                     // Aplicar offset de pantalla (0 para imagen única)
@@ -581,11 +866,11 @@ async function generatePatternImage() {
             console.log('Wallpaper no está activo - guardando solo color de fondo');
         }
         
-        // Dibujar las 8 imágenes de perfume igual que en screen.html si existe perfume.png
+        // Dibujar las 8 imágenes de perfume usando la imagen seleccionada para ESTA operación
         try {
-            const perfumePath = path.join(__dirname, 'perfume.png');
-            if (fs.existsSync(perfumePath)) {
-                const perfumeImg = await loadImage(perfumePath);
+            const selectedImagePath = path.join(__dirname, `${selectedForThisSave}.png`);
+            if (fs.existsSync(selectedImagePath)) {
+                const perfumeImg = await loadImage(selectedImagePath);
 
                 const spacingFactorH = parseFloat(config.perfumeSpacingH || 1.0);
                 const spacingFactorV = parseFloat(config.perfumeSpacingV || 1.0);
@@ -628,9 +913,9 @@ async function generatePatternImage() {
 
         ctx.restore();
 
-        // Guardar la imagen
+        // Guardar siempre como wallpaper.jpg
         const buffer = canvas.toBuffer('image/jpeg', { quality: 0.9 });
-        const outputPath = path.join(__dirname, 'patterns', 'pattern.jpg');
+        const outputPath = path.join(__dirname, 'patterns', 'wallpaper.jpg');
         fs.writeFileSync(outputPath, buffer);
         
         console.log('Patrón guardado en:', outputPath);
@@ -642,7 +927,7 @@ async function generatePatternImage() {
     }
 }
 
-// Al iniciar, limpiar processed/ dejando solo pattern.png
+// Al iniciar, limpiar processed/ dejando solo processed.png
 cleanProcessedDirExceptPattern();
 
 const PORT = process.env.PORT || 3000;

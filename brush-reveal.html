@@ -50,15 +50,12 @@
     </div>
     
     <script>
-        // Auto-refresh cada 60 segundos (60000 ms)
-        setInterval(function() {
-            console.log('🔄 Auto-refresh activado - Recargando página...');
-            window.location.reload();
-        }, 60000);
-        
-        // Log inicial para confirmar que el auto-refresh está configurado
-        console.log('⏰ Auto-refresh configurado: página se recargará cada 60 segundos');
+        // Sistema controlado desde /control - sin auto-refresh
+        console.log('⏸️ Sistema de brush-reveal listo - esperando órdenes desde /control');
     </script>
+    
+    <!-- Socket.IO para comunicación en tiempo real -->
+    <script src="/socket.io/socket.io.js"></script>
     
   <script src="./brush-reveal.js" defer></script>
  </body>

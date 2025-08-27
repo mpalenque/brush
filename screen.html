@@ -86,7 +86,7 @@
         const pathParts = window.location.pathname.split('/');
         const screenId = parseInt(pathParts[pathParts.length - 1]);
 
-        // Elementos de UI
+        // Elementos de UI - CON OFFSET
         const elements = {
             screenInfo: document.getElementById('screenInfo'),
             screenId: document.getElementById('screenId'),
@@ -94,11 +94,24 @@
             connectionStatus: document.getElementById('connectionStatus')
         };
 
-        // Estado del wallpaper
+        // Estado del wallpaper - CON SOPORTE PARA OFFSET MANUAL Y SEPARACIÓN X
         let wallpaperState = {
-            general: {},
-            screen: {},
-            wallpaper: { isActive: false }
+            general: {
+                patternType: 'organic-complex',
+                repetitionX: 200,        // 200 repeticiones en X
+                repetitionY: 8,
+                patternSize: 300,
+                separationX: 300,        // Solo separación horizontal configurable
+                rotation: 0,
+                zoom: 2.3,
+                blendMode: 'multiply',
+                backgroundColor: '#F5DDC7',
+                selectedImage: 'red'
+            },
+            screen: {
+                offsetX: 0 // Offset manual para esta pantalla
+            },
+            wallpaper: { isActive: true }
         };
 
     let img = new Image();
@@ -106,6 +119,7 @@
     // Perfume image (extra decorative layer) - load independently
     let perfumeImg = new Image();
     let perfumeLoaded = false;
+    let selectedImage = 'red';
 
         // Mostrar Screen ID
         elements.screenId.textContent = screenId;
@@ -126,19 +140,35 @@
             const config = wallpaperState.general;
             const screenConfig = wallpaperState.screen;
             
-            const repX = parseInt(config.repetitionX || 10);
+            const repX = parseInt(config.repetitionX || 200);
             const repY = parseInt(config.repetitionY || 8);
             const size = parseInt(config.patternSize || 245);
+            const separationX = parseInt(config.separationX || 300); // Solo separación X configurable
             const dpr = window.devicePixelRatio || 1;
             const width = window.innerWidth * dpr;
             const height = window.innerHeight * dpr;
             
-            // Offset específico de esta pantalla
+            // Offset manual de esta pantalla
             const offsetXVal = (screenConfig.offsetX || 0) * dpr;
             const rotationVal = parseInt(config.rotation || 0);
 
-            const spacingX = width / repX;
-            const spacingY = height / repY;
+            // CÁLCULO DE OFFSET GLOBAL PARA GRILLA 3x3
+            // Posición de esta pantalla en la grilla (0-8 -> fila,columna)
+            const screenRow = Math.floor(screenId / 3);  // 0, 1, 2
+            const screenCol = screenId % 3;              // 0, 1, 2
+            
+            // Dimensiones de pantalla con gap
+            const screenWidth = 2160;
+            const screenHeight = 3840;
+            const gapSize = 84;
+            
+            // Offset global basado en posición en la grilla
+            const globalOffsetX = screenCol * (screenWidth + gapSize);
+            const globalOffsetY = screenRow * (screenHeight + gapSize);
+
+            // SPACING: Separación X configurable, Y como antes
+            const spacingX = separationX * dpr;  // Separación X configurable
+            const spacingY = height / repY;      // Separación Y como antes (basada en altura)
             
             const imgAspect = img.width / img.height;
             let baseWidth = size * dpr;
@@ -170,6 +200,7 @@
 
                 let counter = 0;
 
+                // SISTEMA ORIGINAL SIMPLE: Solo los elementos necesarios para la pantalla actual
                 for (let j = 0; j < repY; j++) {
                     for (let i = 0; i < repX; i++) {
                         let x, y, instRotation = rotationVal, scaleMod = 1;
@@ -177,92 +208,106 @@
                         // Calcular posición según el tipo de patrón
                         switch (config.patternType) {
                             case 'grid':
-                                x = i * spacingX;
-                                y = j * spacingY;
+                                x = i * spacingX - globalOffsetX + offsetXVal;
+                                y = j * spacingY - globalOffsetY;
                                 break;
                             case 'brick':
-                                x = i * spacingX + (j % 2 === 1 ? spacingX * 0.5 : 0);
-                                y = j * spacingY;
+                                x = i * spacingX + (j % 2 === 1 ? spacingX * 0.5 : 0) - globalOffsetX + offsetXVal;
+                                y = j * spacingY - globalOffsetY;
                                 break;
                             case 'hexagon':
-                                x = i * spacingX + (j % 2 === 1 ? spacingX * 0.5 : 0);
-                                y = j * spacingY * 0.866;
+                                x = i * spacingX + (j % 2 === 1 ? spacingX * 0.5 : 0) - globalOffsetX + offsetXVal;
+                                y = j * spacingY * 0.866 - globalOffsetY;
                                 break;
                             case 'diamond':
-                                x = i * spacingX + (j % 2 === 1 ? spacingX * 0.5 : 0);
-                                y = j * spacingY * 0.8;
+                                x = i * spacingX + (j % 2 === 1 ? spacingX * 0.5 : 0) - globalOffsetX + offsetXVal;
+                                y = j * spacingY * 0.8 - globalOffsetY;
                                 break;
                             case 'mirror-horizontal':
                                 if (i % 2 !== 0) instRotation += 180;
-                                x = i * spacingX;
-                                y = j * spacingY;
+                                x = i * spacingX - globalOffsetX + offsetXVal;
+                                y = j * spacingY - globalOffsetY;
                                 break;
                             case 'mirror-vertical':
                                 if (j % 2 !== 0) instRotation += 180;
-                                x = i * spacingX;
-                                y = j * spacingY;
+                                x = i * spacingX - globalOffsetX + offsetXVal;
+                                y = j * spacingY - globalOffsetY;
                                 break;
                             case 'mirror-both':
                                 if (i % 2 !== 0) instRotation += 180;
                                 if (j % 2 !== 0) instRotation += 180;
-                                x = i * spacingX;
-                                y = j * spacingY;
+                                x = i * spacingX - globalOffsetX + offsetXVal;
+                                y = j * spacingY - globalOffsetY;
                                 break;
                             case 'rotate-90':
                                 instRotation += (counter % 4) * 90;
-                                x = i * spacingX;
-                                y = j * spacingY;
+                                x = i * spacingX - globalOffsetX + offsetXVal;
+                                y = j * spacingY - globalOffsetY;
                                 break;
                             case 'rotate-180':
                                 if (counter % 2 !== 0) instRotation += 180;
-                                x = i * spacingX;
-                                y = j * spacingY;
+                                x = i * spacingX - globalOffsetX + offsetXVal;
+                                y = j * spacingY - globalOffsetY;
                                 break;
                             case 'rotate-mixed':
                                 instRotation += [0, 90, 270, 180][counter % 4];
-                                x = i * spacingX;
-                                y = j * spacingY;
+                                x = i * spacingX - globalOffsetX + offsetXVal;
+                                y = j * spacingY - globalOffsetY;
                                 break;
                             case 'scale-varied':
                                 scaleMod = [1, 0.6, 1.4, 0.8][counter % 4];
-                                x = i * spacingX;
-                                y = j * spacingY;
+                                if (j % 2 !== 0) instRotation += 180;
+                                x = i * spacingX - globalOffsetX + offsetXVal;
+                                y = j * spacingY - globalOffsetY;
                                 break;
                             case 'alternating-scale':
                                 const scaleDiff = parseFloat(config.scaleDifference || 1.5);
                                 scaleMod = (counter % 2 === 0) ? 1 : scaleDiff;
-                                x = i * spacingX;
-                                y = j * spacingY;
+                                x = i * spacingX - globalOffsetX + offsetXVal;
+                                y = j * spacingY - globalOffsetY;
                                 break;
                             case 'organic-complex':
-                                // Patrón orgánico complejo con posiciones y rotaciones variadas
+                                // PATRÓN ORGÁNICO DETERMINÍSTICO: Mismo seed para todas las pantallas
+                                // Para que todas las pantallas generen exactamente el mismo patrón,
+                                // usamos un seed fijo basado en las coordenadas de la grilla (i,j)
+                                
                                 const patterns = [
                                     { offsetX: 0, offsetY: 0, rotation: 0, scale: 1 },
                                     { offsetX: spacingX * 0.3, offsetY: spacingY * 0.2, rotation: 180, scale: 0.8 },
                                     { offsetX: -spacingX * 0.1, offsetY: spacingY * 0.4, rotation: 90, scale: 1.2 },
                                     { offsetX: spacingX * 0.2, offsetY: -spacingY * 0.1, rotation: 270, scale: 0.9 },
                                     { offsetX: -spacingX * 0.2, offsetY: -spacingY * 0.3, rotation: 45, scale: 1.1 },
-                                    { offsetX: spacingX * 0.4, offsetY: spacingY * 0.1, rotation: 135, scale: 0.7 }
+                                    { offsetX: spacingX * 0.4, offsetY: spacingY * 0.1, rotation: 135, scale: 0.7 },
+                                    { offsetX: spacingX * 0.6, offsetY: spacingY * 0.3, rotation: 225, scale: 0.9 },
+                                    { offsetX: -spacingX * 0.4, offsetY: spacingY * 0.5, rotation: 315, scale: 1.0 },
+                                    { offsetX: spacingX * 0.8, offsetY: -spacingY * 0.2, rotation: 60, scale: 0.85 },
+                                    { offsetX: -spacingX * 0.6, offsetY: -spacingY * 0.4, rotation: 120, scale: 1.15 },
+                                    { offsetX: spacingX * 1.0, offsetY: spacingY * 0.6, rotation: 200, scale: 0.75 },
+                                    { offsetX: -spacingX * 0.8, offsetY: spacingY * 0.1, rotation: 280, scale: 1.05 }
                                 ];
-                                const patternIndex = counter % patterns.length;
+                                
+                                // Usar coordenadas de grilla (i,j) para generar el mismo patrón en todas las pantallas
+                                const patternIndex = (i + j * 2) % patterns.length;
+                                const rowVariationIndex = j % 5;
+                                const colVariationIndex = i % 3;
+                                const lateralSpreadIndex = (i + j) % 7;
+                                
                                 const pattern = patterns[patternIndex];
                                 
-                                // Agregar variación adicional basada en la posición de la fila/columna
-                                const rowVariation = (j % 3) * spacingX * 0.15;
-                                const colVariation = (i % 2) * spacingY * 0.1;
+                                // Variaciones determinísticas basadas en coordenadas de grilla
+                                const rowVariation = rowVariationIndex * spacingX * 0.25;
+                                const colVariation = colVariationIndex * spacingY * 0.15;
+                                const lateralSpread = lateralSpreadIndex * spacingX * 0.1;
                                 
-                                x = i * spacingX + pattern.offsetX + rowVariation;
-                                y = j * spacingY + pattern.offsetY + colVariation;
+                                x = i * spacingX + pattern.offsetX + rowVariation + lateralSpread - globalOffsetX + offsetXVal;
+                                y = j * spacingY + pattern.offsetY + colVariation - globalOffsetY;
                                 instRotation += pattern.rotation;
                                 scaleMod = pattern.scale;
                                 break;
                             default:
-                                x = i * spacingX;
-                                y = j * spacingY;
+                                x = i * spacingX - globalOffsetX + offsetXVal;
+                                y = j * spacingY - globalOffsetY;
                         }
-                        
-                        // Aplicar offset de pantalla
-                        x += offsetXVal;
                         
                         // Dibujar imagen
                         ctx.save();
@@ -349,6 +394,12 @@
 
         socket.on('initialState', (state) => {
             wallpaperState = { ...wallpaperState, ...state };
+            if (state && state.general && state.general.selectedImage) {
+                selectedImage = state.general.selectedImage;
+                // Forzar recarga de la imagen de perfume según selección inicial
+                perfumeLoaded = false;
+                perfumeImg.src = `/${selectedImage}.png?t=${Date.now()}`;
+            }
             updateConfigDisplay();
             generateStaticPattern();
         });
@@ -365,11 +416,65 @@
             generateStaticPattern();
         });
 
+        // Actualización de selección de imagen desde el control (1/2/3)
+        socket.on('imageSelected', (data) => {
+            if (data && data.image) {
+                selectedImage = data.image;
+                // Recargar imagen de perfume con la seleccionada
+                perfumeLoaded = false;
+                perfumeImg.src = `/${selectedImage}.png?t=${Date.now()}`;
+            }
+        });
+
         socket.on('screenConfigUpdate', (data) => {
             if (data.screenId === screenId) {
                 wallpaperState.screen = { ...wallpaperState.screen, ...data.config };
                 updateConfigDisplay();
                 generateStaticPattern();
+            }
+        });
+
+        // Cuando el servidor avisa que hay nueva imagen procesada
+        socket.on('imageUpdated', () => {
+            // Recargar patrón con cache-busting y regenerar
+            imgLoaded = false;
+            img.src = `/processed/processed.png?t=${Date.now()}`;
+        });
+
+        // NUEVO: Capturar y enviar canvas completo cuando se solicite
+        socket.on('requestCanvasCapture', () => {
+            try {
+                console.log('📸 Capturando canvas completo para guardar...');
+                
+                // Asegurar que el patrón esté completamente renderizado
+                if (!imgLoaded) {
+                    console.warn('⚠️ Imagen no cargada, no se puede capturar canvas');
+                    return;
+                }
+                
+                // Capturar canvas como imagen base64
+                const imageData = patternCanvas.toDataURL('image/png', 1.0);
+                
+                // Enviar al servidor
+                socket.emit('saveScreenCanvas', {
+                    imageData: imageData,
+                    screenId: screenId,
+                    timestamp: Date.now()
+                });
+                
+                console.log('✅ Canvas enviado al servidor para guardar');
+                
+            } catch (error) {
+                console.error('❌ Error capturando canvas:', error);
+            }
+        });
+
+        // Confirmar que el canvas se guardó correctamente
+        socket.on('canvasSaved', (data) => {
+            if (data.success) {
+                console.log(`✅ Canvas guardado exitosamente: ${data.filename}`);
+            } else {
+                console.error(`❌ Error guardando canvas: ${data.error}`);
             }
         });
 
@@ -404,12 +509,13 @@
         };
 
     // Cargar imagen procesada para el patrón
-    img.src = '/processed/pattern.png';
+    img.src = '/processed/processed.png';
 
-    // Cargar imagen perfume (se dibuja además del patrón)
-    perfumeImg.onload = () => { perfumeLoaded = true; /* redraw if already initialized */ if (imgLoaded) generateStaticPattern(); };
+    // Cargar imagen perfume (se dibuja además del patrón) según imagen seleccionada
+    perfumeImg.onload = () => { perfumeLoaded = true; if (imgLoaded) generateStaticPattern(); };
     perfumeImg.onerror = () => { console.warn('Error loading perfume image'); };
-    perfumeImg.src = '/perfume.png';
+    // Inicial por estado general si está disponible, si no 'red'
+    perfumeImg.src = `/${selectedImage}.png`;
 
         // Inicialización
         setupCanvas();

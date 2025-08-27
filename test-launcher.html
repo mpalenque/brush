@@ -1,0 +1,164 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Multi-Screen Test Launcher</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            padding: 20px;
+            background: #f0f0f0;
+        }
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+            background: white;
+            padding: 30px;
+            border-radius: 10px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        h1 {
+            color: #333;
+            text-align: center;
+        }
+        .screen-grid {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 15px;
+            margin: 30px 0;
+        }
+        .screen-button {
+            padding: 20px;
+            background: #007bff;
+            color: white;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 16px;
+            font-weight: bold;
+            transition: all 0.3s;
+        }
+        .screen-button:hover {
+            background: #0056b3;
+            transform: translateY(-2px);
+        }
+        .offset-info {
+            background: #f8f9fa;
+            padding: 15px;
+            border-radius: 5px;
+            margin: 10px 0;
+            font-family: monospace;
+            font-size: 12px;
+        }
+        .control-section {
+            text-align: center;
+            margin: 30px 0;
+            padding: 20px;
+            background: #e9ecef;
+            border-radius: 8px;
+        }
+        .open-all {
+            background: #28a745;
+            color: white;
+            padding: 15px 30px;
+            border: none;
+            border-radius: 8px;
+            font-size: 18px;
+            font-weight: bold;
+            cursor: pointer;
+            margin: 0 10px;
+        }
+        .open-all:hover {
+            background: #1e7e34;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🖥️ Multi-Screen Pattern Test</h1>
+        
+        <div class="control-section">
+            <button class="open-all" onclick="openControl()">🎛️ Abrir Control Panel</button>
+            <button class="open-all" onclick="openAllScreens()">🚀 Abrir Todas las Pantallas</button>
+        </div>
+
+        <h2>Configuración de Offsets</h2>
+        <div class="offset-info">
+            <strong>Sistema:</strong> 9 pantallas de 2160x3840px con 84px de separación<br>
+            <strong>Ancho total:</strong> 20,112 píxeles<br>
+            <strong>Patrón:</strong> organic-complex extendido con 12 variaciones
+        </div>
+
+        <h2>Pantallas Individuales</h2>
+        <div class="screen-grid">
+            <button class="screen-button" onclick="openScreen(1)">
+                Pantalla 1<br>
+                <small>Offset: 0px</small>
+            </button>
+            <button class="screen-button" onclick="openScreen(2)">
+                Pantalla 2<br>
+                <small>Offset: -2244px</small>
+            </button>
+            <button class="screen-button" onclick="openScreen(3)">
+                Pantalla 3<br>
+                <small>Offset: -4488px</small>
+            </button>
+            <button class="screen-button" onclick="openScreen(4)">
+                Pantalla 4<br>
+                <small>Offset: -6732px</small>
+            </button>
+            <button class="screen-button" onclick="openScreen(5)">
+                Pantalla 5<br>
+                <small>Offset: -8976px</small>
+            </button>
+            <button class="screen-button" onclick="openScreen(6)">
+                Pantalla 6<br>
+                <small>Offset: -11220px</small>
+            </button>
+            <button class="screen-button" onclick="openScreen(7)">
+                Pantalla 7<br>
+                <small>Offset: -13464px</small>
+            </button>
+            <button class="screen-button" onclick="openScreen(8)">
+                Pantalla 8<br>
+                <small>Offset: -15708px</small>
+            </button>
+            <button class="screen-button" onclick="openScreen(9)">
+                Pantalla 9<br>
+                <small>Offset: -17952px</small>
+            </button>
+        </div>
+
+        <div style="margin-top: 30px; padding: 20px; background: #fff3cd; border-radius: 8px;">
+            <h3>📝 Instrucciones</h3>
+            <ol>
+                <li><strong>Abrir Control Panel</strong> primero para activar el wallpaper</li>
+                <li>Seleccionar patrón <strong>"organic-complex"</strong></li>
+                <li>Activar el wallpaper con el toggle</li>
+                <li>Abrir las pantallas individualmente o todas a la vez</li>
+                <li>Verificar que el patrón se ve continuo entre pantallas</li>
+                <li>Presionar <strong>'i'</strong> en cualquier pantalla para ver info de debug</li>
+            </ol>
+        </div>
+    </div>
+
+    <script>
+        function openControl() {
+            window.open('http://localhost:3000/control', 'control-panel', 'width=1200,height=800');
+        }
+
+        function openScreen(screenId) {
+            const url = `http://localhost:3000/screen/${screenId}`;
+            window.open(url, `screen-${screenId}`, 'width=800,height=600');
+        }
+
+        function openAllScreens() {
+            // Abrir todas las pantallas con un pequeño delay entre cada una
+            for (let i = 1; i <= 9; i++) {
+                setTimeout(() => {
+                    openScreen(i);
+                }, i * 200); // 200ms delay entre ventanas
+            }
+        }
+    </script>
+</body>
+</html>
