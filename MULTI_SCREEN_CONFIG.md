@@ -1,13 +1,39 @@
-# Configuración Multi-Pantalla - TOTALMENTE SOLUCIONADO ✅
+# Configuración de Múltiples Pantallas - ACTUALIZADO ✅
 
-## Resumen de Cambios
+## Configuración de Hardware Detectada:
+- **Monitor 1**: 1920x1080 (principal)
+- **Monitor 2**: 2160x3840 (vertical)
+- **Monitor 3**: 2160x3840 (vertical)  
+- **Monitor 4**: 2160x3840 (vertical)
 
-Se ha modificado el sistema para soportar 9 pantallas de 2160x3840 píxeles con separación de 84px entre cada pantalla, generando un patrón continuo. **TODOS LOS PROBLEMAS SOLUCIONADOS:** Ahora todas las pantallas generan exactamente el mismo patrón base.
+## Archivos de Lanzamiento Actualizados:
 
-## 🔧 Problemas Solucionados
+### `launch_screens.bat` - **NUEVO MODO KIOSK**
+- ✅ Abre Chrome en **verdadero modo kiosk** en 4 pantallas
+- ✅ Configuración específica para cada resolución
+- ✅ Directorios de usuario únicos por ventana
+- ✅ Posicionamiento automático calculado
 
-### ✅ **Problema 1: Patrón No Se Veía en Pantallas 2-9**
-- **Problema**: Solo la pantalla 1 mostraba el patrón
+### `launch_force_kiosk.bat` - **SCRIPT DE EMERGENCIA**
+- ✅ Fuerza F11 en todas las ventanas si kiosk falla
+- ✅ Automatiza la entrada a pantalla completa
+
+## Posiciones Calculadas por Monitor:
+```
+Monitor 1 (1920x1080):  posición (0, 0)
+Monitor 2 (2160x3840):  posición (1920, 0)  
+Monitor 3 (2160x3840):  posición (4080, 0)
+Monitor 4 (2160x3840):  posición (6240, 0)
+```
+
+## Parámetros Clave Añadidos:
+```batch
+--kiosk                           # Modo kiosk verdadero
+--start-fullscreen               # Fuerza pantalla completa
+--display=N                      # Monitor específico (0,1,2,3)
+--user-data-dir=%TEMP%\chrome_N  # Directorio único por ventana
+--force-device-scale-factor=1    # Sin escalado
+```
 - **Causa**: Estado inicial `wallpaper.isActive: false` en el cliente
 - **Solución**: 
   - Cambiado a `wallpaper.isActive: true` por defecto

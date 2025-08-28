@@ -61,7 +61,7 @@ app.get('/api/patterns/list', (req, res) => {
     }
 });
 
-// Nuevo endpoint para escanear la carpeta captura
+// Nuevo endpoint para escanear la carpeta captura y obtener la imagen más reciente
 app.get('/api/captura/scan', (req, res) => {
     try {
         const capturaDir = path.join(__dirname, 'captura');
@@ -87,18 +87,30 @@ app.get('/api/captura/scan', (req, res) => {
             });
         }
         
-        // Tomar la primera imagen encontrada
-        const firstImage = imageFiles[0];
-        const imagePath = `/captura/${firstImage}`;
+        // Buscar la imagen más reciente por fecha de modificación
+        let latestImage = null;
+        let latestTime = 0;
         
-        console.log(`📷 Imagen encontrada en captura: ${firstImage}`);
+        imageFiles.forEach(file => {
+            const filePath = path.join(capturaDir, file);
+            const stats = fs.statSync(filePath);
+            if (stats.mtime.getTime() > latestTime) {
+                latestTime = stats.mtime.getTime();
+                latestImage = file;
+            }
+        });
+        
+        const imagePath = `/captura/${latestImage}`;
+        
+        console.log(`📷 Imagen más reciente en captura: ${latestImage} (${new Date(latestTime).toLocaleString()})`);
         
         res.json({
             success: true,
             imagePath: imagePath,
-            filename: firstImage,
+            filename: latestImage,
             totalImages: imageFiles.length,
-            message: `Imagen cargada: ${firstImage}`
+            modifiedTime: new Date(latestTime).toISOString(),
+            message: `Imagen más reciente cargada: ${latestImage}`
         });
         
     } catch (error) {
@@ -106,6 +118,62 @@ app.get('/api/captura/scan', (req, res) => {
         res.json({ 
             success: false, 
             message: 'Error al escanear la carpeta captura: ' + error.message 
+        });
+    }
+});
+
+// Nuevo endpoint para borrar todas las fotos de la carpeta captura
+app.delete('/api/captura/clear', (req, res) => {
+    try {
+        const capturaDir = path.join(__dirname, 'captura');
+        
+        if (!fs.existsSync(capturaDir)) {
+            return res.json({ 
+                success: true, 
+                message: 'La carpeta /captura no existe o ya está vacía',
+                deletedCount: 0
+            });
+        }
+        
+        // Escanear archivos de imagen
+        const files = fs.readdirSync(capturaDir);
+        const imageExtensions = ['.jpg', '.jpeg', '.png', '.webp', '.bmp', '.gif'];
+        
+        const imageFiles = files.filter(file => {
+            const ext = path.extname(file).toLowerCase();
+            return imageExtensions.includes(ext);
+        });
+        
+        let deletedCount = 0;
+        const errors = [];
+        
+        // Borrar cada archivo de imagen
+        imageFiles.forEach(file => {
+            try {
+                const filePath = path.join(capturaDir, file);
+                fs.unlinkSync(filePath);
+                deletedCount++;
+                console.log(`🗑️ Archivo borrado: ${file}`);
+            } catch (error) {
+                console.error(`Error borrando ${file}:`, error.message);
+                errors.push(`${file}: ${error.message}`);
+            }
+        });
+        
+        console.log(`✅ Limpieza completada: ${deletedCount} archivos borrados`);
+        
+        res.json({
+            success: true,
+            deletedCount: deletedCount,
+            errors: errors.length > 0 ? errors : null,
+            message: `${deletedCount} archivos borrados exitosamente de /captura`
+        });
+        
+    } catch (error) {
+        console.error('Error limpiando carpeta captura:', error);
+        res.json({ 
+            success: false, 
+            message: 'Error al limpiar la carpeta captura: ' + error.message 
         });
     }
 });

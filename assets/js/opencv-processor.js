@@ -161,11 +161,23 @@ function detectWhiteRectangleSimple() {
         
         cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY, 0);
         
-        // Blur más agresivo para filtrar ruido rápidamente
-        cv.GaussianBlur(gray, blurred, new cv.Size(7, 7), 1.5, 1.5, cv.BORDER_DEFAULT);
+        // MEJORA PARA IMÁGENES OSCURAS: Ecualización de histograma
+        console.log('Paso 1.5: Mejorando contraste para imágenes oscuras...');
+        let enhanced = new cv.Mat();
+        cv.equalizeHist(gray, enhanced);
         
-        // Canny optimizado con umbrales más selectivos
-        cv.Canny(blurred, edges, 50, 150);
+        // CLAHE para mejor contraste local
+        let clahe = new cv.CLAHE();
+        clahe.setClipLimit(2.0);
+        clahe.setTilesGridSize(new cv.Size(8, 8));
+        let claheResult = new cv.Mat();
+        clahe.apply(enhanced, claheResult);
+        
+        // Blur más suave para preservar bordes
+        cv.GaussianBlur(claheResult, blurred, new cv.Size(5, 5), 1.0, 1.0, cv.BORDER_DEFAULT);
+        
+        // Canny con umbrales optimizados para imágenes oscuras
+        cv.Canny(blurred, edges, 30, 100);
         
         // Mostrar bordes para debug
         const detectionCanvas = document.getElementById('detectionCanvas');
@@ -226,7 +238,8 @@ function detectWhiteRectangleSimple() {
         }
         
         // Cleanup
-        cleanupMats([src, gray, blurred, edges, contours, hierarchy]);
+        cleanupMats([src, gray, enhanced, claheResult, blurred, edges, contours, hierarchy]);
+        clahe.delete();
         if (biggestContour) biggestContour.delete();
         
     } catch (error) {
@@ -779,10 +792,11 @@ async function autoProcessAndApply() {
 }
 
 async function detectAndProcessAutomatically() {
-    // Similar a detectWhiteRectangleSimple pero sin UI
+    // Detección mejorada para imágenes oscuras
     try {
         let src = cv.imread(currentImage);
         let gray = new cv.Mat();
+        let enhanced = new cv.Mat();
         let blurred = new cv.Mat();
         let edges = new cv.Mat();
         let contours = new cv.MatVector();
@@ -790,33 +804,76 @@ async function detectAndProcessAutomatically() {
         
         console.log(`AUTO: Imagen cargada: ${src.cols}x${src.rows}`);
         
+        // MEJORA 1: Conversión a escala de grises con mejores parámetros
         cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY, 0);
-        cv.GaussianBlur(gray, blurred, new cv.Size(5, 5), 0, 0, cv.BORDER_DEFAULT);
-        cv.Canny(blurred, edges, 75, 200);
         
-        cv.findContours(edges, contours, hierarchy, cv.RETR_LIST, cv.CHAIN_APPROX_SIMPLE);
+        // MEJORA 2: Ecualización de histograma para imágenes oscuras
+        console.log('AUTO: Aplicando ecualización de histograma para mejorar contraste...');
+        cv.equalizeHist(gray, enhanced);
+        
+        // MEJORA 3: Mejorar contraste adicional con CLAHE (Contrast Limited Adaptive Histogram Equalization)
+        let clahe = new cv.CLAHE();
+        clahe.setClipLimit(3.0);
+        clahe.setTilesGridSize(new cv.Size(8, 8));
+        let claheResult = new cv.Mat();
+        clahe.apply(enhanced, claheResult);
+        
+        // MEJORA 4: Blur adaptativo - menos agresivo para preservar bordes
+        cv.GaussianBlur(claheResult, blurred, new cv.Size(3, 3), 1.0, 1.0, cv.BORDER_DEFAULT);
+        
+        // MEJORA 5: Canny con parámetros optimizados para imágenes oscuras
+        // Umbrales más bajos para detectar bordes más sutiles
+        cv.Canny(blurred, edges, 30, 90);
+        
+        // MEJORA 6: Morfología para cerrar huecos en bordes
+        let kernel = cv.getStructuringElement(cv.MORPH_RECT, new cv.Size(3, 3));
+        cv.morphologyEx(edges, edges, cv.MORPH_CLOSE, kernel);
+        
+        cv.findContours(edges, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
         console.log(`AUTO: Encontrados ${contours.size()} contornos`);
         
+        // MEJORA 7: Filtrado más inteligente de contornos
         let maxArea = 0;
         let biggestContour = null;
+        const imageArea = src.cols * src.rows;
+        const minAreaThreshold = imageArea * 0.005; // 0.5% del área total (más sensible)
+        const maxAreaThreshold = imageArea * 0.85;  // 85% del área total
         
         for (let i = 0; i < contours.size(); ++i) {
             const contour = contours.get(i);
             const area = cv.contourArea(contour, false);
             
-            if (area > maxArea && area > 1000) {
+            // Filtro de área más permisivo para imágenes oscuras
+            if (area < minAreaThreshold || area > maxAreaThreshold) {
+                continue;
+            }
+            
+            // MEJORA 8: Verificar que sea aproximadamente rectangular
+            const epsilon = 0.02 * cv.arcLength(contour, true);
+            const approx = new cv.Mat();
+            cv.approxPolyDP(contour, approx, epsilon, true);
+            
+            // Aceptar entre 4-8 puntos (más flexible que solo 4)
+            if (approx.rows >= 4 && approx.rows <= 8 && area > maxArea) {
                 if (biggestContour) biggestContour.delete();
                 biggestContour = contour.clone();
                 maxArea = area;
+                console.log(`AUTO: Nuevo candidato encontrado - Área: ${area.toFixed(0)}, Puntos: ${approx.rows}`);
             }
+            
+            approx.delete();
         }
         
-        if (!biggestContour || maxArea <= 1000) {
-            console.log('AUTO: No se encontró rectángulo válido');
-            cleanupMats([src, gray, blurred, edges, contours, hierarchy]);
+        if (!biggestContour || maxArea <= minAreaThreshold) {
+            console.log('AUTO: No se encontró rectángulo válido después de mejoras para imagen oscura');
+            console.log(`AUTO: Área máxima encontrada: ${maxArea}, Umbral mínimo: ${minAreaThreshold}`);
+            cleanupMats([src, gray, enhanced, claheResult, blurred, edges, contours, hierarchy]);
+            kernel.delete();
+            clahe.delete();
             return null;
         }
         
+        console.log(`AUTO: ✓ Rectángulo detectado - Área: ${maxArea.toFixed(0)} píxeles`);
         console.log('AUTO: Aplicando corrección de perspectiva...');
         
         const correctedImage = applyPerspectiveCorrection(src, biggestContour);
@@ -824,14 +881,16 @@ async function detectAndProcessAutomatically() {
             drawCorrectedResult(correctedImage);
         }
         
-        cleanupMats([src, gray, blurred, edges, contours, hierarchy]);
+        cleanupMats([src, gray, enhanced, claheResult, blurred, edges, contours, hierarchy]);
+        kernel.delete();
+        clahe.delete();
         if (biggestContour) biggestContour.delete();
         
-        console.log('AUTO: ✓ Detección y procesamiento completados');
+        console.log('AUTO: ✓ Detección y procesamiento completados con mejoras para imagen oscura');
         return correctedImage;
         
     } catch (error) {
-        console.error('Error en detección automática:', error);
+        console.error('Error en detección automática mejorada:', error);
         return null;
     }
 }
@@ -992,7 +1051,8 @@ async function scanCapturaFolder() {
             return null;
         }
         
-        updateProcessStatus(`📷 Imagen encontrada: ${data.filename} (${data.totalImages} total)`, 'success');
+        const modifiedTime = data.modifiedTime ? new Date(data.modifiedTime).toLocaleString() : 'desconocida';
+        updateProcessStatus(`📷 Imagen más reciente: ${data.filename} (${modifiedTime}) - ${data.totalImages} total`, 'success');
         return data;
         
     } catch (error) {
@@ -1046,7 +1106,11 @@ async function processImageFromCaptura() {
             return false;
         }
         
-        // Paso 1: Escanear carpeta
+        // Esperar 4 segundos para que se cargue una nueva foto
+        updateProcessStatus('⏳ Esperando 4 segundos para nueva foto...', 'waiting');
+        await new Promise(resolve => setTimeout(resolve, 4000));
+        
+        // Paso 1: Escanear carpeta para obtener la imagen más reciente
         const scanResult = await scanCapturaFolder();
         if (!scanResult) return false;
         
@@ -1102,7 +1166,11 @@ async function processImageFromCaptura() {
         
         await applyAsNewPatternImage(savedFilename);
         
-        updateProcessStatus('🎉 ¡PROCESO COMPLETADO! Imagen procesada y aplicada al patrón.', 'success');
+        // Paso 5: Limpiar carpeta captura (borrar todas las fotos)
+        updateProcessStatus('🗑️ Limpiando carpeta /captura...', 'processing');
+        await clearCapturaFolder();
+        
+        updateProcessStatus('🎉 ¡PROCESO COMPLETADO! Imagen procesada, aplicada y carpeta limpiada.', 'success');
         
         // Cleanup
         processedImage.delete();
@@ -1113,6 +1181,29 @@ async function processImageFromCaptura() {
     } catch (error) {
         console.error('Error en proceso automático desde captura:', error);
         updateProcessStatus('❌ Error en proceso: ' + error.message, 'error');
+        return false;
+    }
+}
+
+// Función para limpiar la carpeta captura
+async function clearCapturaFolder() {
+    try {
+        const response = await fetch('/api/captura/clear', {
+            method: 'DELETE'
+        });
+        
+        const data = await response.json();
+        
+        if (data.success) {
+            console.log(`🗑️ Carpeta limpiada: ${data.deletedCount} archivos borrados`);
+            return true;
+        } else {
+            console.error('Error limpiando carpeta:', data.message);
+            return false;
+        }
+        
+    } catch (error) {
+        console.error('Error al limpiar carpeta captura:', error);
         return false;
     }
 }
@@ -1156,7 +1247,7 @@ function initializeOpenCVProcessor() {
     }
 }
 
-// Configurar listener de teclado para la tecla "9"
+// Configurar listener de teclado para la tecla "a"
 function setupKeyboardListener() {
     document.addEventListener('keydown', function(event) {
         // Verificar que no estemos en un input o textarea
@@ -1164,15 +1255,15 @@ function setupKeyboardListener() {
             return;
         }
         
-        if (event.key === '9' || event.keyCode === 57) {
+        if (event.key === 'a' || event.key === 'A' || event.keyCode === 65) {
             event.preventDefault();
-            console.log('Tecla "9" presionada - Iniciando proceso automático');
-            showKeyIndicator('9');
+            console.log('Tecla "a" presionada - Iniciando proceso automático');
+            showKeyIndicator('a');
             processImageFromCaptura();
         }
     });
     
-    console.log('🎹 Listener de teclado configurado - Presiona "9" para proceso automático');
+    console.log('🎹 Listener de teclado configurado - Presiona "a" para proceso automático');
 }
 
 // Exponer funciones globales necesarias

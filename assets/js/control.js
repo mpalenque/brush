@@ -511,10 +511,10 @@ function setupKeyboardControls() {
             e.preventDefault();
             selectImage('blue');
         }
-        // Tecla "9" - Procesar desde /captura con la imagen seleccionada
-        else if (e.key === '9') {
+        // Tecla "a" - Procesar desde /captura con la imagen seleccionada
+        else if (e.key === 'a' || e.key === 'A') {
             e.preventDefault();
-            console.log('🎨 Tecla "9" presionada - Proceso AUTOMÁTICO (scan → detectar → guardar → aplicar)');
+            console.log('🎨 Tecla "a" presionada - Proceso AUTOMÁTICO (scan → detectar → guardar → aplicar)');
             if (window.processImageFromCaptura) {
                 window.processImageFromCaptura();
             } else if (window.autoProcessAndApply) {
