@@ -35,6 +35,14 @@ El servidor se ejecutará en `http://localhost:3000`
 - **Pantalla 8**: `http://localhost:3000/screen/8`
 - **Pantalla 9**: `http://localhost:3000/screen/9`
 
+### Sistemas de Revelado (Brush Effects)
+- **Brush Reveal**: `http://localhost:3000/brush-reveal.html`
+  - Usa wallpaper.jpg generado por el sistema
+  - Efecto de pincel con colores dinámicos
+- **Full Reveal**: `http://localhost:3000/full-reveal.html` ⭐ **NUEVO**
+  - Usa la imagen full.png directamente
+  - Mismo efecto de pincel pero con imagen fija
+
 ## 🎯 Cómo Usar
 
 ### Configuración Inicial

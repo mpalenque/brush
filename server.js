@@ -27,6 +27,16 @@ app.use('/patterns', express.static(path.join(__dirname, 'patterns')));
 app.use('/processed', express.static(path.join(__dirname, 'processed')));
 app.use('/captura', express.static(path.join(__dirname, 'captura')));
 
+// Ruta para la pantalla de 3 monitores
+app.get('/3screens', (req, res) => {
+    res.sendFile(path.join(__dirname, 'screen.html'));
+});
+
+// Ruta para el panel de control
+app.get('/control', (req, res) => {
+    res.sendFile(path.join(__dirname, 'control.html'));
+});
+
 // Endpoint para listar patrones disponibles
 app.get('/api/patterns/list', (req, res) => {
     try {
@@ -173,6 +183,9 @@ let globalState = {
         repetitionY: 8,
         patternSize: 300,
         separationX: 300,        // Solo separación horizontal configurable
+        separationY: 300,        // Separación vertical
+        spacingX: 0,             // Espaciado adicional X entre repeticiones
+        spacingY: 0,             // Espaciado adicional Y entre repeticiones
         rotation: 0,
         zoom: 2.3,
         blendMode: 'multiply',
@@ -180,7 +193,29 @@ let globalState = {
         perfumeSpacingV: 0.7,
         perfumeSizeFactor: 0.85,
         backgroundColor: '#F5DDC7',
-        selectedImage: 'red' // Imagen seleccionada: red, pink, o blue
+        selectedImage: 'red', // Imagen seleccionada: red, pink, o blue
+        // NUEVO: Fuente del patrón para las screens
+        // 'processed' usa /processed/processed.png (actualizado con tecla 9)
+        // 'rojo' | 'azul' | 'amarillo' usan /rojo.png, /azul.png, /amarillo.png
+        patternSource: 'processed',
+        // Configuración de imágenes superpuestas
+        overlayImages: {
+            countX: 3,              // Cantidad en eje X
+            countY: 2,              // Cantidad en eje Y  
+            offsetX: 0,             // Offset horizontal global
+            offsetY: 0,             // Offset vertical global
+            size: 200,              // Tamaño de las imágenes
+            spacingX: 800,          // Espaciado entre imágenes en X
+            spacingY: 600,          // Espaciado entre imágenes en Y
+            rowOffsetX: 0,          // Desfase de filas en X
+            rowOffsetY: 0,          // Desfase de filas en Y
+            colOffsetX: 0,          // Desfase de columnas en X
+            colOffsetY: 0,          // Desfase de columnas en Y
+            alternateRowX: 0,       // Desfase filas intercaladas en X
+            alternateRowY: 0,       // Desfase filas intercaladas en Y
+            alternateColX: 0,       // Desfase columnas intercaladas en X
+            alternateColY: 0        // Desfase columnas intercaladas en Y
+        }
     },
     // Configuración específica de cada pantalla (solo offset horizontal manual)
     screens: {
@@ -193,6 +228,18 @@ let globalState = {
         7: { offsetX: 0 },
         8: { offsetX: 0 },
         9: { offsetX: 0 }
+    },
+    // Configuración específica de cada brush-reveal
+    brushReveal: {
+        1: { offsetX: 0, offsetY: 0 },      // Sección 1: izquierda
+        2: { offsetX: 2160, offsetY: 0 },   // Sección 2: centro
+        3: { offsetX: 4320, offsetY: 0 },   // Sección 3: derecha
+        4: { offsetX: 0, offsetY: 0 },      // Sección 4: repetir izquierda
+        5: { offsetX: 2160, offsetY: 0 },   // Sección 5: repetir centro
+        6: { offsetX: 4320, offsetY: 0 },   // Sección 6: repetir derecha
+        7: { offsetX: 0, offsetY: 0 },      // Sección 7: repetir izquierda
+        8: { offsetX: 2160, offsetY: 0 },   // Sección 8: repetir centro
+        9: { offsetX: 4320, offsetY: 0 }    // Sección 9: repetir derecha
     },
     // Wallpaper state
     wallpaper: {
@@ -246,6 +293,23 @@ app.get('/brush-reveal', (req, res) => {
     res.sendFile(path.join(__dirname, 'brush-reveal.html'));
 });
 
+// Rutas para brush-reveal con diferentes secciones del wallpaper
+app.get('/brush-reveal/:id', (req, res) => {
+    const brushId = parseInt(req.params.id);
+    if (brushId >= 1 && brushId <= 9) {
+        res.sendFile(path.join(__dirname, 'brush-reveal.html'));
+    } else {
+        res.status(404).send('Brush reveal ID must be between 1 and 9');
+    }
+});
+
+// Página de prueba para todos los brush-reveals
+app.get('/test-brush', (req, res) => {
+    res.sendFile(path.join(__dirname, 'test-brush-reveals.html'));
+});
+
+// Alias de imágenes en español para compatibilidad con UI
+
 // API endpoints
 app.get('/api/state', (req, res) => {
     res.json(globalState);
@@ -265,6 +329,17 @@ app.post('/api/screen/:id', (req, res) => {
         res.json({ success: true });
     } else {
         res.status(404).json({ error: 'Screen ID must be between 1 and 9' });
+    }
+});
+
+app.post('/api/brush-reveal/:id', (req, res) => {
+    const brushId = parseInt(req.params.id);
+    if (brushId >= 1 && brushId <= 9) {
+        globalState.brushReveal[brushId] = { ...globalState.brushReveal[brushId], ...req.body };
+        io.emit('brushRevealConfigUpdate', { brushId, config: globalState.brushReveal[brushId] });
+        res.json({ success: true });
+    } else {
+        res.status(404).json({ error: 'Brush reveal ID must be between 1 and 9' });
     }
 });
 
@@ -290,18 +365,29 @@ io.on('connection', (socket) => {
     console.log('Client connected:', socket.id);
 
     socket.on('registerScreen', (data) => {
-        const { screenId, type } = data;
-        connectedClients.set(socket.id, { screenId, type, socket });
+        const { screenId, type, brushId } = data;
+        connectedClients.set(socket.id, { screenId, type, brushId, socket });
         
-        // Enviar estado inicial con configuración de pantalla
-        socket.emit('initialState', {
-            general: globalState.general,
-            screen: globalState.screens[screenId] || { offsetX: 0 },
-            animation: globalState.animation,
-            wallpaper: { isActive: true }
-        });
-        
-        console.log(`${type} registered with screen ID: ${screenId}`);
+        // Enviar estado inicial según el tipo
+        if (type === 'brush-reveal') {
+            socket.emit('initialState', {
+                general: globalState.general,
+                brushReveal: globalState.brushReveal[brushId] || { offsetX: 0, offsetY: 0 },
+                brushId: brushId,
+                animation: globalState.animation,
+                wallpaper: { isActive: true }
+            });
+            console.log(`${type} registered with brush ID: ${brushId}`);
+        } else {
+            // Configuración para screens normales
+            socket.emit('initialState', {
+                general: globalState.general,
+                screen: globalState.screens[screenId] || { offsetX: 0 },
+                animation: globalState.animation,
+                wallpaper: { isActive: true }
+            });
+            console.log(`${type} registered with screen ID: ${screenId}`);
+        }
     });
 
     socket.on('requestAnimationStart', (data) => {
@@ -351,6 +437,21 @@ io.on('connection', (socket) => {
         }
     });
 
+    // NUEVO: Cambiar la fuente del patrón (processed | rojo | azul | amarillo)
+    socket.on('setPatternSource', (data) => {
+        const client = connectedClients.get(socket.id);
+        if (client && client.type === 'control') {
+            const allowed = ['processed', 'rojo', 'azul', 'amarillo'];
+            const src = (data && data.source) ? String(data.source) : 'processed';
+            if (!allowed.includes(src)) return;
+            globalState.general.patternSource = src;
+            console.log(`🧩 patternSource cambiado a: ${src}`);
+            io.emit('patternSourceChanged', { source: src });
+            // También reenviar el estado general para que screen.html lo tenga sincronizado
+            io.emit('generalConfigUpdate', globalState.general);
+        }
+    });
+
     socket.on('updateScreenConfig', (data) => {
         const client = connectedClients.get(socket.id);
         if (client && client.type === 'control') {
@@ -372,6 +473,17 @@ io.on('connection', (socket) => {
                 // Notificar a todos los clientes sobre el cambio
                 io.emit('imageSelected', { image });
             }
+        }
+    });
+
+    // NUEVO: Manejar rotación automática de imágenes para brush-reveal
+    socket.on('brushRevealRotateImage', (data) => {
+        const client = connectedClients.get(socket.id);
+        if (client && client.type === 'control') {
+            console.log(`🎨 *** SERVER *** Retransmitiendo rotación automática: ${data.imageName} (${data.imageType})`);
+            console.log(`📡 *** SERVER *** Datos del evento:`, data);
+            // Retransmitir el evento a todos los brush-reveal conectados
+            io.emit('brushRevealRotateImage', data);
         }
     });
 
@@ -463,6 +575,19 @@ io.on('connection', (socket) => {
     // STEP 2: Generate final pattern JPG and save to /patterns folder
     // ========================================
     
+    // NUEVO: Manejar solicitud de captura desde control.html (tecla 'a')
+    socket.on('requestCanvasCapture', () => {
+        console.log('📸 Control solicita captura de canvas - enviando a todas las pantallas...');
+        
+        // Enviar solicitud a todas las pantallas conectadas
+        connectedClients.forEach((client) => {
+            if (client.type === 'screen') {
+                client.socket.emit('requestCanvasCapture');
+                console.log(`✅ Solicitud enviada a pantalla ${client.screenId}`);
+            }
+        });
+    });
+    
     // NUEVO: Solicitar captura de canvas a una pantalla específica
     socket.on('requestCanvasCaptureFromScreen', (data) => {
         const targetScreenId = data.screenId || 1;
@@ -480,7 +605,7 @@ io.on('connection', (socket) => {
     // NUEVO: Endpoint para recibir canvas completo desde screen.html
     socket.on('saveScreenCanvas', async (data) => {
         try {
-            console.log('🖼️ Recibiendo canvas completo desde screen.html...');
+            console.log('🖼️ Recibiendo canvas completo desde screen.html (3 pantallas)...');
             
             if (!data.imageData) {
                 throw new Error('No image data received');
@@ -489,32 +614,56 @@ io.on('connection', (socket) => {
             // Usar siempre el mismo nombre: wallpaper.jpg
             const filename = 'wallpaper.jpg';
             
-            // Decodificar base64 (quitar prefijo data:image/jpeg;base64,)
-            const base64Data = data.imageData.replace(/^data:image\/jpeg;base64,/, '');
+            // Decodificar base64 (quitar prefijo data:image/png;base64,)
+            const base64Data = data.imageData.replace(/^data:image\/png;base64,/, '');
             const buffer = Buffer.from(base64Data, 'base64');
             
-            // Guardar en la carpeta patterns como JPG
+            // Guardar en la carpeta patterns
             const patternsDir = path.join(__dirname, 'patterns');
             if (!fs.existsSync(patternsDir)) {
                 fs.mkdirSync(patternsDir, { recursive: true });
             }
             
-            // LA IMAGEN YA VIENE A 2160x3840 DESDE SCREEN.HTML - GUARDAR DIRECTAMENTE
+            // Cargar imagen del canvas de 3 pantallas (6480x3840)
             const img = await loadImage(buffer);
             
             console.log(`📐 Dimensiones recibidas: ${img.width}x${img.height}`);
             
-            // Verificar que las dimensiones sean correctas
-            if (img.width !== 2160 || img.height !== 3840) {
-                console.warn(`⚠️ ADVERTENCIA: Dimensiones incorrectas ${img.width}x${img.height}, esperadas 2160x3840`);
+            // Crear canvas para convertir a JPG y redimensionar si es necesario
+            const canvas = createCanvas(img.width, img.height);
+            const ctx = canvas.getContext('2d');
+            
+            // Dibujar la imagen completa
+            ctx.drawImage(img, 0, 0);
+            
+            // Guardar como JPG con método atómico
+            const tempFilename = `wallpaper_temp_${Date.now()}.jpg`;
+            const tempPath = path.join(patternsDir, tempFilename);
+            const finalPath = path.join(patternsDir, filename);
+            
+            const jpgBuffer = canvas.toBuffer('image/jpeg', { quality: 0.95 });
+            
+            console.log(`💾 Buffer JPG generado: ${jpgBuffer.length} bytes`);
+            
+            // Escribir archivo temporal
+            fs.writeFileSync(tempPath, jpgBuffer);
+            console.log(`📝 Archivo temporal creado: ${tempFilename}`);
+            
+            // Operación atómica: eliminar archivo anterior y renombrar
+            if (fs.existsSync(finalPath)) {
+                fs.unlinkSync(finalPath);
+                console.log(`🗑️ Archivo anterior eliminado: ${filename}`);
             }
             
-            // Guardar directamente sin redimensionar
-            const outPath = path.join(patternsDir, filename);
-            fs.writeFileSync(outPath, buffer);
-            
+            fs.renameSync(tempPath, finalPath);
             console.log(`✅ Canvas completo guardado: ${filename}`);
             console.log(`📐 Dimensiones finales: ${img.width}x${img.height}`);
+            
+            // Verificar el archivo guardado
+            const stats = fs.statSync(finalPath);
+            const timestamp = new Date().toISOString();
+            console.log(`📊 Archivo verificado - Size: ${stats.size} bytes, Modified: ${stats.mtime}`);
+            console.log(`⏰ Timestamp de guardado: ${timestamp}`);
             
             // SOLO enviar newPatternReady - NO imageUpdated para evitar eventos duplicados
             io.emit('newPatternReady', {
@@ -530,7 +679,9 @@ io.on('connection', (socket) => {
             socket.emit('canvasSaved', {
                 success: true,
                 filename: filename,
-                timestamp: Date.now()
+                timestamp: timestamp,
+                fileSize: stats.size,
+                filePath: finalPath
             });
             
         } catch (error) {
@@ -626,6 +777,32 @@ io.on('connection', (socket) => {
         } catch (error) {
             console.error('❌ Error applying processed image:', error);
             socket.emit('processedImageApplied', { success: false, message: 'Error al aplicar imagen procesada: ' + error.message });
+        }
+    });
+
+    // Manejar guardado de wallpaper desde screen.html
+    socket.on('saveWallpaper', (data) => {
+        try {
+            console.log('💾 Guardando wallpaper desde screen.html...');
+            
+            if (!data.imageData) {
+                console.error('❌ No hay datos de imagen para guardar');
+                return;
+            }
+            
+            // Decodificar la imagen base64
+            const base64Data = data.imageData.replace(/^data:image\/png;base64,/, '');
+            const imageBuffer = Buffer.from(base64Data, 'base64');
+            
+            // Guardar en la carpeta patterns
+            const filename = `wallpaper_3screens_${data.timestamp || Date.now()}.png`;
+            const outputPath = path.join(__dirname, 'patterns', filename);
+            
+            fs.writeFileSync(outputPath, imageBuffer);
+            console.log(`✅ Wallpaper de 3 pantallas guardado: ${filename}`);
+            
+        } catch (error) {
+            console.error('❌ Error guardando wallpaper:', error);
         }
     });
 

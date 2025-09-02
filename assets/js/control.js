@@ -1,5 +1,23 @@
 /**
- * CONTROL PANEL - MAIN JAVASCRIPT
+ * CONTROL PANconst elements = {
+    patternType: null,
+    repetitionX: null,
+    repetitionY: null,
+    separationX: null,
+    separationY: null,
+    spacingX: null,
+    spacingY: null,
+    patternSize: null,
+    rotation: null,
+    zoom: null,
+    perfumeSpacingH: null,
+    perfumeSpacingV: null,
+    perfumeSizeFactor: null,
+    backgroundColor: null,
+    toggleWallpaper: null,
+    savePattern: null,
+    screensGrid: null
+};RIPT
  * Lógica principal del panel de control multi-pantalla
  * Maneja WebSocket, configuración general, pantallas y UI
  */
@@ -21,6 +39,9 @@ const elements = {
     repetitionX: null,
     repetitionY: null,
     separationX: null,
+    separationY: null,
+    spacingX: null,
+    spacingY: null,
     patternSize: null,
     rotation: null,
     zoom: null,
@@ -30,7 +51,23 @@ const elements = {
     backgroundColor: null,
     toggleWallpaper: null,
     savePattern: null,
-    screensGrid: null
+    screensGrid: null,
+    // Controles de imágenes superpuestas
+    overlayCountX: null,
+    overlayCountY: null,
+    overlayOffsetX: null,
+    overlayOffsetY: null,
+    overlaySize: null,
+    overlaySpacingX: null,
+    overlaySpacingY: null,
+    overlayRowOffsetX: null,
+    overlayRowOffsetY: null,
+    overlayColOffsetX: null,
+    overlayColOffsetY: null,
+    overlayAlternateRowX: null,
+    overlayAlternateRowY: null,
+    overlayAlternateColX: null,
+    overlayAlternateColY: null
 };
 
 // Valores mostrados
@@ -38,12 +75,31 @@ const values = {
     repetitionXValue: null,
     repetitionYValue: null,
     separationXValue: null,
+    separationYValue: null,
+    spacingXValue: null,
+    spacingYValue: null,
     sizeValue: null,
     rotationValue: null,
     zoomValue: null,
     perfumeSpacingHValue: null,
     perfumeSpacingVValue: null,
     perfumeSizeFactorValue: null,
+    // Valores de imágenes superpuestas
+    overlayCountXValue: null,
+    overlayCountYValue: null,
+    overlayOffsetXValue: null,
+    overlayOffsetYValue: null,
+    overlaySizeValue: null,
+    overlaySpacingXValue: null,
+    overlaySpacingYValue: null,
+    overlayRowOffsetXValue: null,
+    overlayRowOffsetYValue: null,
+    overlayColOffsetXValue: null,
+    overlayColOffsetYValue: null,
+    overlayAlternateRowXValue: null,
+    overlayAlternateRowYValue: null,
+    overlayAlternateColXValue: null,
+    overlayAlternateColYValue: null
 };
 
 let backgroundRgb = null;
@@ -70,6 +126,8 @@ function initializeControlPanel() {
     
     // Configurar botones de selección de imagen
     setupImageSelectionButtons();
+    // Configurar selección de fuente de patrón
+    setupPatternSourceButtons();
     
     // Configurar controles
     setupGeneralControls();
@@ -90,6 +148,9 @@ function initializeDOMElements() {
     elements.repetitionX = document.getElementById('repetitionX');
     elements.repetitionY = document.getElementById('repetitionY');
     elements.separationX = document.getElementById('separationX');
+    elements.separationY = document.getElementById('separationY');
+    elements.spacingX = document.getElementById('spacingX');
+    elements.spacingY = document.getElementById('spacingY');
     elements.patternSize = document.getElementById('patternSize');
     elements.rotation = document.getElementById('rotation');
     elements.zoom = document.getElementById('zoom');
@@ -101,16 +162,53 @@ function initializeDOMElements() {
     elements.savePattern = document.getElementById('savePattern');
     elements.screensGrid = document.getElementById('screensGrid');
 
+    // Elementos de imágenes superpuestas
+    elements.overlayCountX = document.getElementById('overlayCountX');
+    elements.overlayCountY = document.getElementById('overlayCountY');
+    elements.overlayOffsetX = document.getElementById('overlayOffsetX');
+    elements.overlayOffsetY = document.getElementById('overlayOffsetY');
+    elements.overlaySize = document.getElementById('overlaySize');
+    elements.overlaySpacingX = document.getElementById('overlaySpacingX');
+    elements.overlaySpacingY = document.getElementById('overlaySpacingY');
+    elements.overlayRowOffsetX = document.getElementById('overlayRowOffsetX');
+    elements.overlayRowOffsetY = document.getElementById('overlayRowOffsetY');
+    elements.overlayColOffsetX = document.getElementById('overlayColOffsetX');
+    elements.overlayColOffsetY = document.getElementById('overlayColOffsetY');
+    elements.overlayAlternateRowX = document.getElementById('overlayAlternateRowX');
+    elements.overlayAlternateRowY = document.getElementById('overlayAlternateRowY');
+    elements.overlayAlternateColX = document.getElementById('overlayAlternateColX');
+    elements.overlayAlternateColY = document.getElementById('overlayAlternateColY');
+
     // Valores mostrados
     values.repetitionXValue = document.getElementById('repetitionXValue');
     values.repetitionYValue = document.getElementById('repetitionYValue');
     values.separationXValue = document.getElementById('separationXValue');
+    values.separationYValue = document.getElementById('separationYValue');
+    values.spacingXValue = document.getElementById('spacingXValue');
+    values.spacingYValue = document.getElementById('spacingYValue');
     values.sizeValue = document.getElementById('sizeValue');
     values.rotationValue = document.getElementById('rotationValue');
     values.zoomValue = document.getElementById('zoomValue');
     values.perfumeSpacingHValue = document.getElementById('perfumeSpacingHValue');
     values.perfumeSpacingVValue = document.getElementById('perfumeSpacingVValue');
     values.perfumeSizeFactorValue = document.getElementById('perfumeSizeFactorValue');
+
+    // Valores de imágenes superpuestas
+    values.overlayCountXValue = document.getElementById('overlayCountXValue');
+    values.overlayCountYValue = document.getElementById('overlayCountYValue');
+    values.overlayOffsetXValue = document.getElementById('overlayOffsetXValue');
+    values.overlayOffsetYValue = document.getElementById('overlayOffsetYValue');
+    values.overlaySizeValue = document.getElementById('overlaySizeValue');
+    values.overlaySpacingXValue = document.getElementById('overlaySpacingXValue');
+    values.overlaySpacingYValue = document.getElementById('overlaySpacingYValue');
+    values.overlayRowOffsetXValue = document.getElementById('overlayRowOffsetXValue');
+    values.overlayRowOffsetYValue = document.getElementById('overlayRowOffsetYValue');
+    values.overlayColOffsetXValue = document.getElementById('overlayColOffsetXValue');
+    values.overlayColOffsetYValue = document.getElementById('overlayColOffsetYValue');
+    values.overlayAlternateRowXValue = document.getElementById('overlayAlternateRowXValue');
+    values.overlayAlternateRowYValue = document.getElementById('overlayAlternateRowYValue');
+    values.overlayAlternateColXValue = document.getElementById('overlayAlternateColXValue');
+    values.overlayAlternateColYValue = document.getElementById('overlayAlternateColYValue');
 
     // Elemento RGB
     backgroundRgb = document.getElementById('backgroundRgb');
@@ -174,9 +272,9 @@ function setupWebSocket() {
         updateWallpaperButtonState(state.wallpaper?.isActive || false);
         updateUI();
 
-        // Initialize pattern preview thumb to current processed pattern (with fallback on server)
-        const patThumb = document.getElementById('patternPreviewThumb');
-        if (patThumb) patThumb.src = `/processed/processed.png?t=${Date.now()}`;
+    // Initialize pattern preview thumb based on source
+    const patThumb = document.getElementById('patternPreviewThumb');
+    if (patThumb) patThumb.src = resolvePatternPreviewSrc(state?.general?.patternSource || 'processed');
         const tsEl = document.getElementById('patternLastUpdated');
         if (tsEl) tsEl.textContent = 'inicializado';
     });
@@ -199,6 +297,13 @@ function setupWebSocket() {
         if (selThumb) selThumb.src = `/${selectedImage}.png`;
     });
 
+    // Reflejar cambio de fuente de patrón
+    socket.on('patternSourceChanged', ({ source }) => {
+        updatePatternSourceUI(source);
+        const patThumb = document.getElementById('patternPreviewThumb');
+        if (patThumb) patThumb.src = resolvePatternPreviewSrc(source);
+    });
+
     // When a new processed pattern is applied, refresh the preview
     socket.on('imageUpdated', (data) => {
         const patThumb = document.getElementById('patternPreviewThumb');
@@ -218,6 +323,10 @@ function loadGeneralConfig(config) {
     if (elements.patternType) elements.patternType.value = config.patternType || 'organic-complex';
     if (elements.repetitionX) elements.repetitionX.value = config.repetitionX || 13;
     if (elements.repetitionY) elements.repetitionY.value = config.repetitionY || 12;
+    if (elements.separationX) elements.separationX.value = config.separationX || 300;
+    if (elements.separationY) elements.separationY.value = config.separationY || 300;
+    if (elements.spacingX) elements.spacingX.value = config.spacingX || 0;
+    if (elements.spacingY) elements.spacingY.value = config.spacingY || 0;
     if (elements.patternSize) elements.patternSize.value = config.patternSize || 300;
     if (elements.rotation) elements.rotation.value = config.rotation || 0;
     if (elements.zoom) elements.zoom.value = config.zoom || 2.3;
@@ -226,13 +335,38 @@ function loadGeneralConfig(config) {
     if (elements.perfumeSizeFactor) elements.perfumeSizeFactor.value = config.perfumeSizeFactor || 0.85;
     if (elements.backgroundColor) elements.backgroundColor.value = config.backgroundColor || '#F5DDC7';
     
+    // Cargar configuración de overlay
+    const overlayConfig = config.overlayImages || {};
+    if (elements.overlayCountX) elements.overlayCountX.value = overlayConfig.countX || 3;
+    if (elements.overlayCountY) elements.overlayCountY.value = overlayConfig.countY || 2;
+    if (elements.overlayOffsetX) elements.overlayOffsetX.value = overlayConfig.offsetX || 0;
+    if (elements.overlayOffsetY) elements.overlayOffsetY.value = overlayConfig.offsetY || 0;
+    if (elements.overlaySize) elements.overlaySize.value = overlayConfig.size || 200;
+    if (elements.overlaySpacingX) elements.overlaySpacingX.value = overlayConfig.spacingX || 800;
+    if (elements.overlaySpacingY) elements.overlaySpacingY.value = overlayConfig.spacingY || 600;
+    if (elements.overlayRowOffsetX) elements.overlayRowOffsetX.value = overlayConfig.rowOffsetX || 0;
+    if (elements.overlayRowOffsetY) elements.overlayRowOffsetY.value = overlayConfig.rowOffsetY || 0;
+    if (elements.overlayColOffsetX) elements.overlayColOffsetX.value = overlayConfig.colOffsetX || 0;
+    if (elements.overlayColOffsetY) elements.overlayColOffsetY.value = overlayConfig.colOffsetY || 0;
+    if (elements.overlayAlternateRowX) elements.overlayAlternateRowX.value = overlayConfig.alternateRowX || 0;
+    if (elements.overlayAlternateRowY) elements.overlayAlternateRowY.value = overlayConfig.alternateRowY || 0;
+    if (elements.overlayAlternateColX) elements.overlayAlternateColX.value = overlayConfig.alternateColX || 0;
+    if (elements.overlayAlternateColY) elements.overlayAlternateColY.value = overlayConfig.alternateColY || 0;
+    
     updateBackgroundRgb(elements.backgroundColor?.value);
 }
 
 function setupGeneralControls() {
     const generalControls = [
-        'patternType', 'repetitionX', 'repetitionY', 'separationX', 'patternSize', 
+        'patternType', 'repetitionX', 'repetitionY', 'separationX', 'separationY', 'spacingX', 'spacingY', 'patternSize', 
         'rotation', 'zoom', 'perfumeSpacingH', 'perfumeSpacingV', 'perfumeSizeFactor'
+    ];
+
+    const overlayControls = [
+        'overlayCountX', 'overlayCountY', 'overlayOffsetX', 'overlayOffsetY', 
+        'overlaySize', 'overlaySpacingX', 'overlaySpacingY',
+        'overlayRowOffsetX', 'overlayRowOffsetY', 'overlayColOffsetX', 'overlayColOffsetY',
+        'overlayAlternateRowX', 'overlayAlternateRowY', 'overlayAlternateColX', 'overlayAlternateColY'
     ];
 
     generalControls.forEach(controlName => {
@@ -242,6 +376,64 @@ function setupGeneralControls() {
                 const config = { [controlName]: e.target.value };
                 socket?.emit('updateGeneralConfig', config);
                 updateUI();
+            });
+        }
+    });
+
+    // Configurar controles de overlay con estructura anidada
+    overlayControls.forEach(controlName => {
+        const element = elements[controlName];
+        if (element) {
+            element.addEventListener('input', (e) => {
+                // Mapear nombres de controles a propiedades de overlayImages
+                const controlMap = {
+                    'overlayCountX': 'countX',
+                    'overlayCountY': 'countY',
+                    'overlayOffsetX': 'offsetX',
+                    'overlayOffsetY': 'offsetY',
+                    'overlaySize': 'size',
+                    'overlaySpacingX': 'spacingX',
+                    'overlaySpacingY': 'spacingY',
+                    'overlayRowOffsetX': 'rowOffsetX',
+                    'overlayRowOffsetY': 'rowOffsetY',
+                    'overlayColOffsetX': 'colOffsetX',
+                    'overlayColOffsetY': 'colOffsetY',
+                    'overlayAlternateRowX': 'alternateRowX',
+                    'overlayAlternateRowY': 'alternateRowY',
+                    'overlayAlternateColX': 'alternateColX',
+                    'overlayAlternateColY': 'alternateColY'
+                };
+                
+                const overlayKey = controlMap[controlName];
+                if (overlayKey) {
+                    // Obtener valores actuales de todos los controles de overlay para preservarlos
+                    const currentOverlayConfig = {
+                        countX: parseInt(elements.overlayCountX?.value) || 3,
+                        countY: parseInt(elements.overlayCountY?.value) || 2,
+                        offsetX: parseInt(elements.overlayOffsetX?.value) || 0,
+                        offsetY: parseInt(elements.overlayOffsetY?.value) || 0,
+                        size: parseInt(elements.overlaySize?.value) || 200,
+                        spacingX: parseInt(elements.overlaySpacingX?.value) || 800,
+                        spacingY: parseInt(elements.overlaySpacingY?.value) || 600,
+                        rowOffsetX: parseInt(elements.overlayRowOffsetX?.value) || 0,
+                        rowOffsetY: parseInt(elements.overlayRowOffsetY?.value) || 0,
+                        colOffsetX: parseInt(elements.overlayColOffsetX?.value) || 0,
+                        colOffsetY: parseInt(elements.overlayColOffsetY?.value) || 0,
+                        alternateRowX: parseInt(elements.overlayAlternateRowX?.value) || 0,
+                        alternateRowY: parseInt(elements.overlayAlternateRowY?.value) || 0,
+                        alternateColX: parseInt(elements.overlayAlternateColX?.value) || 0,
+                        alternateColY: parseInt(elements.overlayAlternateColY?.value) || 0
+                    };
+                    
+                    // Actualizar solo el valor que cambió
+                    currentOverlayConfig[overlayKey] = parseInt(e.target.value) || 0;
+                    
+                    const config = { 
+                        overlayImages: currentOverlayConfig
+                    };
+                    socket?.emit('updateGeneralConfig', config);
+                    updateUI();
+                }
             });
         }
     });
@@ -334,6 +526,15 @@ function updateUI() {
     if (values.separationXValue && elements.separationX) {
         values.separationXValue.textContent = elements.separationX.value + 'px';
     }
+    if (values.separationYValue && elements.separationY) {
+        values.separationYValue.textContent = elements.separationY.value + 'px';
+    }
+    if (values.spacingXValue && elements.spacingX) {
+        values.spacingXValue.textContent = elements.spacingX.value + 'px';
+    }
+    if (values.spacingYValue && elements.spacingY) {
+        values.spacingYValue.textContent = elements.spacingY.value + 'px';
+    }
     if (values.sizeValue && elements.patternSize) {
         values.sizeValue.textContent = elements.patternSize.value + 'px';
     }
@@ -351,6 +552,53 @@ function updateUI() {
     }
     if (values.perfumeSizeFactorValue && elements.perfumeSizeFactor) {
         values.perfumeSizeFactorValue.textContent = Math.round(elements.perfumeSizeFactor.value * 100) + '%';
+    }
+    
+    // Actualizar valores de overlay
+    if (values.overlayCountXValue && elements.overlayCountX) {
+        values.overlayCountXValue.textContent = elements.overlayCountX.value;
+    }
+    if (values.overlayCountYValue && elements.overlayCountY) {
+        values.overlayCountYValue.textContent = elements.overlayCountY.value;
+    }
+    if (values.overlayOffsetXValue && elements.overlayOffsetX) {
+        values.overlayOffsetXValue.textContent = elements.overlayOffsetX.value + 'px';
+    }
+    if (values.overlayOffsetYValue && elements.overlayOffsetY) {
+        values.overlayOffsetYValue.textContent = elements.overlayOffsetY.value + 'px';
+    }
+    if (values.overlaySizeValue && elements.overlaySize) {
+        values.overlaySizeValue.textContent = elements.overlaySize.value + 'px';
+    }
+    if (values.overlaySpacingXValue && elements.overlaySpacingX) {
+        values.overlaySpacingXValue.textContent = elements.overlaySpacingX.value + 'px';
+    }
+    if (values.overlaySpacingYValue && elements.overlaySpacingY) {
+        values.overlaySpacingYValue.textContent = elements.overlaySpacingY.value + 'px';
+    }
+    if (values.overlayRowOffsetXValue && elements.overlayRowOffsetX) {
+        values.overlayRowOffsetXValue.textContent = elements.overlayRowOffsetX.value + 'px';
+    }
+    if (values.overlayRowOffsetYValue && elements.overlayRowOffsetY) {
+        values.overlayRowOffsetYValue.textContent = elements.overlayRowOffsetY.value + 'px';
+    }
+    if (values.overlayColOffsetXValue && elements.overlayColOffsetX) {
+        values.overlayColOffsetXValue.textContent = elements.overlayColOffsetX.value + 'px';
+    }
+    if (values.overlayColOffsetYValue && elements.overlayColOffsetY) {
+        values.overlayColOffsetYValue.textContent = elements.overlayColOffsetY.value + 'px';
+    }
+    if (values.overlayAlternateRowXValue && elements.overlayAlternateRowX) {
+        values.overlayAlternateRowXValue.textContent = elements.overlayAlternateRowX.value + 'px';
+    }
+    if (values.overlayAlternateRowYValue && elements.overlayAlternateRowY) {
+        values.overlayAlternateRowYValue.textContent = elements.overlayAlternateRowY.value + 'px';
+    }
+    if (values.overlayAlternateColXValue && elements.overlayAlternateColX) {
+        values.overlayAlternateColXValue.textContent = elements.overlayAlternateColX.value + 'px';
+    }
+    if (values.overlayAlternateColYValue && elements.overlayAlternateColY) {
+        values.overlayAlternateColYValue.textContent = elements.overlayAlternateColY.value + 'px';
     }
     
     updateBackgroundRgb(elements.backgroundColor?.value);
@@ -490,6 +738,22 @@ function setupImageSelectionButtons() {
         });
     });
     
+    // Configurar botones específicos de overlay
+    const overlayImageButtons = document.querySelectorAll('.overlay-image-btn');
+    overlayImageButtons.forEach(btn => {
+        btn.addEventListener('click', () => {
+            const imageType = btn.dataset.image;
+            
+            // Remover clase selected de todos los botones overlay
+            overlayImageButtons.forEach(b => b.classList.remove('selected'));
+            // Agregar clase selected al botón clickeado
+            btn.classList.add('selected');
+            
+            // Seleccionar imagen para overlay
+            selectImage(imageType);
+        });
+    });
+    
     // Inicializar selección por defecto
     updateImageSelection();
 }
@@ -523,6 +787,8 @@ function setupKeyboardControls() {
                 console.warn('Funciones de proceso automático no disponibles');
             }
         }
+    // Tecla rápida para cambiar a fuente procesada
+    else if (e.key === 'p' || e.key === 'P') { setPatternSource('processed'); }
     });
 }
 
@@ -570,6 +836,40 @@ function updateImageSelection() {
             btn.classList.add('selected');
         }
     });
+}
+
+// ==============================
+// SELECCIÓN DE FUENTE DE PATRÓN
+// ==============================
+
+function setupPatternSourceButtons() {
+    const btns = document.querySelectorAll('.pattern-source-btn');
+    btns.forEach(btn => {
+        btn.addEventListener('click', () => setPatternSource(btn.dataset.source));
+    });
+    // Inicial según estado global si existe
+    updatePatternSourceUI(window.initialPatternSource || 'processed');
+}
+
+function setPatternSource(source) {
+    // Solo permitir "processed"
+    if (source !== 'processed') return;
+    if (socket && socket.connected) socket.emit('setPatternSource', { source });
+    updatePatternSourceUI(source);
+    const patThumb = document.getElementById('patternPreviewThumb');
+    if (patThumb) patThumb.src = resolvePatternPreviewSrc(source);
+}
+
+function updatePatternSourceUI(source) {
+    const btns = document.querySelectorAll('.pattern-source-btn');
+    btns.forEach(b => {
+        b.classList.toggle('selected', b.dataset.source === source);
+    });
+}
+
+function resolvePatternPreviewSrc(source) {
+    // Solo manejar "processed"
+    return `/processed/processed.png?t=${Date.now()}`;
 }
 
 // ==============================
@@ -637,12 +937,103 @@ function zeroAllOffsets() {
 window.zeroAllOffsets = zeroAllOffsets;
 
 // ==============================
+// BRUSH REVEAL FUNCTIONS
+// ==============================
+
+function initializeBrushRevealControls() {
+    console.log('🎨 Inicializando controles de Brush Reveal...');
+    
+    // Configurar sliders de offset para brush-reveal
+    for (let i = 1; i <= 9; i++) {
+        const offsetSlider = document.getElementById(`brushOffset${i}X`);
+        const offsetValue = document.getElementById(`brushOffset${i}XValue`);
+        
+        if (offsetSlider && offsetValue) {
+            offsetSlider.addEventListener('input', (e) => {
+                const value = parseInt(e.target.value);
+                offsetValue.textContent = `${value}px`;
+                
+                // Enviar actualización al servidor
+                updateBrushRevealOffset(i, value, 0); // Y siempre es 0 por ahora
+            });
+            
+            // Inicializar display
+            offsetValue.textContent = `${offsetSlider.value}px`;
+        }
+    }
+}
+
+function updateBrushRevealOffset(brushId, offsetX, offsetY) {
+    if (socket) {
+        const config = { offsetX: offsetX, offsetY: offsetY };
+        
+        fetch(`/api/brush-reveal/${brushId}`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify(config)
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                console.log(`🎨 Brush Reveal ${brushId} offset actualizado - X: ${offsetX}, Y: ${offsetY}`);
+            } else {
+                console.error(`❌ Error actualizando Brush Reveal ${brushId}:`, data.error);
+            }
+        })
+        .catch(error => {
+            console.error(`❌ Error enviando actualización a Brush Reveal ${brushId}:`, error);
+        });
+    }
+}
+
+function openAllBrushReveals() {
+    console.log('🎨 Abriendo todos los Brush Reveals...');
+    
+    for (let i = 1; i <= 9; i++) {
+        const url = `/brush-reveal/${i}`;
+        window.open(url, `brush-reveal-${i}`, 'width=1920,height=1080');
+        console.log(`🎨 Abriendo Brush Reveal ${i}: ${url}`);
+    }
+}
+
+function resetBrushOffsets() {
+    console.log('↺ Reseteando todos los offsets de Brush Reveal...');
+    
+    // Valores por defecto: repetir el patrón de 3 secciones
+    const defaultOffsets = [0, 2160, 4320]; // Para las 3 secciones del wallpaper
+    
+    for (let i = 1; i <= 9; i++) {
+        const offsetSlider = document.getElementById(`brushOffset${i}X`);
+        const offsetValue = document.getElementById(`brushOffset${i}XValue`);
+        
+        // Calcular offset por defecto (rotar entre las 3 secciones)
+        const defaultOffset = defaultOffsets[(i - 1) % 3];
+        
+        if (offsetSlider && offsetValue) {
+            offsetSlider.value = defaultOffset;
+            offsetValue.textContent = `${defaultOffset}px`;
+            updateBrushRevealOffset(i, defaultOffset, 0);
+        }
+    }
+}
+
+// Hacer funciones accesibles globalmente para los botones
+window.openAllBrushReveals = openAllBrushReveals;
+window.resetBrushOffsets = resetBrushOffsets;
+
+// ==============================
 // INICIALIZACIÓN AUTOMÁTICA
 // ==============================
 
 // Inicializar cuando el DOM esté listo
 if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', initializeControlPanel);
+    document.addEventListener('DOMContentLoaded', () => {
+        initializeControlPanel();
+        initializeBrushRevealControls();
+    });
 } else {
     initializeControlPanel();
+    initializeBrushRevealControls();
 }

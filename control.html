@@ -8,25 +8,7 @@
     <!-- Estilos -->
     <link rel="stylesheet" href="assets/css/control.css">
     
-    <!-- OpenCV.js Configuration -->
-    <script>
-        // Configuración global para OpenCV
-        function updateOpenCVStatus(message, type = 'normal') {
-            const statusDiv = document.getElementById('opencvStatus');
-            if (statusDiv) {
-                statusDiv.textContent = message;
-                statusDiv.className = `opencv-status ${type}`;
-            }
-        }
-        
-        function onOpenCvReady() {
-            console.log('OpenCV.js is ready!');
-            // La lógica principal está en opencv-processor.js
-            if (window.onOpenCvReady) {
-                window.onOpenCvReady();
-            }
-        }
-    </script>
+
 </head>
 <body>
     <div class="container">
@@ -37,108 +19,29 @@
             🔌 Conectando al servidor...
         </div>
 
-        <!-- Sección OpenCV -->
-        <div class="section opencv-section">
-            <h2>📷 OpenCV - Procesamiento Automático desde /captura</h2>
-            
-            <div id="opencvStatus" class="opencv-status">
-                ⏳ Cargando OpenCV.js...
-            </div>
-            
-            <div class="opencv-controls">
-                <div class="opencv-input-area">
-                    <h3>⚡ Proceso Automático</h3>
-                    <div class="auto-process-info">
-                        <p><strong>📁 Carpeta de origen:</strong> /captura</p>
-                        <p><strong>🖼️ Selección de imagen:</strong> Teclas <kbd>1</kbd> <kbd>2</kbd> <kbd>3</kbd></p>
-                        <p><strong>⌨️ Activación del proceso:</strong> Presiona la tecla <kbd>9</kbd></p>
-                        <p><strong>🔄 Proceso:</strong> Escaneo → Detección → Cropeo → Filtrado → Guardado</p>
-                        <p><strong>🎨 Brush Reveal:</strong> Automáticamente colorea el nuevo patrón por encima</p>
-                    </div>
-                    
-                    <div class="image-selection-info">
-                        <h4>🖼️ Imagen Seleccionada:</h4>
-                        <div class="selected-image-display">
-                            <span id="selectedImageName">red.png</span>
-                            <div class="image-buttons">
-                                <button class="image-btn selected" data-image="red">🔴 Red (1)</button>
-                                <button class="image-btn" data-image="pink">🌸 Pink (2)</button>
-                                <button class="image-btn" data-image="blue">🔵 Blue (3)</button>
-                            </div>
-                        </div>
-                    </div>
-                    
-                    <div class="process-status" id="processStatus">
-                        🔍 Selecciona imagen (1-3) y presiona "9" para escanear /captura, procesar y enviar a Brush Reveal
-                    </div>
-
-                    <!-- Estado actual: vista rápida de imagen elegida y último patrón aplicado -->
-                    <div class="status-widget" id="statusWidget">
-                        <h4>📌 Estado actual</h4>
-                        <div class="status-row">
-                            <div class="status-item">
-                                <div class="status-label">Imagen elegida</div>
-                                <img id="selectedImageThumb" class="status-thumb" alt="Imagen seleccionada" />
-                            </div>
-                            <div class="status-item">
-                                <div class="status-label">Último pattern aplicado</div>
-                                <img id="patternPreviewThumb" class="status-thumb" alt="Pattern aplicado" />
-                                <div class="status-timestamp">Actualizado: <span id="patternLastUpdated">—</span></div>
-                            </div>
-                        </div>
-                    </div>
-                    
-                    <img id="imagePreview" class="image-preview-small" style="display: none;" alt="Vista previa">
-                    
-                    <details class="detection-parameters" id="detectionParams">
-                        <summary class="detection-summary">⚙️ Parámetros de Detección y Cropeo</summary>
-                        <div class="parameters-content">
-                            <div class="control-group">
-                                <label for="thresholdValue">🎯 Umbral de Detección: <span id="thresholdDisplay" class="range-display">200</span></label>
-                                <input type="range" id="thresholdValue" min="50" max="255" value="200">
-                            </div>
-                            
-                            <div class="control-group">
-                                <label for="minAreaValue">📏 Área Mínima: <span id="minAreaDisplay" class="range-display">1000</span></label>
-                                <input type="range" id="minAreaValue" min="500" max="5000" value="1000">
-                            </div>
-                            
-                            <div class="control-group">
-                                <label for="epsilonValue">🔧 Precisión Epsilon: <span id="epsilonDisplay" class="range-display">0.020</span></label>
-                                <input type="range" id="epsilonValue" min="0.005" max="0.1" step="0.005" value="0.02">
-                            </div>
-                            
-                            <div class="control-group">
-                                <label for="aspectRatioTolerance">📐 Tolerancia Aspecto: <span id="aspectRatioDisplay" class="range-display">2.0</span></label>
-                                <input type="range" id="aspectRatioTolerance" min="1.0" max="5.0" step="0.1" value="2.0">
-                            </div>
-                            
-                            <button id="manualProcessButton" class="process-button" onclick="manualProcessFromCaptura()" disabled>
-                                🔄 Procesar Manualmente desde /captura (Tecla 9)
-                            </button>
-                        </div>
-                    </details>
-                </div>
-                
-                <div class="opencv-output-area">
-                    <h3>📊 Resultados</h3>
-                    
-                    <div class="result-container-small">
-                        <h4>🎯 Detección</h4>
-                        <canvas id="detectionCanvas" class="result-canvas-small"></canvas>
-                    </div>
-                    
-                    <div class="result-container-small">
-                        <h4>✅ Imagen Corregida</h4>
-                        <canvas id="correctedCanvas" class="result-canvas-small"></canvas>
-                    </div>
-                </div>
-            </div>
-        </div>
-
         <!-- Configuración General -->
         <div class="section">
             <h2>⚙️ Configuración General</h2>
+            <div class="control-group" style="margin-bottom:12px;">
+                <label>🧩 Fuente del Patrón (pantallas):</label>
+                <div class="image-buttons">
+                    <button class="image-btn pattern-source-btn selected" data-source="processed">🧪 Procesado (P)</button>
+                </div>
+                <small style="color:#666;">Las pantallas cargarán desde la imagen procesada.</small>
+            </div>
+            
+            <div class="control-group" style="margin-bottom:12px;">
+                <label>🎨 Rotación Automática Brush Reveal:</label>
+                <div class="auto-rotation-controls">
+                    <button id="autoRotationBtn" class="image-btn" data-active="false">
+                        � Auto-Rotación OFF
+                    </button>
+                    <div class="rotation-status" id="rotationStatus" style="margin-top: 8px; font-size: 12px; color: #666;">
+                        Rotación desactivada
+                    </div>
+                </div>
+                <small style="color:#666;">Cada 1 minuto cambia entre amarillo.jpg, rojo.jpg, azul.jpg para colorear encima en Brush Reveal.</small>
+            </div>
             <div class="controls-grid">
                 <div class="control-group">
                     <label for="patternType">🎨 Tipo de Patrón:</label>
@@ -175,8 +78,23 @@
                 </div>
 
                 <div class="control-group">
+                    <label for="separationY">↕️ Separación Y: <span id="separationYValue" class="range-display">300px</span></label>
+                    <input type="range" id="separationY" min="50" max="1000" value="300">
+                </div>
+
+                <div class="control-group">
+                    <label for="spacingX">📏 Espaciado Patrón X: <span id="spacingXValue" class="range-display">0px</span></label>
+                    <input type="range" id="spacingX" min="0" max="500" value="0">
+                </div>
+
+                <div class="control-group">
+                    <label for="spacingY">📏 Espaciado Patrón Y: <span id="spacingYValue" class="range-display">0px</span></label>
+                    <input type="range" id="spacingY" min="0" max="500" value="0">
+                </div>
+
+                <div class="control-group">
                     <label for="patternSize">📏 Tamaño del Patrón: <span id="sizeValue" class="range-display">300px</span></label>
-                    <input type="range" id="patternSize" min="50" max="500" value="300">
+                    <input type="range" id="patternSize" min="50" max="1000" value="300">
                 </div>
 
                 <div class="control-group">
@@ -207,6 +125,99 @@
                 <div class="control-group">
                     <label for="backgroundColor">🎨 Color de Fondo: <span id="backgroundRgb" class="range-display">RGB: 245, 221, 199</span></label>
                     <input type="color" id="backgroundColor" value="#F5DDC7">
+                </div>
+            </div>
+        </div>
+
+        <!-- Control de Imágenes Superpuestas -->
+        <div class="section">
+            <h2>🖼️ Control de Imágenes Superpuestas</h2>
+            <p style="margin-bottom: 15px; color: #666; font-size: 14px;">
+                Controla la cantidad, posición y tamaño de las imágenes superpuestas (blue.png, red.png, pink.png) que se muestran encima del patrón.
+            </p>
+            <div class="controls-grid">
+                <div class="control-group">
+                    <label for="overlayCountX">🔢 Cantidad X: <span id="overlayCountXValue" class="range-display">3</span></label>
+                    <input type="range" id="overlayCountX" min="1" max="10" value="3">
+                </div>
+
+                <div class="control-group">
+                    <label for="overlayCountY">🔢 Cantidad Y: <span id="overlayCountYValue" class="range-display">2</span></label>
+                    <input type="range" id="overlayCountY" min="1" max="8" value="2">
+                </div>
+
+                <div class="control-group">
+                    <label for="overlayOffsetX">↔️ Offset X: <span id="overlayOffsetXValue" class="range-display">0px</span></label>
+                    <input type="range" id="overlayOffsetX" min="-2000" max="2000" value="0" step="50">
+                </div>
+
+                <div class="control-group">
+                    <label for="overlayOffsetY">↕️ Offset Y: <span id="overlayOffsetYValue" class="range-display">0px</span></label>
+                    <input type="range" id="overlayOffsetY" min="-2000" max="2000" value="0" step="50">
+                </div>
+
+                <div class="control-group">
+                    <label for="overlaySize">📏 Tamaño: <span id="overlaySizeValue" class="range-display">200px</span></label>
+                    <input type="range" id="overlaySize" min="50" max="500" value="200">
+                </div>
+
+                <div class="control-group">
+                    <label for="overlaySpacingX">↔️ Espaciado X: <span id="overlaySpacingXValue" class="range-display">800px</span></label>
+                    <input type="range" id="overlaySpacingX" min="200" max="2000" value="800" step="50">
+                </div>
+
+                <div class="control-group">
+                    <label for="overlaySpacingY">↕️ Espaciado Y: <span id="overlaySpacingYValue" class="range-display">600px</span></label>
+                    <input type="range" id="overlaySpacingY" min="200" max="1500" value="600" step="50">
+                </div>
+
+                <div class="control-group">
+                    <label for="overlayRowOffsetX">🔀 Desfase Filas X: <span id="overlayRowOffsetXValue" class="range-display">0px</span></label>
+                    <input type="range" id="overlayRowOffsetX" min="-500" max="500" value="0" step="10">
+                </div>
+
+                <div class="control-group">
+                    <label for="overlayRowOffsetY">🔀 Desfase Filas Y: <span id="overlayRowOffsetYValue" class="range-display">0px</span></label>
+                    <input type="range" id="overlayRowOffsetY" min="-500" max="500" value="0" step="10">
+                </div>
+
+                <div class="control-group">
+                    <label for="overlayColOffsetX">🔀 Desfase Columnas X: <span id="overlayColOffsetXValue" class="range-display">0px</span></label>
+                    <input type="range" id="overlayColOffsetX" min="-500" max="500" value="0" step="10">
+                </div>
+
+                <div class="control-group">
+                    <label for="overlayColOffsetY">🔀 Desfase Columnas Y: <span id="overlayColOffsetYValue" class="range-display">0px</span></label>
+                    <input type="range" id="overlayColOffsetY" min="-500" max="500" value="0" step="10">
+                </div>
+
+                <div class="control-group">
+                    <label for="overlayAlternateRowX">🔄 Filas Alternas X: <span id="overlayAlternateRowXValue" class="range-display">0px</span></label>
+                    <input type="range" id="overlayAlternateRowX" min="-1000" max="1000" value="0" step="10">
+                </div>
+
+                <div class="control-group">
+                    <label for="overlayAlternateRowY">🔄 Filas Alternas Y: <span id="overlayAlternateRowYValue" class="range-display">0px</span></label>
+                    <input type="range" id="overlayAlternateRowY" min="-1000" max="1000" value="0" step="10">
+                </div>
+
+                <div class="control-group">
+                    <label for="overlayAlternateColX">🔄 Columnas Alternas X: <span id="overlayAlternateColXValue" class="range-display">0px</span></label>
+                    <input type="range" id="overlayAlternateColX" min="-1000" max="1000" value="0" step="10">
+                </div>
+
+                <div class="control-group">
+                    <label for="overlayAlternateColY">🔄 Columnas Alternas Y: <span id="overlayAlternateColYValue" class="range-display">0px</span></label>
+                    <input type="range" id="overlayAlternateColY" min="-1000" max="1000" value="0" step="10">
+                </div>
+
+                <div class="control-group">
+                    <label>🎨 Seleccionar Imagen:</label>
+                    <div class="image-buttons">
+                        <button class="image-btn overlay-image-btn selected" data-image="red">🔴 Roja</button>
+                        <button class="image-btn overlay-image-btn" data-image="blue">🔵 Azul</button>
+                        <button class="image-btn overlay-image-btn" data-image="pink">🩷 Rosa</button>
+                    </div>
                 </div>
             </div>
         </div>
@@ -273,6 +284,70 @@
             </div>
         </div>
 
+        <!-- Configuración Brush Reveal -->
+        <div class="section">
+            <h2>🎨 Configuración Brush Reveal (Secciones Wallpaper)</h2>
+            <p style="color: #666; margin-bottom: 15px;">
+                Controla las secciones del wallpaper.jpg (6480x3840) que usa cada brush-reveal.<br>
+                Cada sección es de 2160x3840 pixels. Accede a: /brush-reveal/1, /brush-reveal/2, etc.
+            </p>
+            <div class="offset-grid">
+                <div class="offset-control-group">
+                    <label>🎨 Brush 1 - Offset X:</label>
+                    <input type="range" id="brushOffset1X" min="0" max="4320" value="0" step="2160">
+                    <span id="brushOffset1XValue" class="offset-value">0px</span>
+                </div>
+                <div class="offset-control-group">
+                    <label>🎨 Brush 2 - Offset X:</label>
+                    <input type="range" id="brushOffset2X" min="0" max="4320" value="2160" step="2160">
+                    <span id="brushOffset2XValue" class="offset-value">2160px</span>
+                </div>
+                <div class="offset-control-group">
+                    <label>🎨 Brush 3 - Offset X:</label>
+                    <input type="range" id="brushOffset3X" min="0" max="4320" value="4320" step="2160">
+                    <span id="brushOffset3XValue" class="offset-value">4320px</span>
+                </div>
+                <div class="offset-control-group">
+                    <label>🎨 Brush 4 - Offset X:</label>
+                    <input type="range" id="brushOffset4X" min="0" max="4320" value="0" step="2160">
+                    <span id="brushOffset4XValue" class="offset-value">0px</span>
+                </div>
+                <div class="offset-control-group">
+                    <label>🎨 Brush 5 - Offset X:</label>
+                    <input type="range" id="brushOffset5X" min="0" max="4320" value="2160" step="2160">
+                    <span id="brushOffset5XValue" class="offset-value">2160px</span>
+                </div>
+                <div class="offset-control-group">
+                    <label>🎨 Brush 6 - Offset X:</label>
+                    <input type="range" id="brushOffset6X" min="0" max="4320" value="4320" step="2160">
+                    <span id="brushOffset6XValue" class="offset-value">4320px</span>
+                </div>
+                <div class="offset-control-group">
+                    <label>🎨 Brush 7 - Offset X:</label>
+                    <input type="range" id="brushOffset7X" min="0" max="4320" value="0" step="2160">
+                    <span id="brushOffset7XValue" class="offset-value">0px</span>
+                </div>
+                <div class="offset-control-group">
+                    <label>🎨 Brush 8 - Offset X:</label>
+                    <input type="range" id="brushOffset8X" min="0" max="4320" value="2160" step="2160">
+                    <span id="brushOffset8XValue" class="offset-value">2160px</span>
+                </div>
+                <div class="offset-control-group">
+                    <label>🎨 Brush 9 - Offset X:</label>
+                    <input type="range" id="brushOffset9X" min="0" max="4320" value="4320" step="2160">
+                    <span id="brushOffset9XValue" class="offset-value">4320px</span>
+                </div>
+            </div>
+            <div class="offset-buttons" style="margin-top: 15px;">
+                <button onclick="openAllBrushReveals()" style="background-color: #6f42c1; color: white; padding: 10px 20px; border: none; border-radius: 5px; cursor: pointer; margin-right: 10px;">
+                    🎨 Abrir Todos los Brush Reveals
+                </button>
+                <button onclick="resetBrushOffsets()" style="background-color: #dc3545; color: white; padding: 10px 20px; border: none; border-radius: 5px; cursor: pointer;">
+                    ↺ Resetear Offsets
+                </button>
+            </div>
+        </div>
+
         <!-- Abrir Pantallas -->
         <div class="section">
             <h2>🚀 Abrir Pantallas en Nuevas Pestañas</h2>
@@ -323,12 +398,133 @@
         // Verificar conexión cada 10 segundos (menos frecuente)
         const connectionCheckInterval = setInterval(ensureControlConnection, 10000);
         
+        // Sistema de rotación automática de imágenes para Brush Reveal
+        let autoRotationActive = false;
+        let rotationInterval = null;
+        let currentRotationIndex = 0;
+        const rotationImages = ['amarillo', 'rojo', 'azul'];
+        
+        function toggleAutoRotation() {
+            const btn = document.getElementById('autoRotationBtn');
+            const status = document.getElementById('rotationStatus');
+            
+            autoRotationActive = !autoRotationActive;
+            
+            if (autoRotationActive) {
+                btn.textContent = '🔄 Auto-Rotación ON';
+                btn.style.backgroundColor = '#28a745';
+                btn.style.color = 'white';
+                btn.setAttribute('data-active', 'true');
+                
+                // Iniciar rotación inmediatamente
+                rotateToNextImage();
+                
+                // Configurar intervalo de 1 minuto (60000 ms) para testing
+                rotationInterval = setInterval(rotateToNextImage, 60000);
+                
+                updateRotationStatus();
+                console.log('🎨 Auto-rotación activada - rotando cada 1 minuto entre:', rotationImages);
+            } else {
+                btn.textContent = '🔄 Auto-Rotación OFF';
+                btn.style.backgroundColor = '';
+                btn.style.color = '';
+                btn.setAttribute('data-active', 'false');
+                
+                if (rotationInterval) {
+                    clearInterval(rotationInterval);
+                    rotationInterval = null;
+                }
+                
+                status.textContent = 'Rotación desactivada';
+                console.log('🛑 Auto-rotación desactivada');
+            }
+        }
+        
+        function rotateToNextImage() {
+            const currentImage = rotationImages[currentRotationIndex];
+            console.log(`🎨 Rotando a imagen: ${currentImage}.jpg`);
+            console.log(`📡 Socket conectado:`, window.socket && window.socket.connected);
+            
+            // Enviar comando al brush-reveal para que use esta nueva imagen
+            if (window.socket && window.socket.connected) {
+                const payload = { 
+                    imageName: `${currentImage}.jpg`,
+                    imageType: currentImage 
+                };
+                window.socket.emit('brushRevealRotateImage', payload);
+                console.log(`📡 Enviado comando brush-reveal:`, payload);
+            } else {
+                console.error('❌ Socket no conectado - no se puede enviar comando');
+            }
+            
+            // Avanzar al siguiente índice
+            currentRotationIndex = (currentRotationIndex + 1) % rotationImages.length;
+            
+            updateRotationStatus();
+        }
+        
+        function updateRotationStatus() {
+            const status = document.getElementById('rotationStatus');
+            if (autoRotationActive) {
+                const currentImage = rotationImages[(currentRotationIndex - 1 + rotationImages.length) % rotationImages.length];
+                const nextImage = rotationImages[currentRotationIndex];
+                status.innerHTML = `Activa • Actual: <strong>${currentImage}.jpg</strong> • Próxima: <strong>${nextImage}.jpg</strong> (en 1 min)`;
+            }
+        }
+        
+        // Agregar event listener al botón cuando el DOM esté listo
+        document.addEventListener('DOMContentLoaded', function() {
+            const autoRotationBtn = document.getElementById('autoRotationBtn');
+            if (autoRotationBtn) {
+                autoRotationBtn.addEventListener('click', toggleAutoRotation);
+            }
+        });
+        
+        // NUEVO: Manejador de tecla 'a' para capturar wallpaper
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'a' || e.key === 'A') {
+                e.preventDefault();
+                console.log('📸 Tecla A presionada - solicitando captura de canvas...');
+                
+                if (window.socket && window.socket.connected) {
+                    // Solicitar a screen.html que capture y envíe el canvas
+                    window.socket.emit('requestCanvasCapture');
+                    console.log('📡 Solicitud de captura enviada a screen.html');
+                    
+                    // Mostrar feedback visual
+                    const feedback = document.createElement('div');
+                    feedback.style.cssText = `
+                        position: fixed;
+                        top: 20px;
+                        right: 20px;
+                        background: #28a745;
+                        color: white;
+                        padding: 15px 20px;
+                        border-radius: 8px;
+                        z-index: 10000;
+                        font-weight: bold;
+                        box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+                    `;
+                    feedback.textContent = '📸 Capturando wallpaper...';
+                    document.body.appendChild(feedback);
+                    
+                    setTimeout(() => {
+                        if (feedback.parentNode) {
+                            feedback.remove();
+                        }
+                    }, 3000);
+                } else {
+                    console.error('❌ Socket no conectado - no se puede solicitar captura');
+                }
+            }
+        });
+        
         // Limpiar interval al cerrar
         window.addEventListener('beforeunload', () => {
             if (connectionCheckInterval) clearInterval(connectionCheckInterval);
+            if (rotationInterval) clearInterval(rotationInterval);
         });
     </script>
-    <script src="assets/js/opencv-processor.js"></script>
     <script src="assets/js/control.js"></script>
 </body>
 </html>

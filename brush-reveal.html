@@ -5,48 +5,14 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Brush Reveal Pattern</title>
     <style>
-        html, body { margin: 0; padding: 0; height: 100%; overflow: hidden; background: #F5DDC7; }
+        html, body { margin: 0; padding: 0; height: 100%; overflow: hidden; background: #f8efe6; }
         .container { position: relative; width: 100vw; height: 100vh; }
         .canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
-        
-        /* Monitor de FPS */
-        .fps-monitor {
-            position: fixed;
-            top: 20px;
-            right: 20px;
-            background: rgba(0, 0, 0, 0.8);
-            color: #00ff00;
-            padding: 10px 15px;
-            border-radius: 5px;
-            font-family: 'Courier New', monospace;
-            font-size: 14px;
-            font-weight: bold;
-            z-index: 1000;
-            min-width: 120px;
-            text-align: center;
-        }
-        
-        .fps-value {
-            font-size: 18px;
-            color: #00ff00;
-        }
-        
-        .fps-avg {
-            font-size: 12px;
-            color: #ffff00;
-            margin-top: 2px;
-        }
     </style>
 </head>
 <body>
   <div class="container" id="container">
         <canvas class="canvas js-canvas"></canvas>
-    </div>
-    
-    <!-- Monitor de FPS -->
-    <div class="fps-monitor" id="fpsMonitor">
-        <div class="fps-value" id="fpsValue">-- FPS</div>
-        <div class="fps-avg" id="fpsAvg">Avg: --</div>
     </div>
     
     <script>
@@ -86,6 +52,6 @@
     <!-- Socket.IO para comunicación en tiempo real -->
     <script src="/socket.io/socket.io.js"></script>
     
-  <script src="./brush-reveal.js" defer></script>
+  <script src="/brush-reveal.js" defer></script>
  </body>
  </html>

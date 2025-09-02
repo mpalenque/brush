@@ -1,15 +1,40 @@
 // Ajustes generales - OPTIMIZADOS PARA VELOCIDAD CONTROLADA
-const DURATION_MS = 30000; // 30s - el doble de tiempo para coloreado
+const DURATION_MS = 30000; // 30s - tiempo objetivo final
 const DPR = 1; // cap para rendimiento
 const MASK_SCALE = 0.7; // máscara a menor resolución para velocidad
-const MAX_UNITS_PER_FRAME = 600; // trabajo optimizado por frame
-const FINAL_SEAL_START = 0.70; // iniciar antes para terminar en tiempo
-const FINAL_SEAL_ALPHA_MIN = 0.12;
-const FINAL_SEAL_ALPHA_MAX = 0.20;
-const FINAL_SEAL_CHUNK_BASE = 6; // trabajo de sellado balanceado
-const WASH_START = 0.65; // iniciar antes
-const WASH_CHUNK_BASE = 10;
-const MAX_STEPS_PER_ENTITY_FRAME = 5; // trabajo por entidad balanceado
+const MAX_UNITS_PER_FRAME = 120; // aún menos trabajo por frame para suavidad máxima
+const FINAL_SEAL_START = 0.60; // iniciar sellado antes
+const FINAL_SEAL_ALPHA_MIN = 0.08; // opacidad mínima más baja para suavidad
+const FINAL_SEAL_ALPHA_MAX = 0.16; // opacidad máxima más baja para suavidad
+const FINAL_SEAL_CHUNK_BASE = 4; // menos trabajo por frame para sellado más lento
+const WASH_START = 0.70; // iniciar lavado más tarde
+const WASH_CHUNK_BASE = 12; // más trabajo de lavado
+const MAX_STEPS_PER_ENTITY_FRAME = 1; // solo 1 paso por entidad por frame para máxima suavidad
+
+// Detectar brushId de la URL
+function getBrushIdFromURL() {
+  const path = window.location.pathname;
+  const match = path.match(/\/brush-reveal\/(\d+)/);
+  if (match) {
+    return parseInt(match[1]);
+  }
+  return 1; // Default a brush ID 1 si no hay ID en la URL
+}
+
+const brushId = getBrushIdFromURL();
+console.log(`🎯 Brush ID detectado: ${brushId}`);
+
+// Configuración de offsets para dividir wallpaper.jpg (6480x3840) en secciones de 2160x3840
+const WALLPAPER_SECTION_WIDTH = 2160;
+const WALLPAPER_SECTION_HEIGHT = 3840;
+const WALLPAPER_TOTAL_WIDTH = 6480;
+
+// Variables globales de configuración de brush
+let brushConfig = {
+  offsetX: 0,
+  offsetY: 0
+};
+
 const container = document.getElementById('container');
 const canvas = document.querySelector('.js-canvas');
 const ctx = canvas.getContext('2d', { alpha: true, desynchronized: true });
@@ -84,11 +109,11 @@ async function loadLatestPatterns() {
           console.error(`❌ Error cargando wallpaper.jpg`, err);
           reject(err);
         };
-        img.src = `patterns/wallpaper.jpg?t=${Date.now()}`;
+        img.src = `/patterns/wallpaper.jpg?t=${Date.now()}`;
       });
       
       patterns.push({
-        src: `patterns/wallpaper.jpg`,
+        src: `/patterns/wallpaper.jpg`,
         image: img,
         filename: 'wallpaper.jpg'
       });
@@ -127,8 +152,8 @@ function setupWebSocket() {
     
     socket.on('connect', () => {
       console.log('🔌 Conectado al servidor WebSocket');
-      // Registrarse como brush-reveal
-      socket.emit('register', { type: 'brush-reveal' });
+      // Registrarse como brush-reveal con brushId
+      socket.emit('registerScreen', { type: 'brush-reveal', brushId: brushId });
     });
     
     socket.on('disconnect', () => {
@@ -137,9 +162,26 @@ function setupWebSocket() {
     
     socket.on('reconnect', () => {
       console.log('🔌 Reconectado al servidor WebSocket');
-      socket.emit('register', { type: 'brush-reveal' });
+      socket.emit('registerScreen', { type: 'brush-reveal', brushId: brushId });
     });
     
+    // Escuchar estado inicial del servidor
+    socket.on('initialState', (data) => {
+      console.log('📥 Estado inicial recibido:', data);
+      if (data.brushReveal) {
+        brushConfig = data.brushReveal;
+        console.log(`🎯 Configuración de brush recibida - offsetX: ${brushConfig.offsetX}, offsetY: ${brushConfig.offsetY}`);
+      }
+    });
+
+    // Escuchar actualizaciones de configuración de brush-reveal
+    socket.on('brushRevealConfigUpdate', (data) => {
+      if (data.brushId === brushId) {
+        brushConfig = data.config;
+        console.log(`🔄 Configuración de brush ${brushId} actualizada - offsetX: ${brushConfig.offsetX}, offsetY: ${brushConfig.offsetY}`);
+      }
+    });
+
     // Escuchar cuando hay un nuevo patrón listo
     socket.on('newPatternReady', (data) => {
       console.log(`🎨 Nuevo patrón recibido:`, data);
@@ -171,6 +213,13 @@ function setupWebSocket() {
       updateFallbackPattern();
     });
     
+    // NUEVO: Escuchar rotación automática de imágenes desde /control
+    socket.on('brushRevealRotateImage', (data) => {
+      console.log(`🎨 *** EVENTO RECIBIDO *** Rotación automática - nueva imagen: ${data.imageName} (${data.imageType})`);
+      console.log(`📥 Datos completos del evento:`, data);
+      loadSpecificImageAndAnimate(data.imageName, data.imageType);
+    });
+    
   } catch (error) {
     console.warn('Error configurando WebSocket:', error);
   }
@@ -191,11 +240,11 @@ async function loadLatestPatternAndAnimate() {
       await new Promise((resolve, reject) => {
         newImg.onload = resolve;
         newImg.onerror = reject;
-        newImg.src = `patterns/wallpaper.jpg?t=${Date.now()}`;
+        newImg.src = `/patterns/wallpaper.jpg?t=${Date.now()}`;
       });
 
       // Reemplazar último patrón con wallpaper.jpg actualizado
-      patterns.push({ src: `patterns/wallpaper.jpg`, image: newImg, filename: 'wallpaper.jpg' });
+      patterns.push({ src: `/patterns/wallpaper.jpg`, image: newImg, filename: 'wallpaper.jpg' });
       if (patterns.length > 3) {
         patterns.shift();
       }
@@ -208,6 +257,70 @@ async function loadLatestPatternAndAnimate() {
     }
   } catch (err) {
     console.error('❌ Error cargando último patrón de /patterns:', err);
+  }
+}
+
+// Cargar imagen específica (amarillo.jpg, rojo.jpg, azul.jpg) y animar encima sin borrar
+async function loadSpecificImageAndAnimate(imageName, imageType) {
+  try {
+    console.log(`🎨 *** INICIANDO CARGA *** imagen específica: ${imageName} (tipo: ${imageType})`);
+    
+    // Verificar si existe la imagen
+    const imageExists = await checkIfFileExists(`/patterns/${imageName}`);
+    console.log(`📁 Archivo ${imageName} existe:`, imageExists);
+    
+    if (imageExists) {
+      console.log(`📥 *** CARGANDO IMAGEN *** ${imageName} para colorear encima`);
+      
+      const newImg = new Image();
+      await new Promise((resolve, reject) => {
+        newImg.onload = () => {
+          console.log(`✅ *** IMAGEN CARGADA *** ${imageName} exitosamente`);
+          resolve();
+        };
+        newImg.onerror = (err) => {
+          console.error(`❌ *** ERROR CARGA *** ${imageName}:`, err);
+          reject(err);
+        };
+        newImg.src = `/patterns/${imageName}?t=${Date.now()}`;
+        console.log(`🔗 *** URL IMAGEN *** ${newImg.src}`);
+      });
+
+      // Agregar nueva imagen al array de patrones
+      patterns.push({ 
+        src: `/patterns/${imageName}`, 
+        image: newImg, 
+        filename: imageName,
+        type: imageType 
+      });
+      
+      // Mantener solo los últimos 4 patrones para memoria
+      if (patterns.length > 4) {
+        patterns.shift();
+      }
+      currentPatternIndex = patterns.length - 1;
+      
+      console.log(`✅ *** PATRÓN AGREGADO *** ${imageName}. Índice actual: ${currentPatternIndex}`);
+      
+      // Actualizar selectedImage para que los brushes usen el color correcto
+      selectedImage = imageType;
+      console.log(`🖌️ *** SELECTED IMAGE *** actualizada a: ${selectedImage}`);
+      
+      // ASEGURAR que la preservación del canvas esté activada
+      if (!preserveCanvasContent) {
+        preserveCanvasContent = true;
+        isFirstAnimation = false;
+        console.log('🎨 *** PRESERVACIÓN FORZADA *** - El canvas se preservará para rotaciones automáticas');
+      }
+      
+      // Colorear encima sin resetear el canvas
+      console.log(`🎨 *** INICIANDO ANIMACIÓN *** colorOnTop() con ${imageName}`);
+      colorOnTop();
+    } else {
+      console.warn(`❌ *** ARCHIVO NO ENCONTRADO *** ${imageName}`);
+    }
+  } catch (err) {
+    console.error(`❌ *** ERROR GENERAL *** cargando imagen específica ${imageName}:`, err);
   }
 }
 
@@ -258,12 +371,18 @@ let size = { wCSS: 0, hCSS: 0, w: 0, h: 0 };
 let layout = { dx: 0, dy: 0, dw: 0, dh: 0 };
 let startedAt = 0, rafId = 0;
 let fpsMonitorRafId = 0; // RAF separado para el monitor FPS
-let seeds = [], strokes = [], sweeps = [], wash = [], spirals = [], radiants = [], connectors = [], droplets = [], waves = [];
+let seeds = [], strokes = [], sweeps = [], wash = [], spirals = [], radiants = [], connectors = [], droplets = [], waves = [], colorDrops = [];
 let finalSealing = [];
 let animationFinished = false; // Flag para indicar que la animación terminó
 let isFirstAnimation = true; // Flag para controlar si es la primera animación
+let preserveCanvasContent = false; // NUEVO: Una vez activado, nunca más limpiar el canvas
 let latestPatternId = null; // ID del patrón más reciente
 let socket = null; // Conexión WebSocket
+let lateColorDrops = []; // Gotas que aparecen después de 15s en áreas no coloreadas
+let hasAddedLateDrops = false; // Flag para evitar añadir múltiples veces
+let finalCircle = null; // Círculo final que cubre toda la pantalla
+let hasFinalCircleStarted = false; // Flag para el círculo final
+let finalCircles = []; // Array de múltiples círculos finales
 
 // Pool de canvas temporales para optimización (reutilizar en lugar de crear cada frame)
 const canvasPool = {
@@ -411,9 +530,52 @@ function resize(){
   
   const currentBG = getCurrentPattern();
   if (currentBG && currentBG.naturalWidth && currentBG.naturalHeight){
-    const s = Math.max(size.w/currentBG.naturalWidth, size.h/currentBG.naturalHeight);
-    const dw = Math.ceil(currentBG.naturalWidth*s), dh = Math.ceil(currentBG.naturalHeight*s);
-    layout.dx = Math.floor((size.w-dw)/2); layout.dy = Math.floor((size.h-dh)/2); layout.dw = dw; layout.dh = dh;
+    // Verificar si es una imagen de rotación automática
+    const currentPatternData = patterns[currentPatternIndex];
+    const isRotationImage = currentPatternData && currentPatternData.type && 
+                           ['amarillo', 'rojo', 'azul'].includes(currentPatternData.type);
+    
+    if (isRotationImage) {
+      // Para imágenes de rotación, usar toda la imagen sin secciones
+      console.log(`🎨 Usando imagen de rotación: ${currentPatternData.filename} (${currentPatternData.type})`);
+      
+      const s = Math.min(size.w/currentBG.naturalWidth, size.h/currentBG.naturalHeight);
+      const dw = Math.ceil(currentBG.naturalWidth*s), dh = Math.ceil(currentBG.naturalHeight*s);
+      layout.dx = Math.floor((size.w-dw)/2); 
+      layout.dy = Math.floor((size.h-dh)/2); 
+      layout.dw = dw; 
+      layout.dh = dh;
+      
+      // Para imágenes de rotación, usar toda la imagen
+      layout.sourceX = 0;
+      layout.sourceY = 0;
+      layout.sourceWidth = currentBG.naturalWidth;
+      layout.sourceHeight = currentBG.naturalHeight;
+    } else {
+      // Para wallpaper.jpg, usar secciones
+      const sectionWidth = WALLPAPER_SECTION_WIDTH;
+      const sectionHeight = WALLPAPER_SECTION_HEIGHT;
+      
+      // Usar la configuración de offset del servidor
+      const sourceX = brushConfig.offsetX;
+      const sourceY = brushConfig.offsetY;
+      
+      console.log(`🎯 Usando sección del wallpaper - sourceX: ${sourceX}, sourceY: ${sourceY}, width: ${sectionWidth}, height: ${sectionHeight}`);
+      
+      // Calcular escala para ajustar la sección al canvas
+      const s = Math.min(size.w/sectionWidth, size.h/sectionHeight);
+      const dw = Math.ceil(sectionWidth*s), dh = Math.ceil(sectionHeight*s);
+      layout.dx = Math.floor((size.w-dw)/2); 
+      layout.dy = Math.floor((size.h-dh)/2); 
+      layout.dw = dw; 
+      layout.dh = dh;
+      
+      // Guardar información de la sección para usar en drawImage
+      layout.sourceX = sourceX;
+      layout.sourceY = sourceY;
+      layout.sourceWidth = sectionWidth;
+      layout.sourceHeight = sectionHeight;
+    }
   }
 }
 
@@ -426,9 +588,9 @@ function makeSeeds(n){
 function makeStrokes(){
   strokes = [];
   const area = (size.w*size.h)/(1280*720);
-  const COUNT = Math.round(clamp(320*area, 240, 450)); // aún más trazos
-  const earlyCount = Math.max(10, Math.min(18, Math.floor(COUNT*0.06))); // más comienzos inmediatos
-  const spreadInterval = Math.max(1, Math.floor(COUNT/8));
+  const COUNT = Math.round(clamp(800*area, 600, 1200)); // MUCHOS más trazos para cobertura total
+  const earlyCount = Math.max(25, Math.min(40, Math.floor(COUNT*0.10))); // más comienzos inmediatos
+  const spreadInterval = Math.max(1, Math.floor(COUNT/20)); // distribución más frecuente
   // trazo garantizado desde el centro
   const centerBaseW = clamp(gauss(16,5), 9,28) * (size.w/1280+size.h/720)*.5;
   const centerSteps = Math.round(clamp(gauss(180,40), 120,260)*area);
@@ -439,17 +601,17 @@ function makeStrokes(){
   for (let i=0;i<COUNT;i++){
     const seedIndex = i%seeds.length;
     const s = seeds[seedIndex];
-    let x = clamp(s.x+gauss(0,.06), .01,.99)*size.w;
-    let y = clamp(s.y+gauss(0,.06), .01,.99)*size.h;
+    let x = clamp(s.x+gauss(0,.08), .01,.99)*size.w; // mayor dispersión
+    let y = clamp(s.y+gauss(0,.08), .01,.99)*size.h; // mayor dispersión
     const baseW = clamp(gauss(14,4), 7,25)*(size.w/1280+size.h/720)*.5;
     const alpha = clamp(gauss(.7,.1), .35, .85);
-    const steps = Math.round(clamp(gauss(160,50), 100,250)*area);
-    const stepLen = clamp(gauss(4.8,1.5), 2.5, 7.5)*(size.w/1280+size.h/720)*.5;
+    const steps = Math.round(clamp(gauss(220,60), 150,350)*area); // más pasos para mayor cobertura
+    const stepLen = rand(0.3,1.0) * (size.w/1280+size.h/720)*.5; // ULTRA LENTO
     let angle = rand(0,Math.PI*2);
     const drift = rand(.02,.06);
     let tStart = clamp(rand(0,.4)+(i/COUNT)*.5, 0,.85); // distribuido hasta 85%
     if (i < earlyCount || (i % spreadInterval) === 0) tStart = clamp(rand(0,.05), 0, .09); // arranques inmediatos distribuidos
-    const tEnd = clamp(tStart+rand(.34,.56),0,0.96);
+    const tEnd = clamp(tStart+rand(.40,.70),0,0.98); // trazos más largos en tiempo
     const b = maskBrushes.length? Math.floor(rand(0,maskBrushes.length)) : -1;
     strokes.push({x,y,angle,baseW,alpha,steps,stepLen,drift,tStart,tEnd,idx:0,b,seedIndex});
   }
@@ -457,7 +619,7 @@ function makeStrokes(){
 
 function makeSpirals(){
   spirals = [];
-  const COUNT = Math.round(clamp(12*(size.w*size.h)/(1280*720), 8, 18));
+  const COUNT = Math.round(clamp(18*(size.w*size.h)/(1280*720), 12, 28)); // más espirales
   for (let i=0;i<COUNT;i++){
     const cx = rand(.15,.85)*size.w;
     const cy = rand(.15,.85)*size.h;
@@ -478,16 +640,16 @@ function makeSpirals(){
 function makeDroplets(){
   droplets = [];
   const area = (size.w*size.h)/(1280*720);
-  const COUNT = Math.round(clamp(6*area, 4, 12));
+  const COUNT = Math.round(clamp(35*area, 25, 50)); // AÚN MÁS droplets para cobertura total
   for (let i=0;i<COUNT;i++){
-    const cx = rand(.15,.85)*size.w;
-    const cy = rand(.15,.85)*size.h;
-    const maxR = rand(80, 180) * (size.w/1280+size.h/720)*.5;
-    const tStart = clamp(rand(.15,.45),0,.7);
-    const tEnd = clamp(tStart + rand(.18,.26), 0, 0.84);
-    const edgeThickness = rand(0.10, 0.18); // relativo a R actual
-    const fillAlpha = rand(0.06, 0.12);
-    const edgeAlpha = rand(0.10, 0.22);
+    const cx = rand(.05,.95)*size.w; // usar toda la pantalla
+    const cy = rand(.05,.95)*size.h; // usar toda la pantalla
+    const maxR = rand(60, 160) * (size.w/1280+size.h/720)*.5; // tamaño más pequeño para más suavidad
+    const tStart = clamp(rand(0.0,.35),0,.45); // distribuir más en el tiempo
+    const tEnd = clamp(tStart + rand(.35,.55), 0, 0.85); // duración larga para crecimiento suave
+    const edgeThickness = rand(0.08, 0.15); // borde más fino para suavidad
+    const fillAlpha = rand(0.10, 0.18); // más opacidad para que sean muy visibles
+    const edgeAlpha = rand(0.15, 0.30); // borde muy visible
     const b = maskBrushes.length? Math.floor(rand(0,maskBrushes.length)) : -1;
     const approxCirc = 2*Math.PI*maxR;
     const spacing = 22 * (size.w/1280+size.h/720)*.5;
@@ -503,13 +665,14 @@ function stepDroplet(d, e, sizeMultiplier, budget){
   // progreso local 0..1
   const local = clamp((e - d.tStart) / Math.max(0.0001, (d.tEnd - d.tStart)), 0, 1);
   if (local<=0) return 0;
-  const es = local*local*(3-2*local); // smoothstep
-  // Empezar con tamaño mínimo visible desde el inicio
-  const R = d.maxR * (0.05 + 0.95*es); // cambio: empezar en 5% en lugar de 15%
+  // Curva de crecimiento muy suave y gradual
+  const es = local*local*(3-2*local); // smoothstep clásico
+  // Empezar con tamaño visible INMEDIATAMENTE desde el inicio
+  const R = d.maxR * (0.15 + 0.85*es); // empezar en 15% para ser MUY visible desde el principio
   let spent = 0;
 
-  // Relleno interior con borde orgánico - siempre visible desde el inicio (ligeramente más opaco al principio)
-  fillIrregularBlob(d.cx, d.cy, R*(1.0 - d.edgeThickness*0.7), d.fillH, d.fillAlpha * (0.4 + 0.6*es), 40, 0.5 + 0.5*es, 0.01);
+  // Relleno interior con borde orgánico - MUY visible desde el inicio
+  fillIrregularBlob(d.cx, d.cy, R*(1.0 - d.edgeThickness*0.5), d.fillH, d.fillAlpha * (0.8 + 0.2*es), 40, 0.8 + 0.2*es, 0.01);
 
   // Borde con sellos de brocha
   const brush = (d.b>=0? maskBrushes[d.b] : null);
@@ -522,7 +685,7 @@ function stepDroplet(d, e, sizeMultiplier, budget){
     const y = d.cy + Math.sin(ang) * rEdge;
     const w = R * d.edgeThickness;
     const scale = brush? ( (w / Math.max(1, Math.max(brush.width, brush.height))) * 3.0 * sizeMultiplier) : 1;
-    const alpha = d.edgeAlpha * (0.6 + 0.5*es);
+    const alpha = d.edgeAlpha * (0.8 + 0.2*es); // borde MUY visible desde el principio
     if (brush){
       const rot = ang + Math.PI/2 + gauss(0, 0.12);
       stamp(brush, x, y, scale, alpha, rot);
@@ -533,6 +696,42 @@ function stepDroplet(d, e, sizeMultiplier, budget){
     budget--; spent++; d.i = (d.i + d.di) % N;
   }
   return spent;
+}
+
+// NUEVO: Función para dibujar gotas de coloreo que crecen
+function stepColorDrop(drop, e, sizeMultiplier){
+  const local = clamp((e - drop.tStart) / Math.max(0.0001, (drop.tEnd - drop.tStart)), 0, 1);
+  if (local <= 0) return 0;
+  
+  // Curva de crecimiento muy suave
+  const progress = local * local * (3 - 2 * local); // smoothstep
+  const targetR = drop.maxR * progress * drop.growthSpeed;
+  
+  // Crecimiento gradual del radio actual
+  drop.currentR = targetR;
+  
+  if (drop.currentR > 1) {
+    // Dibujar gota de color con gradiente suave
+    maskCtx.save();
+    maskCtx.globalAlpha = drop.alpha * progress;
+    
+    // Crear gradiente radial para efecto suave
+    const gradient = maskCtx.createRadialGradient(
+      drop.cx, drop.cy, 0,
+      drop.cx, drop.cy, drop.currentR
+    );
+    gradient.addColorStop(0, `rgba(${drop.color.r}, ${drop.color.g}, ${drop.color.b}, 1)`);
+    gradient.addColorStop(0.7, `rgba(${drop.color.r}, ${drop.color.g}, ${drop.color.b}, 0.8)`);
+    gradient.addColorStop(1, `rgba(${drop.color.r}, ${drop.color.g}, ${drop.color.b}, 0)`);
+    
+    maskCtx.fillStyle = gradient;
+    maskCtx.beginPath();
+    maskCtx.arc(drop.cx, drop.cy, drop.currentR, 0, Math.PI * 2);
+    maskCtx.fill();
+    maskCtx.restore();
+  }
+  
+  return 1;
 }
 
 function makeRadiants(){
@@ -567,6 +766,242 @@ function makeConnectors(){
     const b = maskBrushes.length? Math.floor(rand(0,maskBrushes.length)) : -1;
     connectors.push({x1,y1,x2,y2,baseW,alpha,steps,tStart,tEnd,idx:0,b});
   }
+}
+
+// NUEVO: Gotas de coloreo que crecen suavemente
+function makeColorDrops(){
+  colorDrops = [];
+  const area = (size.w*size.h)/(1280*720);
+  const COUNT = Math.round(clamp(45*area, 35, 70)); // MUCHAS MÁS gotas de coloreo para cobertura total
+  for (let i=0;i<COUNT;i++){
+    const cx = rand(.02,.98)*size.w; // usar TODA la pantalla
+    const cy = rand(.02,.98)*size.h; // usar TODA la pantalla
+    const maxR = rand(25, 100) * (size.w/1280+size.h/720)*.5; // tamaños variados, algunos más pequeños
+    const tStart = clamp(rand(0.0,.5), 0, .55); // distribuir a lo largo del tiempo
+    const tEnd = clamp(tStart + rand(.35,.65), 0, 0.90); // crecimiento largo y suave
+    const alpha = rand(0.12, 0.28); // bien visible
+    const growthSpeed = rand(0.7, 1.1); // velocidad de crecimiento
+    const color = {
+      r: Math.floor(rand(120, 255)), 
+      g: Math.floor(rand(80, 200)), 
+      b: Math.floor(rand(60, 180))
+    }; // colores cálidos
+    colorDrops.push({cx,cy,maxR,tStart,tEnd,alpha,growthSpeed,color,currentR:0});
+  }
+}
+
+// NUEVO: Función para añadir gotas de cobertura después de 15 segundos
+function addLateColorDrops(){
+  if (hasAddedLateDrops) return;
+  hasAddedLateDrops = true;
+  
+  const area = (size.w*size.h)/(1280*720);
+  const COUNT = Math.round(clamp(30*area, 25, 50)); // Gotas adicionales para cobertura final
+  
+  // Crear grid para distribuir uniformemente
+  const gridSize = Math.ceil(Math.sqrt(COUNT));
+  let dropIndex = 0;
+  
+  for (let gx = 0; gx < gridSize && dropIndex < COUNT; gx++) {
+    for (let gy = 0; gy < gridSize && dropIndex < COUNT; gy++) {
+      const baseX = (gx / gridSize) + rand(-0.1, 0.1);
+      const baseY = (gy / gridSize) + rand(-0.1, 0.1);
+      
+      const cx = clamp(baseX, 0.02, 0.98) * size.w;
+      const cy = clamp(baseY, 0.02, 0.98) * size.h;
+      const maxR = rand(40, 120) * (size.w/1280+size.h/720)*.5;
+      const tStart = clamp(0.5 + rand(0, 0.25), 0.5, 0.75); // empezar después de 15s
+      const tEnd = clamp(tStart + rand(.25,.45), 0, 0.95);
+      const alpha = rand(0.15, 0.30);
+      const growthSpeed = rand(0.8, 1.2);
+      const color = {
+        r: Math.floor(rand(120, 255)), 
+        g: Math.floor(rand(80, 200)), 
+        b: Math.floor(rand(60, 180))
+      };
+      
+      lateColorDrops.push({cx,cy,maxR,tStart,tEnd,alpha,growthSpeed,color,currentR:0});
+      dropIndex++;
+    }
+  }
+}
+
+// NUEVO: Función para crear 9 formas de estrella irregulares distribuidas en tiempo
+function createFinalCircle(){
+  if (hasFinalCircleStarted) return;
+  hasFinalCircleStarted = true;
+  
+  finalCircles = [];
+  const maxRadius = Math.min(size.w, size.h) * 0.35; // REDUCIDO: de 0.6 a 0.35 para que crezcan menos
+  
+  // Crear grid 5x5 para MÁS círculos (25 en total)
+  const positions = [
+    // Fila 1
+    {x: 0.1, y: 0.1}, {x: 0.3, y: 0.1}, {x: 0.5, y: 0.1}, {x: 0.7, y: 0.1}, {x: 0.9, y: 0.1},
+    // Fila 2  
+    {x: 0.1, y: 0.3}, {x: 0.3, y: 0.3}, {x: 0.5, y: 0.3}, {x: 0.7, y: 0.3}, {x: 0.9, y: 0.3},
+    // Fila 3
+    {x: 0.1, y: 0.5}, {x: 0.3, y: 0.5}, {x: 0.5, y: 0.5}, {x: 0.7, y: 0.5}, {x: 0.9, y: 0.5},
+    // Fila 4
+    {x: 0.1, y: 0.7}, {x: 0.3, y: 0.7}, {x: 0.5, y: 0.7}, {x: 0.7, y: 0.7}, {x: 0.9, y: 0.7},
+    // Fila 5
+    {x: 0.1, y: 0.9}, {x: 0.3, y: 0.9}, {x: 0.5, y: 0.9}, {x: 0.7, y: 0.9}, {x: 0.9, y: 0.9}
+  ];
+  
+  positions.forEach((pos, index) => {
+    const centerX = pos.x * size.w + rand(-size.w*0.08, size.w*0.08); // menos variación porque son más pequeños
+    const centerY = pos.y * size.h + rand(-size.h*0.08, size.h*0.08); // menos variación porque son más pequeños
+    const radiusVariation = rand(0.7, 1.2); // menor variación de tamaño
+    
+    // TIEMPO DISTRIBUIDO PARA 25 CÍRCULOS: empiezan a los 15s y aparecen cada 0.6s
+    let timeStart;
+    if (index === 0) {
+      timeStart = 0.50; // 15 segundos (15/30 = 0.5)
+    } else {
+      timeStart = 0.50 + (index * 0.6 / 30.0); // cada 0.6 segundos después
+    }
+    
+    // Crear múltiples harmónicos para forma de estrella irregular (optimizado)
+    const harmonics = makeHarmonics(3); // reducido para mejor performance
+    
+    // Parámetros adicionales para forma de estrella más uniforme
+    const numPoints = rand(6, 10); // rango más controlado de puntas
+    const pointSharpness = rand(0.4, 0.8); // menos extremo para mejor cobertura
+    const curviness = rand(0.2, 0.5); // curvatura moderada
+    
+    // ESTILO DROPLET: ajustado para círculos más pequeños
+    const b = maskBrushes.length? Math.floor(rand(0,maskBrushes.length)) : -1;
+    const approxCirc = 2*Math.PI*maxRadius*radiusVariation;
+    const spacing = 18 * (size.w/1280+size.h/720)*.5; // espaciado más pequeño
+    const N = Math.max(8, Math.min(180, Math.floor(approxCirc/Math.max(12, spacing)))); // menos puntos
+    const edgeThickness = rand(0.10, 0.20); // borde un poco más grueso
+    const fillAlpha = rand(0.18, 0.28); // relleno más visible
+    const edgeAlpha = rand(0.25, 0.40); // borde más visible
+    
+    const circle = {
+      cx: centerX,
+      cy: centerY,
+      maxRadius: maxRadius * radiusVariation,
+      currentRadius: 0,
+      tStart: timeStart,
+      tEnd: Math.min(1.0, timeStart + 0.25), // 7.5 segundos para crecer (más rápido porque son más pequeños)
+      alpha: rand(0.3, 0.4), // mayor opacidad
+      fadeWidth: maxRadius * radiusVariation * 0.30, // borde suave
+      harmonics: harmonics, // para irregularidad adicional
+      irregularity: rand(0.3, 0.6), // irregularidad moderada para mejor cobertura
+      numPoints: numPoints, // número de puntas de estrella
+      pointSharpness: pointSharpness, // agudeza de las puntas
+      curviness: curviness, // curvatura
+      rotation: rand(0, Math.PI * 2), // rotación aleatoria de cada estrella
+      // PROPIEDADES ESTILO DROPLET:
+      brushIndex: b,
+      brushPoints: N,
+      edgeThickness: edgeThickness,
+      fillAlpha: fillAlpha,
+      edgeAlpha: edgeAlpha,
+      spacing: spacing
+    };
+    
+    finalCircles.push(circle);
+  });
+}
+
+// Función auxiliar para crear forma de estrella irregular con puntas (optimizada)
+function starRadius(baseRadius, angle, star, harmonics, irregularity) {
+  // Crear patrón de estrella básico
+  const normalizedAngle = (angle + star.rotation) % (Math.PI * 2);
+  const pointAngle = (Math.PI * 2) / star.numPoints;
+  const angleInPoint = (normalizedAngle % pointAngle) / pointAngle;
+  
+  // Crear curva de punta simple pero MUY pronunciada
+  const starFactor = 1 + Math.sin(angleInPoint * Math.PI) * star.pointSharpness * 1.2; // amplificado
+  
+  // Añadir irregularidad EXTREMA
+  let variation = 0;
+  for (let i = 0; i < Math.min(harmonics.length, 3); i++) { // Limitar a 3 harmónicos
+    const h = harmonics[i];
+    variation += h.amp * Math.sin(normalizedAngle * h.freq + h.phase);
+  }
+  
+  // Añadir variación extra con múltiples frecuencias
+  const extraVariation = Math.sin(normalizedAngle * 7) * 0.1 + Math.sin(normalizedAngle * 13) * 0.05;
+  
+  // Combinar todo con irregularidad máxima
+  const finalRadius = baseRadius * starFactor * (1 + (variation + extraVariation) * irregularity);
+  
+  // Asegurar que no sea negativo pero permitir variación extrema
+  return Math.max(finalRadius, baseRadius * 0.1);
+}
+
+// NUEVO: Función para dibujar los 9 círculos irregulares finales con estilo DROPLET
+function stepFinalCircle(e, sizeMultiplier){
+  if (finalCircles.length === 0) return;
+  
+  finalCircles.forEach(star => {
+    if (e < star.tStart) return;
+    
+    const local = clamp((e - star.tStart) / Math.max(0.0001, (star.tEnd - star.tStart)), 0, 1);
+    
+    // Curva de crecimiento 5% más lenta que antes
+    const progress = Math.pow(local, 5.3); // de 5.0 a 5.3 para ser 5% más lento
+    star.currentRadius = star.maxRadius * progress;
+    
+    if (star.currentRadius > 5) {
+      maskCtx.save();
+      
+      // ESTILO DROPLET: Dibujar relleno primero
+      maskCtx.globalAlpha = star.fillAlpha * progress;
+      maskCtx.beginPath();
+      
+      const numPoints = Math.max(48, star.numPoints * 6);
+      for (let i = 0; i <= numPoints; i++) {
+        const angle = (i / numPoints) * Math.PI * 2;
+        const radius = starRadius(star.currentRadius, angle, star, star.harmonics, star.irregularity);
+        const x = star.cx + Math.cos(angle) * radius;
+        const y = star.cy + Math.sin(angle) * radius;
+        
+        if (i === 0) {
+          maskCtx.moveTo(x, y);
+        } else {
+          maskCtx.lineTo(x, y);
+        }
+      }
+      
+      maskCtx.closePath();
+      maskCtx.fillStyle = 'white';
+      maskCtx.fill();
+      
+      // ESTILO DROPLET: Dibujar borde con brocha
+      if (star.brushIndex >= 0 && maskBrushes[star.brushIndex]) {
+        maskCtx.globalAlpha = star.edgeAlpha * progress;
+        
+        const edgeRadius = star.currentRadius * (1 - star.edgeThickness);
+        const brushSize = star.spacing * 0.8;
+        
+        // Dibujar puntos de brocha alrededor del borde
+        for (let i = 0; i < star.brushPoints; i++) {
+          const angle = (i / star.brushPoints) * Math.PI * 2;
+          const radius = starRadius(edgeRadius, angle, star, star.harmonics, star.irregularity * 0.7);
+          const x = star.cx + Math.cos(angle) * radius;
+          const y = star.cy + Math.sin(angle) * radius;
+          
+          // Añadir variación al tamaño del pincel
+          const brushVariation = rand(0.7, 1.3);
+          const finalBrushSize = brushSize * brushVariation;
+          
+          maskCtx.drawImage(
+            maskBrushes[star.brushIndex],
+            x - finalBrushSize/2,
+            y - finalBrushSize/2,
+            finalBrushSize,
+            finalBrushSize
+          );
+        }
+      }
+      
+      maskCtx.restore();
+    }
+  });
 }
 
 function makeSweeps(){
@@ -623,13 +1058,13 @@ function makeWaves(){
     const baseW = clamp(gauss(13,4), 7,22) * (size.w/1280+size.h/720)*.5;
     const alpha = rand(.08,.18);
     const steps = Math.round(rand(120,200));
-    const stepLen = rand(3.2,6.5) * (size.w/1280+size.h/720)*.5;
-    const drift = rand(.006,.02);
+    const stepLen = rand(0.5,1.5) * (size.w/1280+size.h/720)*.5; // ULTRA LENTO
+    const drift = rand(.0005,.003); // deriva mínima para casi no moverse
     const tStart = i < earlyCount ? rand(0, 0.1) : clamp(rand(.2,.7), 0, .85);
-    const tEnd = clamp(tStart + rand(.28,.48), 0, .95);
+    const tEnd = clamp(tStart + rand(.60,.80), 0, .98); // duración ULTRA larga
     const b = maskBrushes.length? Math.floor(rand(0,maskBrushes.length)) : -1;
-    const freq = rand(0.02, 0.055);
-    const ampAng = rand(0.06, 0.18); // amplitud angular
+    const freq = rand(0.002, 0.008); // frecuencia ultra baja para casi no ondular
+    const ampAng = rand(0.01, 0.04); // amplitud angular mínima
     const angle = rand(0, Math.PI*2);
     waves.push({x,y,angle,baseW,alpha,steps,stepLen,drift,tStart,tEnd,idx:0,b,phase:rand(0,Math.PI*2),freq,ampAng});
   }
@@ -951,6 +1386,38 @@ function drawProgress(p){
     budget -= stepDroplet(d, e, sizeMultiplier, Math.floor(budget*.25));
   }
 
+  // NUEVO: Gotas de coloreo (activas desde el principio)
+  for (let i=0;i<colorDrops.length && budget>0;i++){
+    const drop = colorDrops[i];
+    if (e >= drop.tStart && e <= drop.tEnd) {
+      stepColorDrop(drop, e, sizeMultiplier);
+      budget -= 1; // bajo costo computacional
+    }
+  }
+
+  // NUEVO: Añadir gotas tardías después de 15 segundos (50% del tiempo)
+  if (e > 0.5 && !hasAddedLateDrops) {
+    addLateColorDrops();
+  }
+
+  // NUEVO: Procesar gotas tardías
+  for (let i=0;i<lateColorDrops.length && budget>0;i++){
+    const drop = lateColorDrops[i];
+    if (e >= drop.tStart && e <= drop.tEnd) {
+      stepColorDrop(drop, e, sizeMultiplier);
+      budget -= 1; // bajo costo computacional
+    }
+  }
+
+  // NUEVO: Crear y procesar círculo final (empieza a los 18 segundos)
+  if (e > 0.58 && !hasFinalCircleStarted) { // crear un poco antes para estar listo
+    createFinalCircle();
+  }
+  
+  if (finalCircles.length > 0) {
+    stepFinalCircle(e, sizeMultiplier);
+  }
+
   // Espirales (se activan progresivamente)
   const activeSpirals = Math.ceil(e * spirals.length);
   for (let i=0;i<activeSpirals && budget>0;i++){
@@ -1086,21 +1553,27 @@ function render(){
     return;
   }
   
-  // Solo limpiar el canvas en la primera animación
-  if (isFirstAnimation) {
+  // Solo limpiar el canvas en la primera animación Y si no se debe preservar el contenido
+  if (isFirstAnimation && !preserveCanvasContent) {
     ctx.clearRect(0,0,size.w,size.h);
     
-    // Dibujar imagen de fondo solo en la primera vez
-    if (layout.dw && layout.dh) ctx.drawImage(currentBG, layout.dx, layout.dy, layout.dw, layout.dh);
+    // Dibujar imagen de fondo solo en la primera vez usando la sección específica
+    if (layout.dw && layout.dh && layout.sourceWidth && layout.sourceHeight) {
+      ctx.drawImage(
+        currentBG, 
+        layout.sourceX, layout.sourceY, layout.sourceWidth, layout.sourceHeight,  // área fuente
+        layout.dx, layout.dy, layout.dw, layout.dh  // área destino
+      );
+    }
     
     // Aplicar máscara del efecto original
     ctx.globalCompositeOperation='destination-in';
     ctx.drawImage(maskCanvas, 0,0, maskCanvas.width, maskCanvas.height, 0,0, size.w, size.h);
     ctx.globalCompositeOperation='destination-over'; 
-    ctx.fillStyle='#F5DDC7'; 
+    ctx.fillStyle='#f8efe6'; 
     ctx.fillRect(0,0,size.w,size.h);
   } else {
-    // Para animaciones posteriores: DIBUJAR DIRECTAMENTE SOBRE LA IMAGEN ANTERIOR
+    // Para animaciones posteriores O cuando se preserva contenido: DIBUJAR DIRECTAMENTE SOBRE LA IMAGEN ANTERIOR
     // NO hacer clearRect() - esto permite que se dibuje sobre la imagen existente
     
     // Crear un canvas temporal para la nueva imagen con máscara
@@ -1109,8 +1582,14 @@ function render(){
     tempCanvas.height = size.h;
     const tempCtx = tempCanvas.getContext('2d');
     
-    // Dibujar la imagen de fondo en el canvas temporal
-    if (layout.dw && layout.dh) tempCtx.drawImage(currentBG, layout.dx, layout.dy, layout.dw, layout.dh);
+    // Dibujar la imagen de fondo en el canvas temporal usando la sección específica
+    if (layout.dw && layout.dh && layout.sourceWidth && layout.sourceHeight) {
+      tempCtx.drawImage(
+        currentBG, 
+        layout.sourceX, layout.sourceY, layout.sourceWidth, layout.sourceHeight,  // área fuente
+        layout.dx, layout.dy, layout.dw, layout.dh  // área destino
+      );
+    }
     
     // Aplicar máscara al canvas temporal
     tempCtx.globalCompositeOperation='destination-in';
@@ -1159,6 +1638,10 @@ function loop(ts){
     // Marcar que ya no es la primera animación para que la siguiente se dibuje por encima
     isFirstAnimation = false;
     
+    // ACTIVAR preservación del canvas - nunca más se limpiará
+    preserveCanvasContent = true;
+    console.log('🎨 *** PRESERVACIÓN ACTIVADA *** - El canvas nunca más se limpiará');
+    
     // NO programar automáticamente la siguiente animación
     // Ahora esperará comando desde control
     console.log('🎨 Animación completada. Esperando comando desde control para nueva animación...');
@@ -1184,6 +1667,11 @@ function start(){
   
   // Resetear estado de animación
   animationFinished = false;
+  hasAddedLateDrops = false; // resetear gotas tardías
+  lateColorDrops = []; // limpiar gotas tardías
+  hasFinalCircleStarted = false; // resetear círculo final
+  finalCircle = null; // limpiar círculo final
+  finalCircles = []; // limpiar círculos finales
   
   resize(); 
   maskCtx.clearRect(0,0,size.w,size.h); 
@@ -1195,6 +1683,7 @@ function start(){
   makeSpirals();
   makeRadiants();
   makeDroplets();
+  makeColorDrops(); // NUEVO: gotas de coloreo
   makeConnectors();
   makeSweeps(); 
   makeWaves();
@@ -1221,6 +1710,8 @@ function colorOnTop(){
   // IMPORTANTE: NO resetear isFirstAnimation - mantener el estado para NO limpiar canvas
   // isFirstAnimation ya se configuró como false después de la primera animación
   
+  console.log(`🎨 *** COLOR ON TOP *** preserveCanvasContent: ${preserveCanvasContent}, isFirstAnimation: ${isFirstAnimation}`);
+  
   // NO hacer resize() ni limpiar el canvas principal - MANTENER wallpaper dibujado
   // Solo limpiar la máscara para nueva animación encima
   maskCtx.clearRect(0,0,size.w,size.h); 
@@ -1234,6 +1725,7 @@ function colorOnTop(){
   makeSpirals();
   makeRadiants();
   makeDroplets();
+  makeColorDrops(); // NUEVO: gotas de coloreo
   makeConnectors();
   makeSweeps(); 
   makeWaves();
@@ -1257,9 +1749,27 @@ function startNewAnimation(){
   // Recalcular layout para el nuevo patrón
   const currentBG = getCurrentPattern();
   if (currentBG.naturalWidth && currentBG.naturalHeight){
-    const s = Math.max(size.w/currentBG.naturalWidth, size.h/currentBG.naturalHeight);
-    const dw = Math.ceil(currentBG.naturalWidth*s), dh = Math.ceil(currentBG.naturalHeight*s);
-    layout.dx = Math.floor((size.w-dw)/2); layout.dy = Math.floor((size.h-dh)/2); layout.dw = dw; layout.dh = dh;
+    // Calcular la sección del wallpaper que corresponde a este brush
+    const sectionWidth = WALLPAPER_SECTION_WIDTH;
+    const sectionHeight = WALLPAPER_SECTION_HEIGHT;
+    
+    // Usar la configuración de offset del servidor
+    const sourceX = brushConfig.offsetX;
+    const sourceY = brushConfig.offsetY;
+    
+    // Calcular escala para ajustar la sección al canvas
+    const s = Math.min(size.w/sectionWidth, size.h/sectionHeight);
+    const dw = Math.ceil(sectionWidth*s), dh = Math.ceil(sectionHeight*s);
+    layout.dx = Math.floor((size.w-dw)/2); 
+    layout.dy = Math.floor((size.h-dh)/2); 
+    layout.dw = dw; 
+    layout.dh = dh;
+    
+    // Guardar información de la sección para usar en drawImage
+    layout.sourceX = sourceX;
+    layout.sourceY = sourceY;
+    layout.sourceWidth = sectionWidth;
+    layout.sourceHeight = sectionHeight;
   }
   
   // Resetear estado de animación
@@ -1375,11 +1885,11 @@ async function updateFallbackPattern() {
             console.error(`❌ Error cargando wallpaper.jpg (fallback):`, err);
             reject(err);
           };
-          img.src = `patterns/wallpaper.jpg?t=${Date.now()}`;
+          img.src = `/patterns/wallpaper.jpg?t=${Date.now()}`;
         });
         
         patterns.push({
-          src: `patterns/wallpaper.jpg`,
+          src: `/patterns/wallpaper.jpg`,
           image: img,
           filename: 'wallpaper.jpg'
         });

@@ -962,3 +962,40 @@ canvas {
         width: 100%;
     }
 }
+
+/* ========================================
+   AUTO-ROTATION CONTROLS
+   ======================================== */
+
+.auto-rotation-controls {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.auto-rotation-controls .image-btn {
+    width: 200px;
+    text-align: center;
+    transition: all 0.3s ease;
+}
+
+.auto-rotation-controls .image-btn[data-active="true"] {
+    background: #28a745;
+    color: white;
+    border-color: #28a745;
+    box-shadow: 0 2px 8px rgba(40, 167, 69, 0.3);
+}
+
+.auto-rotation-controls .image-btn[data-active="true"]:hover {
+    background: #218838;
+    border-color: #1e7e34;
+}
+
+.rotation-status {
+    font-size: 12px;
+    color: #666;
+    padding: 4px 8px;
+    background: #f8f9fa;
+    border-radius: 4px;
+    border-left: 3px solid #6c757d;
+}
