@@ -2045,19 +2045,21 @@ function createSlideshowContainer() {
   slideshowContainer.style.overflow = 'hidden';
   slideshowContainer.style.borderRadius = '8px';
   slideshowContainer.style.boxShadow = '0 4px 8px rgba(0,0,0,0.3)';
+  slideshowContainer.style.border = '2px solid rgba(255,255,255,0.8)';
   
   // Crear elemento de imagen
   const img = document.createElement('img');
   img.id = 'slideshow-image';
   img.style.width = '100%';
   img.style.height = '100%';
-  img.style.objectFit = 'cover';
+  img.style.objectFit = 'contain'; // Cambiar de 'cover' a 'contain' para respetar el tamaño del contenedor
   img.style.display = 'block';
+  img.style.backgroundColor = 'rgba(0,0,0,0.1)'; // Fondo sutil para ver el área del slideshow
   
   slideshowContainer.appendChild(img);
   document.body.appendChild(slideshowContainer);
   
-  console.log('📺 Contenedor de slideshow creado');
+  console.log('📺 Contenedor de slideshow creado con object-fit: contain');
 }
 
 function updateSlideshowDisplay() {
