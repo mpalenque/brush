@@ -999,3 +999,57 @@ canvas {
     border-radius: 4px;
     border-left: 3px solid #6c757d;
 }
+
+/* ========================================
+   SLIDESHOW CONTROLS
+   Estilos para la configuración del slideshow
+   ======================================== */
+
+.slideshow-config {
+    background: #fff;
+    padding: 20px;
+    border-radius: 8px;
+    border: 1px solid #dee2e6;
+    margin-bottom: 15px;
+}
+
+.slideshow-config h3 {
+    color: #495057;
+    margin-bottom: 15px;
+    font-size: 1.2em;
+    border-bottom: 2px solid #e9ecef;
+    padding-bottom: 8px;
+}
+
+.slideshow-config .control-group {
+    margin-bottom: 15px;
+}
+
+.slideshow-config .control-group label {
+    font-weight: 500;
+    color: #495057;
+    margin-bottom: 5px;
+    display: block;
+}
+
+.slideshow-config input[type="checkbox"] {
+    transform: scale(1.2);
+    margin-right: 8px;
+}
+
+.slideshow-config input[type="range"] {
+    background: #e9ecef;
+}
+
+.slideshow-config input[type="range"]::-webkit-slider-thumb {
+    background: #6f42c1;
+}
+
+.slideshow-config input[type="range"]::-moz-range-thumb {
+    background: #6f42c1;
+}
+
+.slideshow-config .range-display {
+    color: #6f42c1;
+    font-weight: bold;
+}

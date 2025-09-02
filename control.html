@@ -348,6 +348,79 @@
             </div>
         </div>
 
+        <!-- Configuración Slideshow -->
+        <div class="section">
+            <h2>📺 Configuración Slideshow (Brush 3 y 7)</h2>
+            <p style="color: #666; margin-bottom: 15px;">
+                Control del slideshow superpuesto en brush-reveal/3 y brush-reveal/7.<br>
+                Las imágenes se cargan desde las carpetas slideshow/3 y slideshow/4 respectivamente.
+            </p>
+            
+            <!-- Slideshow para Brush 3 -->
+            <div class="slideshow-config">
+                <h3>📺 Slideshow Brush 3 (Carpeta: slideshow/3)</h3>
+                <div class="controls-grid">
+                    <div class="control-group">
+                        <label>
+                            <input type="checkbox" id="slideshow3Enabled"> Activar Slideshow Brush 3
+                        </label>
+                    </div>
+                    <div class="control-group">
+                        <label for="slideshow3Width">Ancho: <span id="slideshow3WidthValue" class="range-display">200px</span></label>
+                        <input type="range" id="slideshow3Width" min="50" max="500" value="200">
+                    </div>
+                    <div class="control-group">
+                        <label for="slideshow3Height">Alto: <span id="slideshow3HeightValue" class="range-display">200px</span></label>
+                        <input type="range" id="slideshow3Height" min="50" max="500" value="200">
+                    </div>
+                    <div class="control-group">
+                        <label for="slideshow3X">Posición X: <span id="slideshow3XValue" class="range-display">50px</span></label>
+                        <input type="range" id="slideshow3X" min="0" max="1000" value="50">
+                    </div>
+                    <div class="control-group">
+                        <label for="slideshow3Y">Posición Y: <span id="slideshow3YValue" class="range-display">50px</span></label>
+                        <input type="range" id="slideshow3Y" min="0" max="1000" value="50">
+                    </div>
+                    <div class="control-group">
+                        <label for="slideshow3Interval">Intervalo: <span id="slideshow3IntervalValue" class="range-display">3000ms</span></label>
+                        <input type="range" id="slideshow3Interval" min="1000" max="10000" value="3000" step="500">
+                    </div>
+                </div>
+            </div>
+
+            <!-- Slideshow para Brush 7 -->
+            <div class="slideshow-config" style="margin-top: 20px;">
+                <h3>📺 Slideshow Brush 7 (Carpeta: slideshow/4)</h3>
+                <div class="controls-grid">
+                    <div class="control-group">
+                        <label>
+                            <input type="checkbox" id="slideshow7Enabled"> Activar Slideshow Brush 7
+                        </label>
+                    </div>
+                    <div class="control-group">
+                        <label for="slideshow7Width">Ancho: <span id="slideshow7WidthValue" class="range-display">200px</span></label>
+                        <input type="range" id="slideshow7Width" min="50" max="500" value="200">
+                    </div>
+                    <div class="control-group">
+                        <label for="slideshow7Height">Alto: <span id="slideshow7HeightValue" class="range-display">200px</span></label>
+                        <input type="range" id="slideshow7Height" min="50" max="500" value="200">
+                    </div>
+                    <div class="control-group">
+                        <label for="slideshow7X">Posición X: <span id="slideshow7XValue" class="range-display">50px</span></label>
+                        <input type="range" id="slideshow7X" min="0" max="1000" value="50">
+                    </div>
+                    <div class="control-group">
+                        <label for="slideshow7Y">Posición Y: <span id="slideshow7YValue" class="range-display">50px</span></label>
+                        <input type="range" id="slideshow7Y" min="0" max="1000" value="50">
+                    </div>
+                    <div class="control-group">
+                        <label for="slideshow7Interval">Intervalo: <span id="slideshow7IntervalValue" class="range-display">3000ms</span></label>
+                        <input type="range" id="slideshow7Interval" min="1000" max="10000" value="3000" step="500">
+                    </div>
+                </div>
+            </div>
+        </div>
+
         <!-- Abrir Pantallas -->
         <div class="section">
             <h2>🚀 Abrir Pantallas en Nuevas Pestañas</h2>
@@ -478,6 +551,9 @@
             if (autoRotationBtn) {
                 autoRotationBtn.addEventListener('click', toggleAutoRotation);
             }
+            
+            // Inicializar controles de slideshow
+            initializeSlideshowControls();
         });
         
         // NUEVO: Manejador de tecla 'a' para capturar wallpaper
@@ -524,6 +600,78 @@
             if (connectionCheckInterval) clearInterval(connectionCheckInterval);
             if (rotationInterval) clearInterval(rotationInterval);
         });
+
+        // ==============================
+        // SLIDESHOW CONTROLS
+        // ==============================
+
+        function initializeSlideshowControls() {
+            // Slideshow Brush 3
+            setupSlideshowControls(3, 'slideshow/3');
+            
+            // Slideshow Brush 7 
+            setupSlideshowControls(7, 'slideshow/4');
+        }
+
+        function setupSlideshowControls(brushId, folder) {
+            const enabled = document.getElementById(`slideshow${brushId}Enabled`);
+            const width = document.getElementById(`slideshow${brushId}Width`);
+            const height = document.getElementById(`slideshow${brushId}Height`);
+            const x = document.getElementById(`slideshow${brushId}X`);
+            const y = document.getElementById(`slideshow${brushId}Y`);
+            const interval = document.getElementById(`slideshow${brushId}Interval`);
+
+            // Event listeners para actualizar valores en tiempo real
+            enabled.addEventListener('change', () => updateSlideshowConfig(brushId));
+            width.addEventListener('input', (e) => {
+                document.getElementById(`slideshow${brushId}WidthValue`).textContent = e.target.value + 'px';
+                updateSlideshowConfig(brushId);
+            });
+            height.addEventListener('input', (e) => {
+                document.getElementById(`slideshow${brushId}HeightValue`).textContent = e.target.value + 'px';
+                updateSlideshowConfig(brushId);
+            });
+            x.addEventListener('input', (e) => {
+                document.getElementById(`slideshow${brushId}XValue`).textContent = e.target.value + 'px';
+                updateSlideshowConfig(brushId);
+            });
+            y.addEventListener('input', (e) => {
+                document.getElementById(`slideshow${brushId}YValue`).textContent = e.target.value + 'px';
+                updateSlideshowConfig(brushId);
+            });
+            interval.addEventListener('input', (e) => {
+                document.getElementById(`slideshow${brushId}IntervalValue`).textContent = e.target.value + 'ms';
+                updateSlideshowConfig(brushId);
+            });
+        }
+
+        function updateSlideshowConfig(brushId) {
+            const config = {
+                enabled: document.getElementById(`slideshow${brushId}Enabled`).checked,
+                width: parseInt(document.getElementById(`slideshow${brushId}Width`).value),
+                height: parseInt(document.getElementById(`slideshow${brushId}Height`).value),
+                x: parseInt(document.getElementById(`slideshow${brushId}X`).value),
+                y: parseInt(document.getElementById(`slideshow${brushId}Y`).value),
+                interval: parseInt(document.getElementById(`slideshow${brushId}Interval`).value),
+                folder: brushId === 3 ? '3' : '4'
+            };
+
+            // Enviar configuración al servidor
+            fetch(`/api/slideshow/${brushId}`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify(config)
+            })
+            .then(response => response.json())
+            .then(data => {
+                console.log(`📺 Configuración de slideshow ${brushId} actualizada:`, config);
+            })
+            .catch(error => {
+                console.error('Error actualizando slideshow:', error);
+            });
+        }
     </script>
     <script src="assets/js/control.js"></script>
 </body>

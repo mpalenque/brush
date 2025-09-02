@@ -49,6 +49,22 @@ let selectedImage = 'red';
 // Control de inicialización
 let hasInitialAnimationStarted = false;
 
+// Variables del slideshow
+let slideshowConfig = {
+  enabled: false,
+  folder: '3',
+  width: 200,
+  height: 200,
+  x: 50,
+  y: 50,
+  interval: 3000,
+  zIndex: 1000
+};
+let slideshowImages = [];
+let currentSlideshowIndex = 0;
+let slideshowInterval = null;
+let slideshowContainer = null;
+
 // Patrones para alternar secuencialmente
 const patterns = [];
 let currentPatternIndex = 0; // Índice del patrón actual
@@ -218,6 +234,15 @@ function setupWebSocket() {
       console.log(`🎨 *** EVENTO RECIBIDO *** Rotación automática - nueva imagen: ${data.imageName} (${data.imageType})`);
       console.log(`📥 Datos completos del evento:`, data);
       loadSpecificImageAndAnimate(data.imageName, data.imageType);
+    });
+    
+    // NUEVO: Escuchar configuración del slideshow
+    socket.on('slideshowConfigUpdate', (data) => {
+      if (data.brushId === brushId) {
+        console.log(`📺 Configuración de slideshow actualizada para brush ${brushId}:`, data.config);
+        slideshowConfig = { ...slideshowConfig, ...data.config };
+        updateSlideshowDisplay();
+      }
     });
     
   } catch (error) {
@@ -1947,4 +1972,151 @@ window.addEventListener('load', async () => {
   } catch (error) {
     console.error('❌ Error al recargar patrones:', error);
   }
+  
+  // Inicializar slideshow si este brush lo necesita
+  initializeSlideshow();
 });
+
+// ==============================
+// SLIDESHOW FUNCTIONALITY
+// ==============================
+
+async function initializeSlideshow() {
+  // Solo inicializar slideshow para brush 3 y 7
+  if (![3, 7].includes(brushId)) {
+    return;
+  }
+  
+  console.log(`📺 Inicializando slideshow para brush ${brushId}`);
+  
+  // Obtener configuración inicial del servidor
+  try {
+    const response = await fetch('/api/state');
+    const state = await response.json();
+    
+    if (state.slideshow && state.slideshow[brushId]) {
+      slideshowConfig = { ...slideshowConfig, ...state.slideshow[brushId] };
+      console.log(`📺 Configuración de slideshow cargada:`, slideshowConfig);
+    }
+  } catch (error) {
+    console.warn('Error cargando configuración de slideshow:', error);
+  }
+  
+  // Cargar imágenes del slideshow
+  await loadSlideshowImages();
+  
+  // Crear contenedor del slideshow
+  createSlideshowContainer();
+  
+  // Actualizar display
+  updateSlideshowDisplay();
+}
+
+async function loadSlideshowImages() {
+  try {
+    const response = await fetch(`/api/slideshow/${slideshowConfig.folder}`);
+    const data = await response.json();
+    
+    if (data.success && data.images.length > 0) {
+      slideshowImages = data.images;
+      console.log(`📸 ${slideshowImages.length} imágenes cargadas para slideshow:`, slideshowImages);
+    } else {
+      console.warn('No se encontraron imágenes para el slideshow');
+      slideshowImages = [];
+    }
+  } catch (error) {
+    console.error('Error cargando imágenes del slideshow:', error);
+    slideshowImages = [];
+  }
+}
+
+function createSlideshowContainer() {
+  // Eliminar contenedor existente si ya existe
+  if (slideshowContainer) {
+    slideshowContainer.remove();
+  }
+  
+  // Crear nuevo contenedor
+  slideshowContainer = document.createElement('div');
+  slideshowContainer.id = 'slideshow-container';
+  slideshowContainer.style.position = 'absolute';
+  slideshowContainer.style.zIndex = slideshowConfig.zIndex;
+  slideshowContainer.style.pointerEvents = 'none';
+  slideshowContainer.style.overflow = 'hidden';
+  slideshowContainer.style.borderRadius = '8px';
+  slideshowContainer.style.boxShadow = '0 4px 8px rgba(0,0,0,0.3)';
+  
+  // Crear elemento de imagen
+  const img = document.createElement('img');
+  img.id = 'slideshow-image';
+  img.style.width = '100%';
+  img.style.height = '100%';
+  img.style.objectFit = 'cover';
+  img.style.display = 'block';
+  
+  slideshowContainer.appendChild(img);
+  document.body.appendChild(slideshowContainer);
+  
+  console.log('📺 Contenedor de slideshow creado');
+}
+
+function updateSlideshowDisplay() {
+  if (!slideshowContainer) {
+    return;
+  }
+  
+  // Actualizar posición y tamaño
+  slideshowContainer.style.left = `${slideshowConfig.x}px`;
+  slideshowContainer.style.top = `${slideshowConfig.y}px`;
+  slideshowContainer.style.width = `${slideshowConfig.width}px`;
+  slideshowContainer.style.height = `${slideshowConfig.height}px`;
+  slideshowContainer.style.zIndex = slideshowConfig.zIndex;
+  
+  // Mostrar/ocultar según configuración
+  if (slideshowConfig.enabled && slideshowImages.length > 0) {
+    slideshowContainer.style.display = 'block';
+    startSlideshow();
+  } else {
+    slideshowContainer.style.display = 'none';
+    stopSlideshow();
+  }
+  
+  console.log(`📺 Slideshow actualizado - enabled: ${slideshowConfig.enabled}, posición: (${slideshowConfig.x}, ${slideshowConfig.y}), tamaño: ${slideshowConfig.width}x${slideshowConfig.height}`);
+}
+
+function startSlideshow() {
+  // Detener slideshow actual si existe
+  stopSlideshow();
+  
+  if (slideshowImages.length === 0) {
+    return;
+  }
+  
+  // Mostrar primera imagen inmediatamente
+  showSlideshowImage(currentSlideshowIndex);
+  
+  // Iniciar intervalo para cambio automático
+  if (slideshowImages.length > 1) {
+    slideshowInterval = setInterval(() => {
+      currentSlideshowIndex = (currentSlideshowIndex + 1) % slideshowImages.length;
+      showSlideshowImage(currentSlideshowIndex);
+    }, slideshowConfig.interval);
+  }
+  
+  console.log(`📺 Slideshow iniciado con ${slideshowImages.length} imágenes, intervalo: ${slideshowConfig.interval}ms`);
+}
+
+function stopSlideshow() {
+  if (slideshowInterval) {
+    clearInterval(slideshowInterval);
+    slideshowInterval = null;
+  }
+}
+
+function showSlideshowImage(index) {
+  const img = document.getElementById('slideshow-image');
+  if (img && slideshowImages[index]) {
+    img.src = slideshowImages[index];
+    console.log(`📺 Mostrando imagen ${index + 1}/${slideshowImages.length}: ${slideshowImages[index]}`);
+  }
+}

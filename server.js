@@ -241,6 +241,29 @@ let globalState = {
         8: { offsetX: 2160, offsetY: 0 },   // Sección 8: repetir centro
         9: { offsetX: 4320, offsetY: 0 }    // Sección 9: repetir derecha
     },
+    // Configuración del slideshow para brush-reveal específicos
+    slideshow: {
+        3: {
+            enabled: true,
+            folder: '3',
+            width: 200,
+            height: 200,
+            x: 50,
+            y: 50,
+            interval: 3000,
+            zIndex: 1000
+        },
+        7: {
+            enabled: true,
+            folder: '4',
+            width: 200,
+            height: 200,
+            x: 50,
+            y: 50,
+            interval: 3000,
+            zIndex: 1000
+        }
+    },
     // Wallpaper state
     wallpaper: {
         isActive: true
@@ -308,6 +331,37 @@ app.get('/test-brush', (req, res) => {
     res.sendFile(path.join(__dirname, 'test-brush-reveals.html'));
 });
 
+// API para obtener imágenes del slideshow
+app.get('/api/slideshow/:folder', (req, res) => {
+    const folder = req.params.folder;
+    const slideshowPath = path.join(__dirname, 'slideshow', folder);
+    
+    try {
+        if (!fs.existsSync(slideshowPath)) {
+            return res.json({ success: false, images: [], message: 'Folder not found' });
+        }
+        
+        const files = fs.readdirSync(slideshowPath);
+        const imageFiles = files.filter(file => {
+            const ext = path.extname(file).toLowerCase();
+            return ['.jpg', '.jpeg', '.png', '.gif', '.webp'].includes(ext);
+        });
+        
+        const images = imageFiles.map(file => `/slideshow/${folder}/${file}`);
+        
+        res.json({
+            success: true,
+            images: images,
+            count: images.length
+        });
+    } catch (error) {
+        res.json({ success: false, images: [], message: error.message });
+    }
+});
+
+// Servir archivos del slideshow
+app.use('/slideshow', express.static(path.join(__dirname, 'slideshow')));
+
 // Alias de imágenes en español para compatibilidad con UI
 
 // API endpoints
@@ -340,6 +394,18 @@ app.post('/api/brush-reveal/:id', (req, res) => {
         res.json({ success: true });
     } else {
         res.status(404).json({ error: 'Brush reveal ID must be between 1 and 9' });
+    }
+});
+
+// API para configurar slideshow
+app.post('/api/slideshow/:id', (req, res) => {
+    const brushId = parseInt(req.params.id);
+    if ([3, 7].includes(brushId)) {
+        globalState.slideshow[brushId] = { ...globalState.slideshow[brushId], ...req.body };
+        io.emit('slideshowConfigUpdate', { brushId, config: globalState.slideshow[brushId] });
+        res.json({ success: true });
+    } else {
+        res.status(404).json({ error: 'Slideshow only available for brush-reveal 3 and 7' });
     }
 });
 
