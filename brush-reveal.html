@@ -8,11 +8,15 @@
         html, body { margin: 0; padding: 0; height: 100%; overflow: hidden; background: #f8efe6; }
         .container { position: relative; width: 100vw; height: 100vh; }
         .canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+        
+    /* FPS Counter (disabled) */
     </style>
 </head>
 <body>
   <div class="container" id="container">
         <canvas class="canvas js-canvas"></canvas>
+        
+    <!-- FPS Counter removed -->
     </div>
     
     <script>
@@ -47,11 +51,13 @@
         
         // Verificar conexión cada 10 segundos (menos frecuente)
         setInterval(ensureConnection, 10000);
+        
+    // FPS counter removed
     </script>
     
     <!-- Socket.IO para comunicación en tiempo real -->
     <script src="/socket.io/socket.io.js"></script>
     
-  <script src="/brush-reveal.js" defer></script>
+  <script src="/brush-reveal.js?v=3" defer></script>
  </body>
  </html>

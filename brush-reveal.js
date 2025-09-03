@@ -1,15 +1,15 @@
-// Ajustes generales - OPTIMIZADOS PARA VELOCIDAD CONTROLADA
-const DURATION_MS = 30000; // 30s - tiempo objetivo final
+// Ajustes generales - OPTIMIZADOS PARA COLOREADO COMPLETO Y SINCRONIZACIÓN
+const DURATION_MS = 14000; // 14s - más lento para completar toda la imagen por igual
 const DPR = 1; // cap para rendimiento
-const MASK_SCALE = 0.7; // máscara a menor resolución para velocidad
-const MAX_UNITS_PER_FRAME = 120; // aún menos trabajo por frame para suavidad máxima
-const FINAL_SEAL_START = 0.60; // iniciar sellado antes
-const FINAL_SEAL_ALPHA_MIN = 0.08; // opacidad mínima más baja para suavidad
-const FINAL_SEAL_ALPHA_MAX = 0.16; // opacidad máxima más baja para suavidad
-const FINAL_SEAL_CHUNK_BASE = 4; // menos trabajo por frame para sellado más lento
-const WASH_START = 0.70; // iniciar lavado más tarde
-const WASH_CHUNK_BASE = 12; // más trabajo de lavado
-const MAX_STEPS_PER_ENTITY_FRAME = 1; // solo 1 paso por entidad por frame para máxima suavidad
+const MASK_SCALE = 0.7; // máscara equilibrada entre calidad y rendimiento
+const MAX_UNITS_PER_FRAME = 250; // reducido para coloreado más lento y uniforme
+const FINAL_SEAL_START = 0.35; // iniciar sellado temprano para cobertura completa
+const FINAL_SEAL_ALPHA_MIN = 0.20; // opacidad más alta para mejor cobertura
+const FINAL_SEAL_ALPHA_MAX = 0.35; // opacidad más alta para mejor cobertura
+const FINAL_SEAL_CHUNK_BASE = 15; // trabajo moderado por frame para cerrar huecos
+const WASH_START = 0.45; // iniciar lavado antes para cobertura completa
+const WASH_CHUNK_BASE = 30; // más wash por frame para cobertura completa
+const MAX_STEPS_PER_ENTITY_FRAME = 5; // permitir más pasos por entidad para coloreado
 
 // Detectar brushId de la URL
 function getBrushIdFromURL() {
@@ -51,12 +51,12 @@ let hasInitialAnimationStarted = false;
 
 // Variables del slideshow
 let slideshowConfig = {
-  enabled: false,
+  enabled: true, // Activado por defecto
   folder: '3',
-  width: 200,
-  height: 200,
-  x: 50,
-  y: 50,
+  width: 865,  // Nuevos valores por defecto para brush-3
+  height: 972,
+  x: 102,
+  y: 153,
   interval: 3000,
   zIndex: 1000
 };
@@ -66,27 +66,340 @@ let slideshowInterval = null;
 let slideshowContainer = null;
 
 // Patrones para alternar secuencialmente
-const patterns = [];
+let patterns = [];
 let currentPatternIndex = 0; // Índice del patrón actual
 
+// Variables para rotación automática de patrones
+let automaticRotationEnabled = false;
+let rotationInterval = null;
+let rotationPatterns = ['amarillo', 'azul', 'rojo'];
+let currentRotationIndex = 0;
+let rotationIntervalTime = 120000; // 2 minutos por defecto
+let rotationAnchorTs = null; // marca de tiempo compartida desde el servidor
+
 const brushSrcs = [
-  'Stroke/blue-watercolor-brush-stroke-1.png',
-  'Stroke/blue-watercolor-brush-stroke-2.png',
-  'Stroke/blue-watercolor-brush-stroke-6.png',
-  'Stroke/blue-watercolor-brush-stroke-7.png',
-  'Stroke/blue-watercolor-brush-stroke-14.png'
+  '/Stroke/blue-watercolor-brush-stroke-1.png',
+  '/Stroke/blue-watercolor-brush-stroke-2.png',
+  '/Stroke/blue-watercolor-brush-stroke-6.png',
+  '/Stroke/blue-watercolor-brush-stroke-7.png',
+  '/Stroke/blue-watercolor-brush-stroke-14.png'
 ];
 let maskBrushes = [];
 
-// Función para obtener el patrón actual
+// Función para obtener el patrón actual - SIMPLIFICADA Y ROBUSTA
 function getCurrentPattern() {
-  if (patterns.length === 0) {
-    console.error('⚠️ NO HAY PATRONES CARGADOS - SISTEMA INOPERATIVO');
+  // Verificar si hay patrones cargados
+  if (!patterns || patterns.length === 0) {
+    console.warn('⚠️ No hay patrones cargados - cargando amarillo.jpg como fallback');
+    // Intentar cargar amarillo.jpg como fallback inmediato
+    loadDefaultPattern();
     return null;
   }
+  
+  // Asegurar que el índice esté dentro del rango
+  if (currentPatternIndex >= patterns.length) {
+    currentPatternIndex = patterns.length - 1;
+  }
+  if (currentPatternIndex < 0) {
+    currentPatternIndex = 0;
+  }
+  
   const currentPattern = patterns[currentPatternIndex];
-  console.log(`🎯 CONFIRMADO - Usando patrón: ${currentPattern.src} (${currentPattern.filename || 'sin nombre'}) - índice: ${currentPatternIndex}/${patterns.length - 1}`);
+  if (!currentPattern || !currentPattern.image) {
+    console.error('⚠️ Patrón actual inválido - reargando sistema...');
+    loadDefaultPattern();
+    return null;
+  }
+  
   return currentPattern.image;
+}
+
+// Variables para la secuencia automática de coloreado
+let autoColorSequence = {
+  active: false,
+  patterns: ['rojo.jpg', 'azul.jpg', 'amarillo.jpg'],
+  currentIndex: 0,
+  interval: null,
+  intervalTime: 16000 // 16 segundos entre cada coloreado (el doble de lento)
+};
+
+// Variable para controlar el modo de coloreado
+let coloringMode = 'sequence'; // 'sequence' o 'wallpaper'
+
+// Función para iniciar la secuencia automática de coloreado
+function startAutoColorSequence() {
+  if (coloringMode !== 'sequence') {
+    console.log(`⚠️ No se puede iniciar secuencia automática en modo ${coloringMode}`);
+    return;
+  }
+  
+  if (autoColorSequence.active) {
+    console.log('🔄 Secuencia de coloreado ya está activa');
+    return;
+  }
+  
+  autoColorSequence.active = true;
+  autoColorSequence.currentIndex = 0;
+  
+  console.log('🎨 *** INICIANDO SECUENCIA AUTOMÁTICA DE COLOREADO ***');
+  console.log(`🔄 Secuencia: ${autoColorSequence.patterns.join(' → ')} (cada ${autoColorSequence.intervalTime/1000}s)`);
+  
+  // Iniciar inmediatamente con el primer color
+  setTimeout(() => {
+    executeColorStep();
+  }, 2000); // Esperar 2 segundos después de mostrar el fondo
+  
+  // Configurar intervalo para los siguientes pasos
+  autoColorSequence.interval = setInterval(() => {
+    executeColorStep();
+  }, autoColorSequence.intervalTime);
+}
+
+// Función para iniciar la secuencia automática con sincronización del servidor
+function startAutoColorSequenceSync(syncData) {
+  if (autoColorSequence.active) {
+    console.log('🔄 Secuencia de coloreado ya está activa - deteniendo para resincronizar');
+    stopAutoColorSequence();
+  }
+  
+  autoColorSequence.active = true;
+  autoColorSequence.currentIndex = 0;
+  
+  // Usar datos del servidor si están disponibles
+  if (syncData) {
+    autoColorSequence.intervalTime = syncData.intervalTime || 16000;
+    if (syncData.patterns) {
+      autoColorSequence.patterns = syncData.patterns;
+    }
+  }
+  
+  console.log('🎨 *** INICIANDO SECUENCIA SINCRONIZADA DE COLOREADO ***');
+  console.log(`🔄 Secuencia: ${autoColorSequence.patterns.join(' → ')} (cada ${autoColorSequence.intervalTime/1000}s)`);
+  console.log(`⏰ Sincronización basada en timestamp del servidor: ${syncData?.timestamp}`);
+  
+  // Calcular el retraso para sincronización
+  let initialDelay = 2000; // Retraso base de 2 segundos
+  
+  if (syncData?.timestamp) {
+    // Calcular cuánto tiempo ha pasado desde el timestamp del servidor
+    const now = Date.now();
+    const timeSinceSync = now - syncData.timestamp;
+    
+    // Ajustar el retraso para que todas las pantallas estén sincronizadas
+    if (timeSinceSync < 500) { // Si es muy reciente, agregar un pequeño buffer
+      initialDelay = 2000 - timeSinceSync + 100; // 100ms de buffer
+    }
+    
+    console.log(`⏰ Ajuste de sincronización: ${initialDelay}ms desde ahora`);
+  }
+  
+  // Iniciar con el primer color
+  setTimeout(() => {
+    executeColorStep();
+  }, Math.max(100, initialDelay)); // Mínimo 100ms
+  
+  // Configurar intervalo sincronizado para los siguientes pasos
+  setTimeout(() => {
+    autoColorSequence.interval = setInterval(() => {
+      executeColorStep();
+    }, autoColorSequence.intervalTime);
+  }, Math.max(100, initialDelay));
+}
+
+// Función para detener la secuencia automática
+function stopAutoColorSequence() {
+  if (autoColorSequence.interval) {
+    clearInterval(autoColorSequence.interval);
+    autoColorSequence.interval = null;
+  }
+  autoColorSequence.active = false;
+  console.log('⏹️ Secuencia automática de coloreado detenida');
+}
+
+// Función para resetear la secuencia de coloreado a amarillo
+async function resetColorSequenceToYellow() {
+  console.log('🔄 *** RESET *** Reseteando a fondo amarillo y reiniciando secuencia');
+  
+  // Detener secuencia automática si está activa
+  stopAutoColorSequence();
+  
+  // Limpiar patrones excepto el amarillo (índice 0)
+  if (patterns.length > 1) {
+    patterns.splice(1); // Mantener solo el primer patrón (amarillo.jpg)
+    currentPatternIndex = 0;
+    console.log('🗑️ Patrones de coloreado limpiados, manteniendo solo amarillo.jpg');
+  }
+  
+  // Resetear flags de animación
+  isFirstAnimation = true;
+  preserveCanvasContent = false;
+  animationFinished = false;
+  
+  // Cancelar animaciones en curso
+  if (rafId) {
+    cancelAnimationFrame(rafId);
+    rafId = 0;
+  }
+  
+  // Recalcular layout y redibujar fondo amarillo
+  resize();
+  
+  // Resetear índice de secuencia automática
+  autoColorSequence.currentIndex = 0;
+  
+  console.log('✅ Reset completado - Fondo amarillo restaurado, listo para nueva secuencia');
+}
+
+// Función para cambiar a modo wallpaper
+async function switchToWallpaperMode() {
+  console.log('🔀 *** SWITCH *** Cambiando a modo Wallpaper (wallpaper.jpg)');
+  
+  // Detener secuencia automática si está activa
+  stopAutoColorSequence();
+  
+  // Cambiar modo
+  coloringMode = 'wallpaper';
+  
+  try {
+    // Cargar wallpaper.jpg
+    const img = new Image();
+    await new Promise((resolve, reject) => {
+      img.onload = resolve;
+      img.onerror = reject;
+      img.src = `/patterns/wallpaper.jpg?t=${Date.now()}`;
+    });
+    
+    // Agregar wallpaper.jpg como patrón de coloreado
+    const wallpaperPattern = {
+      src: `/patterns/wallpaper.jpg`,
+      image: img,
+      filename: 'wallpaper.jpg',
+      type: 'wallpaper'
+    };
+    
+    // Agregar al final de la lista y usarlo para colorear
+    patterns.push(wallpaperPattern);
+    currentPatternIndex = patterns.length - 1;
+    
+    console.log('✅ Wallpaper.jpg cargado, iniciando coloreado...');
+    
+    // Recalcular layout
+    resize();
+    
+    // Iniciar coloreado con wallpaper
+    colorOnTop();
+    
+  } catch (error) {
+    console.error('❌ Error cargando wallpaper.jpg:', error);
+  }
+}
+
+// Función para cambiar a modo secuencia
+function switchToSequenceMode() {
+  console.log('🔀 *** SWITCH *** Cambiando a modo Secuencia (rojo→azul→amarillo)');
+  
+  // Cambiar modo
+  coloringMode = 'sequence';
+  
+  // Limpiar patrones excepto el amarillo y los de secuencia base
+  if (patterns.length > 4) { // amarillo, wallpaper, azul, rojo = 4 base
+    patterns.splice(4); // Mantener solo los patrones base
+  }
+  
+  // Resetear a amarillo como base
+  currentPatternIndex = 0;
+  
+  // Resetear índice de secuencia
+  autoColorSequence.currentIndex = 0;
+  
+  console.log('✅ Modo secuencia activado - Listo para secuencia automática');
+}
+
+// Función para ejecutar un paso de la secuencia de coloreado
+async function executeColorStep() {
+  if (!autoColorSequence.active) return;
+  
+  const currentPattern = autoColorSequence.patterns[autoColorSequence.currentIndex];
+  const currentTime = new Date().toLocaleTimeString();
+  
+  console.log(`🎨 *** COLOREANDO *** [${currentTime}] Aplicando: ${currentPattern}`);
+  
+  try {
+    // Cargar el patrón de color
+    const img = new Image();
+    await new Promise((resolve, reject) => {
+      img.onload = resolve;
+      img.onerror = reject;
+      img.src = `/patterns/${currentPattern}?t=${Date.now()}`;
+    });
+    
+    // Agregar el patrón a la lista sin reemplazar el fondo
+    const newPattern = {
+      src: `/patterns/${currentPattern}`,
+      image: img,
+      filename: currentPattern,
+      type: currentPattern.replace('.jpg', '')
+    };
+    
+    // Agregar al final de la lista (el fondo amarillo permanece como índice 0)
+    patterns.push(newPattern);
+    // Usar el nuevo patrón para colorear
+    currentPatternIndex = patterns.length - 1;
+    
+    console.log(`✅ Patrón ${currentPattern} cargado, iniciando coloreado...`);
+    
+    // Recalcular layout para el nuevo patrón
+    resize();
+    
+    // Iniciar animación de coloreado encima del fondo existente
+    colorOnTop();
+    
+    // Avanzar al siguiente patrón en la secuencia
+    autoColorSequence.currentIndex = (autoColorSequence.currentIndex + 1) % autoColorSequence.patterns.length;
+    
+    // Calcular siguiente patrón para log
+    const nextPattern = autoColorSequence.patterns[autoColorSequence.currentIndex];
+    const nextTime = new Date(Date.now() + autoColorSequence.intervalTime).toLocaleTimeString();
+    
+    console.log(`⏰ Próximo coloreado: ${nextPattern} a las ${nextTime}`);
+    
+  } catch (error) {
+    console.error(`❌ Error aplicando patrón ${currentPattern}:`, error);
+  }
+}
+
+// Función para cargar patrón por defecto (amarillo.jpg)
+async function loadDefaultPattern() {
+  try {
+    console.log('🎨 Cargando amarillo.jpg como patrón por defecto...');
+    const img = new Image();
+    await new Promise((resolve, reject) => {
+      img.onload = resolve;
+      img.onerror = reject;
+      img.src = `/patterns/amarillo.jpg?t=${Date.now()}`;
+    });
+    
+    // Establecer como único patrón para evitar confusión
+    patterns = [{
+      src: `/patterns/amarillo.jpg`,
+      image: img,
+      filename: 'amarillo.jpg',
+      type: 'amarillo'
+    }];
+    currentPatternIndex = 0;
+    
+    console.log('✅ Patrón por defecto (amarillo.jpg) cargado exitosamente');
+    
+    // Recalcular layout
+    if (size.w > 0 && size.h > 0) {
+      resize();
+    }
+    
+    return true;
+  } catch (error) {
+    console.error('❌ Error cargando patrón por defecto:', error);
+    return false;
+  }
 }
 
 // ==============================
@@ -104,49 +417,70 @@ async function checkIfFileExists(url) {
 
 async function loadLatestPatterns() {
   try {
-    console.log('🔍 Cargando wallpaper.jpg...');
+    console.log('🔍 Cargando patrones disponibles...');
     
-    // Verificar si existe wallpaper.jpg
-    const wallpaperExists = await checkIfFileExists('/patterns/wallpaper.jpg');
+    // Lista de patrones a cargar en orden de prioridad
+    const patternFiles = ['amarillo.jpg', 'wallpaper.jpg', 'azul.jpg', 'rojo.jpg'];
+    let loadedAny = false;
     
-    if (wallpaperExists) {
-      console.log(`🎯 Cargando wallpaper.jpg`);
-      
-      // Limpiar patrones existentes
-      patterns.length = 0;
-      
-      const img = new Image();
-      await new Promise((resolve, reject) => {
-        img.onload = () => {
-          console.log(`✅ wallpaper.jpg cargado exitosamente`);
-          resolve();
-        };
-        img.onerror = (err) => {
-          console.error(`❌ Error cargando wallpaper.jpg`, err);
-          reject(err);
-        };
-        img.src = `/patterns/wallpaper.jpg?t=${Date.now()}`;
-      });
-      
-      patterns.push({
-        src: `/patterns/wallpaper.jpg`,
-        image: img,
-        filename: 'wallpaper.jpg'
-      });
-      
-      // Usar el patrón recién cargado
-      currentPatternIndex = 0;
-      console.log(`🎨 CONFIRMADO - Usando patrón más reciente: ${patterns[0].src}`);
+    // Limpiar patrones existentes
+    patterns.length = 0;
+    
+    // Intentar cargar cada patrón
+    for (const filename of patternFiles) {
+      try {
+        const exists = await checkIfFileExists(`/patterns/${filename}`);
+        if (exists) {
+          console.log(`🎯 Cargando ${filename}...`);
+          
+          const img = new Image();
+          await new Promise((resolve, reject) => {
+            img.onload = () => {
+              console.log(`✅ ${filename} cargado exitosamente`);
+              resolve();
+            };
+            img.onerror = (err) => {
+              console.warn(`❌ Error cargando ${filename}:`, err);
+              reject(err);
+            };
+            img.src = `/patterns/${filename}?t=${Date.now()}`;
+          });
+          
+          // Determinar tipo de patrón
+          let type = 'pattern';
+          if (filename.includes('amarillo')) type = 'amarillo';
+          else if (filename.includes('azul')) type = 'azul';
+          else if (filename.includes('rojo')) type = 'rojo';
+          
+          patterns.push({
+            src: `/patterns/${filename}`,
+            image: img,
+            filename: filename,
+            type: type
+          });
+          
+          loadedAny = true;
+          
+          // Si es el primer patrón (amarillo.jpg), establecerlo como actual
+          if (patterns.length === 1) {
+            currentPatternIndex = 0;
+            console.log(`🎨 Patrón inicial establecido: ${filename}`);
+          }
+        }
+      } catch (error) {
+        console.warn(`⚠️ No se pudo cargar ${filename}:`, error);
+      }
+    }
+    
+    if (loadedAny) {
       console.log(`📊 Total de patrones cargados: ${patterns.length}`);
-      
       return true;
     } else {
-      console.warn('❌ No se encontraron patrones válidos en la respuesta del servidor');
-      console.warn('Data recibida:', data);
+      console.error('❌ No se pudo cargar ningún patrón');
       return false;
     }
   } catch (error) {
-    console.error('❌ Error cargando patrones:', error);
+    console.error('❌ Error en loadLatestPatterns:', error);
     return false;
   }
 }
@@ -200,7 +534,7 @@ function setupWebSocket() {
 
     // Escuchar cuando hay un nuevo patrón listo
     socket.on('newPatternReady', (data) => {
-      console.log(`🎨 Nuevo patrón recibido:`, data);
+      console.log(`🎨 *** BRUSH *** Nuevo patrón recibido:`, data);
       latestPatternId = data.patternId;
       
       // Cargar el nuevo patrón y iniciar animación ENCIMA
@@ -231,9 +565,55 @@ function setupWebSocket() {
     
     // NUEVO: Escuchar rotación automática de imágenes desde /control
     socket.on('brushRevealRotateImage', (data) => {
-      console.log(`🎨 *** EVENTO RECIBIDO *** Rotación automática - nueva imagen: ${data.imageName} (${data.imageType})`);
-      console.log(`📥 Datos completos del evento:`, data);
-      loadSpecificImageAndAnimate(data.imageName, data.imageType);
+      console.log(`🎨 *** BRUSH *** EVENTO RECIBIDO - Rotación automática: ${data.image}.jpg`);
+      console.log(`📥 *** BRUSH *** Datos completos del evento:`, data);
+      // Ya no usamos loadSpecificImageAndAnimate, ahora todo va por rotación automática
+    });
+    
+    // NUEVO: Escuchar secuencia de brush reveal (tecla "1")
+    socket.on('startBrushRevealSequence', () => {
+      console.log('🎯 *** BRUSH *** SECUENCIA INICIADA - Starting brush reveal sequence');
+      startAnimationSequence();
+    });
+    
+    // NUEVO: Iniciar secuencia automática de coloreado con sincronización
+    socket.on('startAutoColorSequence', (syncData) => {
+      console.log('🔄 *** BRUSH *** Iniciando secuencia automática desde control con sincronización');
+      console.log(`⏰ *** BRUSH *** Timestamp del servidor: ${syncData?.timestamp}`);
+      startAutoColorSequenceSync(syncData);
+    });
+    
+    // NUEVO: Detener secuencia automática
+    socket.on('stopAutoColorSequence', () => {
+      console.log('⏹️ *** BRUSH *** Deteniendo secuencia automática desde control');
+      stopAutoColorSequence();
+    });
+    
+    // NUEVO: Siguiente paso manual de coloreado con sincronización
+    socket.on('nextColorStep', (syncData) => {
+      console.log('⏭️ *** BRUSH *** Ejecutando siguiente paso de color desde control');
+      if (syncData?.timestamp) {
+        console.log(`⏰ *** BRUSH *** Sincronizando con timestamp: ${syncData.timestamp}`);
+      }
+      executeColorStep();
+    });
+    
+    // NUEVO: Reset de secuencia de coloreado
+    socket.on('resetColorSequence', () => {
+      console.log('🔄 *** BRUSH *** Reseteando secuencia de coloreado desde control');
+      resetColorSequenceToYellow();
+    });
+    
+    // NUEVO: Switch a modo wallpaper
+    socket.on('switchToWallpaperMode', () => {
+      console.log('🔀 *** BRUSH *** Cambiando a modo Wallpaper');
+      switchToWallpaperMode();
+    });
+    
+    // NUEVO: Switch a modo secuencia
+    socket.on('switchToSequenceMode', () => {
+      console.log('🔀 *** BRUSH *** Cambiando a modo Secuencia');
+      switchToSequenceMode();
     });
     
     // NUEVO: Escuchar configuración del slideshow
@@ -243,6 +623,19 @@ function setupWebSocket() {
         slideshowConfig = { ...slideshowConfig, ...data.config };
         updateSlideshowDisplay();
       }
+    });
+
+    // NUEVO: Escuchar rotación automática de patrones
+    socket.on('startPatternRotation', (data) => {
+      console.log('🔄 *** BRUSH *** EVENTO RECIBIDO - startPatternRotation:', data);
+      console.log(`🔄 *** BRUSH *** Brush ID ${brushId} iniciando rotación automática`);
+      startAutomaticPatternRotation(data.patterns, data.interval, data.timestamp);
+    });
+
+    // NUEVO: Escuchar parada de rotación automática
+    socket.on('stopPatternRotation', () => {
+      console.log(`⏹️ *** BRUSH *** EVENTO RECIBIDO - stopPatternRotation en Brush ${brushId}`);
+      stopAutomaticPatternRotation();
     });
     
   } catch (error) {
@@ -268,11 +661,11 @@ async function loadLatestPatternAndAnimate() {
         newImg.src = `/patterns/wallpaper.jpg?t=${Date.now()}`;
       });
 
-      // Reemplazar último patrón con wallpaper.jpg actualizado
-      patterns.push({ src: `/patterns/wallpaper.jpg`, image: newImg, filename: 'wallpaper.jpg' });
-      if (patterns.length > 3) {
-        patterns.shift();
-      }
+  // Reemplazar último patrón con wallpaper.jpg actualizado (evitar duplicados)
+  const srcKey = `/patterns/wallpaper.jpg`;
+  const filtered = patterns.filter(p => p.src !== srcKey);
+  filtered.push({ src: srcKey, image: newImg, filename: 'wallpaper.jpg' });
+  patterns = filtered.slice(-3); // cap a 3 para evitar acumulación
       currentPatternIndex = patterns.length - 1;
       
       console.log('✅ Nuevo wallpaper.jpg cargado. COLOREANDO ENCIMA del wallpaper existente...');
@@ -282,70 +675,6 @@ async function loadLatestPatternAndAnimate() {
     }
   } catch (err) {
     console.error('❌ Error cargando último patrón de /patterns:', err);
-  }
-}
-
-// Cargar imagen específica (amarillo.jpg, rojo.jpg, azul.jpg) y animar encima sin borrar
-async function loadSpecificImageAndAnimate(imageName, imageType) {
-  try {
-    console.log(`🎨 *** INICIANDO CARGA *** imagen específica: ${imageName} (tipo: ${imageType})`);
-    
-    // Verificar si existe la imagen
-    const imageExists = await checkIfFileExists(`/patterns/${imageName}`);
-    console.log(`📁 Archivo ${imageName} existe:`, imageExists);
-    
-    if (imageExists) {
-      console.log(`📥 *** CARGANDO IMAGEN *** ${imageName} para colorear encima`);
-      
-      const newImg = new Image();
-      await new Promise((resolve, reject) => {
-        newImg.onload = () => {
-          console.log(`✅ *** IMAGEN CARGADA *** ${imageName} exitosamente`);
-          resolve();
-        };
-        newImg.onerror = (err) => {
-          console.error(`❌ *** ERROR CARGA *** ${imageName}:`, err);
-          reject(err);
-        };
-        newImg.src = `/patterns/${imageName}?t=${Date.now()}`;
-        console.log(`🔗 *** URL IMAGEN *** ${newImg.src}`);
-      });
-
-      // Agregar nueva imagen al array de patrones
-      patterns.push({ 
-        src: `/patterns/${imageName}`, 
-        image: newImg, 
-        filename: imageName,
-        type: imageType 
-      });
-      
-      // Mantener solo los últimos 4 patrones para memoria
-      if (patterns.length > 4) {
-        patterns.shift();
-      }
-      currentPatternIndex = patterns.length - 1;
-      
-      console.log(`✅ *** PATRÓN AGREGADO *** ${imageName}. Índice actual: ${currentPatternIndex}`);
-      
-      // Actualizar selectedImage para que los brushes usen el color correcto
-      selectedImage = imageType;
-      console.log(`🖌️ *** SELECTED IMAGE *** actualizada a: ${selectedImage}`);
-      
-      // ASEGURAR que la preservación del canvas esté activada
-      if (!preserveCanvasContent) {
-        preserveCanvasContent = true;
-        isFirstAnimation = false;
-        console.log('🎨 *** PRESERVACIÓN FORZADA *** - El canvas se preservará para rotaciones automáticas');
-      }
-      
-      // Colorear encima sin resetear el canvas
-      console.log(`🎨 *** INICIANDO ANIMACIÓN *** colorOnTop() con ${imageName}`);
-      colorOnTop();
-    } else {
-      console.warn(`❌ *** ARCHIVO NO ENCONTRADO *** ${imageName}`);
-    }
-  } catch (err) {
-    console.error(`❌ *** ERROR GENERAL *** cargando imagen específica ${imageName}:`, err);
   }
 }
 
@@ -362,21 +691,11 @@ async function loadNewPatternAndAnimate(filename) {
       newPatternImage.src = `patterns/${filename}?t=${Date.now()}`; // Cache busting
     });
     
-    // Agregar el nuevo patrón al array
-    patterns.push({
-      src: `patterns/${filename}`,
-      image: newPatternImage,
-      filename: filename
-    });
-    
-    // Mantener solo los últimos 3 patrones para evitar acumulación de memoria
-    if (patterns.length > 3) {
-      patterns.shift();
-      // Ajustar índice si es necesario
-      if (currentPatternIndex > 0) {
-        currentPatternIndex--;
-      }
-    }
+  // Agregar el nuevo patrón al array (evitar duplicados y cap a 3)
+  const newSrc = `patterns/${filename}`;
+  const withoutDup = patterns.filter(p => p.src !== newSrc);
+  withoutDup.push({ src: newSrc, image: newPatternImage, filename });
+  patterns = withoutDup.slice(-3);
     
     // Cambiar al nuevo patrón (último agregado)
     currentPatternIndex = patterns.length - 1;
@@ -396,12 +715,161 @@ let size = { wCSS: 0, hCSS: 0, w: 0, h: 0 };
 let layout = { dx: 0, dy: 0, dw: 0, dh: 0 };
 let startedAt = 0, rafId = 0;
 let fpsMonitorRafId = 0; // RAF separado para el monitor FPS
+let fpsOverlayEnabled = false; // Mostrar/ocultar overlay FPS con tecla 'f'
+let fpsOverlayEl = null; // Elemento DOM del overlay FPS
 let seeds = [], strokes = [], sweeps = [], wash = [], spirals = [], radiants = [], connectors = [], droplets = [], waves = [], colorDrops = [];
 let finalSealing = [];
 let animationFinished = false; // Flag para indicar que la animación terminó
 let isFirstAnimation = true; // Flag para controlar si es la primera animación
-let preserveCanvasContent = false; // NUEVO: Una vez activado, nunca más limpiar el canvas
+let preserveCanvasContent = false; // Iniciar en false para permitir primer dibujo de fondo
 let latestPatternId = null; // ID del patrón más reciente
+
+// NUEVA FUNCIÓN: Iniciar secuencia de animación (tecla "1")
+function startAnimationSequence() {
+  console.log('🎯 *** INICIANDO SECUENCIA DE ANIMACIÓN ***');
+  
+  // Resetear flags de control
+  hasInitialAnimationStarted = true;
+  animationFinished = false;
+  
+  // Si ya hay una animación en curso, detenerla
+  if (rafId) {
+    cancelAnimationFrame(rafId);
+    rafId = 0;
+  }
+  
+  // Obtener el patrón actual
+  const currentPattern = getCurrentPattern();
+  if (!currentPattern) {
+    console.error('❌ No hay patrón disponible para animar');
+    return;
+  }
+  
+  console.log('🎨 Iniciando animación con patrón actual');
+  
+  // Solo preservar contenido si ya hay algo dibujado (no es la primera vez)
+  if (!isFirstAnimation) {
+    preserveCanvasContent = true;
+  }
+  
+  // Iniciar nueva animación
+  colorOnTop();
+}
+
+// ==============================
+// ROTACIÓN AUTOMÁTICA DE PATRONES
+// ==============================
+
+// Iniciar rotación automática con los patrones especificados
+function startAutomaticPatternRotation(patternList, interval, anchorTs) {
+  console.log(`🔄 *** ROTACIÓN AUTOMÁTICA *** Iniciando con patrones:`, patternList);
+  console.log(`⏰ *** ROTACIÓN AUTOMÁTICA *** Intervalo: ${interval}ms (${interval/1000}s)`);
+  
+  // Detener rotación existente si hay una
+  stopAutomaticPatternRotation();
+  
+  // Configurar parámetros
+  rotationPatterns = patternList || ['amarillo', 'azul', 'rojo'];
+  rotationIntervalTime = interval || 120000; // 2 minutos por defecto
+  rotationAnchorTs = typeof anchorTs === 'number' ? anchorTs : Date.now();
+  currentRotationIndex = 0;
+  automaticRotationEnabled = true;
+  
+  // Calcular desfase para alinear al ancla compartida
+  const now = Date.now();
+  const elapsed = Math.max(0, now - rotationAnchorTs);
+  const ticks = Math.floor(elapsed / rotationIntervalTime);
+  currentRotationIndex = ticks % rotationPatterns.length;
+  
+  const msToNextTick = rotationIntervalTime - (elapsed % rotationIntervalTime);
+
+  // Aplicar inmediatamente el patrón actual para feedback instantáneo
+  rotateToNextPattern();
+
+  // Alinear siguientes cambios al ancla compartida
+  setTimeout(() => {
+    rotationInterval = setInterval(() => {
+      rotateToNextPattern();
+    }, rotationIntervalTime);
+  }, msToNextTick);
+  
+  console.log(`✅ *** ROTACIÓN AUTOMÁTICA *** Configurada correctamente - Brush ${brushId}`);
+}
+
+// Detener rotación automática
+function stopAutomaticPatternRotation() {
+  if (rotationInterval) {
+    clearInterval(rotationInterval);
+    rotationInterval = null;
+    console.log(`⏹️ *** ROTACIÓN AUTOMÁTICA *** Detenida - Brush ${brushId}`);
+  }
+  automaticRotationEnabled = false;
+}
+
+// Rotar al siguiente patrón en la secuencia - SIMPLIFICADO como wallpaper.jpg
+async function rotateToNextPattern() {
+  if (!automaticRotationEnabled || rotationPatterns.length === 0) {
+    console.warn('⚠️ *** ROTACIÓN AUTOMÁTICA *** No habilitada o sin patrones');
+    return;
+  }
+  
+  // Obtener el patrón actual
+  const currentPattern = rotationPatterns[currentRotationIndex];
+  const currentTime = new Date().toLocaleTimeString();
+  
+  console.log(`🔄 *** ROTACIÓN AUTOMÁTICA *** [${currentTime}] Cambiando a: ${currentPattern}.jpg - Brush ${brushId}`);
+  
+  try {
+    // HACER EXACTAMENTE LO MISMO QUE loadLatestPatternAndAnimate() pero con la imagen específica
+    const imageFile = `${currentPattern}.jpg`;
+    const imageExists = await checkIfFileExists(`/patterns/${imageFile}`);
+    
+    if (imageExists) {
+      console.log(`📥 Cargando ${imageFile} para rotación automática`);
+      
+      const newImg = new Image();
+      await new Promise((resolve, reject) => {
+        newImg.onload = resolve;
+        newImg.onerror = reject;
+        newImg.src = `/patterns/${imageFile}?t=${Date.now()}`;
+      });
+
+      // Reemplazar último patrón con la nueva imagen (igual que wallpaper.jpg)
+      const srcKey = `/patterns/${imageFile}`;
+      const filtered = patterns.filter(p => p.src !== srcKey);
+      // Marcar explícitamente el tipo para que resize() aplique el recorte por secciones de color
+      filtered.push({ src: srcKey, image: newImg, filename: imageFile, type: currentPattern });
+      patterns = filtered.slice(-3); // cap a 3 para evitar acumulación
+      currentPatternIndex = patterns.length - 1;
+      
+      // Recalcular layout para esta imagen de color, de modo que use la sección correcta por brushId
+      try {
+        resize();
+      } catch (e) {
+        console.warn('⚠️ Error recalculando layout tras rotación:', e);
+      }
+      
+      console.log(`✅ ${imageFile} cargado. COLOREANDO ENCIMA...`);
+      colorOnTop(); // USAR colorOnTop() igual que wallpaper.jpg
+      
+      // Avanzar al siguiente índice
+      currentRotationIndex = (currentRotationIndex + 1) % rotationPatterns.length;
+      
+      // Calcular siguiente patrón para log
+      const nextPattern = rotationPatterns[currentRotationIndex];
+      const nextChangeTime = new Date(Date.now() + rotationIntervalTime).toLocaleTimeString();
+      
+      console.log(`✅ *** ROTACIÓN AUTOMÁTICA *** Patrón aplicado: ${imageFile}`);
+      console.log(`⏰ *** ROTACIÓN AUTOMÁTICA *** Próximo cambio: ${nextPattern}.jpg a las ${nextChangeTime}`);
+      
+    } else {
+      console.warn(`❌ *** ARCHIVO NO ENCONTRADO *** ${imageFile}`);
+    }
+    
+  } catch (error) {
+    console.error(`❌ *** ROTACIÓN AUTOMÁTICA *** Error aplicando patrón ${currentPattern}:`, error);
+  }
+}
 let socket = null; // Conexión WebSocket
 let lateColorDrops = []; // Gotas que aparecen después de 15s en áreas no coloreadas
 let hasAddedLateDrops = false; // Flag para evitar añadir múltiples veces
@@ -451,6 +919,7 @@ let fpsMonitor = {
   avgElement: null,
   
   init() {
+    // Elementos específicos pueden no existir; el overlay es opcional y dinámico
     this.fpsElement = document.getElementById('fpsValue');
     this.avgElement = document.getElementById('fpsAvg');
     this.lastTime = performance.now();
@@ -474,21 +943,22 @@ let fpsMonitor = {
       // Calcular promedio
       this.avgFps = Math.round(this.fpsHistory.reduce((a, b) => a + b, 0) / this.fpsHistory.length);
       
-      // Actualizar display
+      // Actualizar display existente si está
       if (this.fpsElement) {
         this.fpsElement.textContent = `${this.fps} FPS`;
-        // Cambiar color según rendimiento
-        if (this.fps >= 50) {
-          this.fpsElement.style.color = '#00ff00'; // Verde
-        } else if (this.fps >= 30) {
-          this.fpsElement.style.color = '#ffff00'; // Amarillo
-        } else {
-          this.fpsElement.style.color = '#ff0000'; // Rojo
-        }
       }
-      
       if (this.avgElement) {
         this.avgElement.textContent = `Avg: ${this.avgFps}`;
+      }
+      // Actualizar overlay FPS si está habilitado
+      if (fpsOverlayEnabled) {
+        ensureFpsOverlay();
+        if (fpsOverlayEl) {
+          fpsOverlayEl.textContent = `FPS: ${this.fps}  |  Avg: ${this.avgFps}`;
+          // Color simple por performance
+          const color = this.fps >= 50 ? '#00ff00' : (this.fps >= 30 ? '#ffff00' : '#ff5555');
+          fpsOverlayEl.style.color = color;
+        }
       }
     }
   },
@@ -497,13 +967,67 @@ let fpsMonitor = {
     // Mostrar estado final cuando la animación termine pero mantener FPS
     if (this.fpsElement) {
       this.fpsElement.textContent = `COMPLETO - ${this.fps} FPS`;
-      this.fpsElement.style.color = '#00ffff'; // Cyan
     }
     if (this.avgElement) {
       this.avgElement.textContent = `Avg: ${this.avgFps} - ESTATICO`;
     }
+    if (fpsOverlayEnabled) {
+      ensureFpsOverlay();
+      if (fpsOverlayEl) {
+        fpsOverlayEl.textContent = `COMPLETO - FPS: ${this.fps}  |  Avg: ${this.avgFps}`;
+        fpsOverlayEl.style.color = '#00ffff';
+      }
+    }
   }
 };
+
+// Crear/asegurar overlay FPS
+function ensureFpsOverlay() {
+  if (fpsOverlayEl) return;
+  fpsOverlayEl = document.createElement('div');
+  fpsOverlayEl.id = 'fpsOverlay';
+  fpsOverlayEl.style.cssText = 'position:fixed;top:10px;right:10px;z-index:9999;background:rgba(0,0,0,0.7);color:#00ff00;padding:6px 10px;border-radius:4px;font:12px \'Courier New\',monospace;pointer-events:none;user-select:none;';
+  fpsOverlayEl.textContent = 'FPS: --  |  Avg: --';
+  document.body.appendChild(fpsOverlayEl);
+}
+
+// Toggle por teclado: tecla 'f' para mostrar/ocultar FPS
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'f' || e.key === 'F') {
+    fpsOverlayEnabled = !fpsOverlayEnabled;
+    if (fpsOverlayEnabled) {
+      ensureFpsOverlay();
+      if (fpsOverlayEl) fpsOverlayEl.style.display = 'block';
+      // Asegurar loop del monitor activo
+      if (!fpsMonitorRafId) fpsMonitorRafId = requestAnimationFrame(fpsMonitorLoop);
+    } else if (fpsOverlayEl) {
+      fpsOverlayEl.style.display = 'none';
+    }
+  }
+  
+  // NUEVO: Controles de prueba para la secuencia de coloreado
+  if (e.key === 's' || e.key === 'S') {
+    console.log('🔄 [PRUEBA] Iniciando secuencia de coloreado...');
+    startAutoColorSequence();
+  }
+  
+  if (e.key === 'x' || e.key === 'X') {
+    console.log('⏹️ [PRUEBA] Deteniendo secuencia de coloreado...');
+    stopAutoColorSequence();
+  }
+  
+  if (e.key === 'c' || e.key === 'C') {
+    console.log('🎨 [PRUEBA] Ejecutando paso de coloreado manual...');
+    executeColorStep();
+  }
+  
+  if (e.key === 'r' || e.key === 'R') {
+    console.log('🔄 [PRUEBA] Reiniciando con fondo amarillo...');
+    loadDefaultPattern().then(() => {
+      renderStaticBackground();
+    });
+  }
+});
 
 // Utils
 const clamp = (v,a,b)=>Math.max(a,Math.min(b,v));
@@ -561,23 +1085,37 @@ function resize(){
                            ['amarillo', 'rojo', 'azul'].includes(currentPatternData.type);
     
     if (isRotationImage) {
-      // Para imágenes de rotación, usar toda la imagen sin secciones
-      console.log(`🎨 Usando imagen de rotación: ${currentPatternData.filename} (${currentPatternData.type})`);
+      console.log(`🎨 Imagen de color con secciones: ${currentPatternData.filename} (${currentPatternData.type})`);
       
-      const s = Math.min(size.w/currentBG.naturalWidth, size.h/currentBG.naturalHeight);
-      const dw = Math.ceil(currentBG.naturalWidth*s), dh = Math.ceil(currentBG.naturalHeight*s);
+      // LÓGICA DE SECCIONES: Las imágenes de color usan secciones como wallpaper
+      const sectionWidth = WALLPAPER_SECTION_WIDTH; // 2160
+      const sectionHeight = WALLPAPER_SECTION_HEIGHT; // 3840
+      
+      // Calcular offset basado en brushId para dividir en 3 secciones
+      let sectionIndex = Math.floor((brushId - 1) / 3); // 0, 1, o 2
+      const sourceX = sectionIndex * WALLPAPER_SECTION_WIDTH; // 0, 2160, o 4320
+      const sourceY = 0;
+      
+      console.log(`� Imagen de color - Brush ${brushId} -> Sección ${sectionIndex + 1} (sourceX: ${sourceX})`);
+      
+      // Calcular escala para ajustar la sección al canvas
+      const s = Math.min(size.w/sectionWidth, size.h/sectionHeight);
+      const dw = Math.ceil(sectionWidth*s), dh = Math.ceil(sectionHeight*s);
       layout.dx = Math.floor((size.w-dw)/2); 
       layout.dy = Math.floor((size.h-dh)/2); 
       layout.dw = dw; 
       layout.dh = dh;
       
-      // Para imágenes de rotación, usar toda la imagen
-      layout.sourceX = 0;
-      layout.sourceY = 0;
-      layout.sourceWidth = currentBG.naturalWidth;
-      layout.sourceHeight = currentBG.naturalHeight;
+      // Configurar sección source para las imágenes de color
+      layout.sourceX = sourceX;
+      layout.sourceY = sourceY;
+      layout.sourceWidth = sectionWidth;
+      layout.sourceHeight = sectionHeight;
+      
+      console.log(`🖌️ Layout imagen color - dx:${layout.dx}, dy:${layout.dy}, dw:${layout.dw}, dh:${layout.dh}`);
+      console.log(`🖌️ Layout imagen color - sourceX:${layout.sourceX}, sourceY:${layout.sourceY}, sourceW:${layout.sourceWidth}, sourceH:${layout.sourceHeight}`);
     } else {
-      // Para wallpaper.jpg, usar secciones
+      // Para wallpaper.jpg, usar secciones (lógica original)
       const sectionWidth = WALLPAPER_SECTION_WIDTH;
       const sectionHeight = WALLPAPER_SECTION_HEIGHT;
       
@@ -613,48 +1151,90 @@ function makeSeeds(n){
 function makeStrokes(){
   strokes = [];
   const area = (size.w*size.h)/(1280*720);
-  const COUNT = Math.round(clamp(800*area, 600, 1200)); // MUCHOS más trazos para cobertura total
-  const earlyCount = Math.max(25, Math.min(40, Math.floor(COUNT*0.10))); // más comienzos inmediatos
-  const spreadInterval = Math.max(1, Math.floor(COUNT/20)); // distribución más frecuente
-  // trazo garantizado desde el centro
-  const centerBaseW = clamp(gauss(16,5), 9,28) * (size.w/1280+size.h/720)*.5;
-  const centerSteps = Math.round(clamp(gauss(180,40), 120,260)*area);
-  const centerStepLen = clamp(gauss(5.0,1.4), 2.6, 7.2) * (size.w/1280+size.h/720)*.5;
-  const centerDrift = rand(.018,.045);
+  const COUNT = Math.round(clamp(1000*area, 800, 1400)); // Cantidad equilibrada de trazos
+  const earlyCount = Math.max(30, Math.min(60, Math.floor(COUNT*0.12))); // Trazos tempranos moderados
+  const spreadInterval = Math.max(1, Math.floor(COUNT/20)); // Distribución densa pero no excesiva
+  
+  // Trazo central potente
+  const centerBaseW = clamp(gauss(25,8), 18,40) * (size.w/1280+size.h/720)*.5; 
+  const centerSteps = Math.round(clamp(350*area, 250, 450)); 
+  const centerStepLen = clamp(gauss(8,2.5), 5, 12) * (size.w/1280+size.h/720)*.5;
+  const centerDrift = rand(.018,.035);
   const centerBrush = maskBrushes.length? 0 : -1;
-  strokes.push({ x:size.w*0.5, y:size.h*0.5, angle: rand(0,Math.PI*2), baseW:centerBaseW, alpha:0.75, steps:centerSteps, stepLen:centerStepLen, drift:centerDrift, tStart:0, tEnd:0.45, idx:0, b:centerBrush, seedIndex:0 });
+  strokes.push({ 
+    x:size.w*0.5, y:size.h*0.5, 
+    angle: rand(0,Math.PI*2), 
+    baseW:centerBaseW, 
+    alpha:0.85,
+    steps:centerSteps, 
+    stepLen:centerStepLen, 
+    drift:centerDrift, 
+    tStart:0, 
+    tEnd:0.55,
+    idx:0, 
+    b:centerBrush, 
+    seedIndex:0 
+  });
+  
+  // Generar trazos principales
   for (let i=0;i<COUNT;i++){
     const seedIndex = i%seeds.length;
     const s = seeds[seedIndex];
-    let x = clamp(s.x+gauss(0,.08), .01,.99)*size.w; // mayor dispersión
-    let y = clamp(s.y+gauss(0,.08), .01,.99)*size.h; // mayor dispersión
-    const baseW = clamp(gauss(14,4), 7,25)*(size.w/1280+size.h/720)*.5;
-    const alpha = clamp(gauss(.7,.1), .35, .85);
-    const steps = Math.round(clamp(gauss(220,60), 150,350)*area); // más pasos para mayor cobertura
-    const stepLen = rand(0.3,1.0) * (size.w/1280+size.h/720)*.5; // ULTRA LENTO
+    let x = clamp(s.x+gauss(0,.07), .01,.99)*size.w;
+    let y = clamp(s.y+gauss(0,.07), .01,.99)*size.h;
+    const baseW = clamp(gauss(18,6), 12,32)*(size.w/1280+size.h/720)*.5;
+    const alpha = clamp(gauss(.8,.08), .65, .9);
+    const steps = Math.round(clamp(gauss(200,50), 150,320)*area);
+    const stepLen = rand(0.9,1.8) * (size.w/1280+size.h/720)*.5;
     let angle = rand(0,Math.PI*2);
-    const drift = rand(.02,.06);
-    let tStart = clamp(rand(0,.4)+(i/COUNT)*.5, 0,.85); // distribuido hasta 85%
-    if (i < earlyCount || (i % spreadInterval) === 0) tStart = clamp(rand(0,.05), 0, .09); // arranques inmediatos distribuidos
-    const tEnd = clamp(tStart+rand(.40,.70),0,0.98); // trazos más largos en tiempo
+    const drift = rand(.020,.045);
+    let tStart = clamp(rand(0,.25)+(i/COUNT)*.35, 0,.65);
+    if (i < earlyCount || (i % spreadInterval) === 0) tStart = clamp(rand(0,.06), 0, .08);
+    const tEnd = clamp(tStart+rand(.45,.65),0,0.95);
     const b = maskBrushes.length? Math.floor(rand(0,maskBrushes.length)) : -1;
+    strokes.push({x,y,angle,baseW,alpha,steps,stepLen,drift,tStart,tEnd,idx:0,b,seedIndex});
+  }
+  
+  // Trazos adicionales en los bordes (reducidos)
+  const edgeTrazoCount = Math.round(COUNT * 0.2); // 20% adicional para bordes
+  for (let i=0; i<edgeTrazoCount; i++){
+    const edge = i % 4;
+    let x, y;
+    switch(edge) {
+      case 0: x = rand(0.1, 0.9)*size.w; y = rand(0.05, 0.25)*size.h; break;
+      case 1: x = rand(0.75, 0.95)*size.w; y = rand(0.1, 0.9)*size.h; break;
+      case 2: x = rand(0.1, 0.9)*size.w; y = rand(0.75, 0.95)*size.h; break;
+      case 3: x = rand(0.05, 0.25)*size.w; y = rand(0.1, 0.9)*size.h; break;
+    }
+    
+    const baseW = clamp(gauss(15,5), 10,25)*(size.w/1280+size.h/720)*.5;
+    const alpha = clamp(gauss(.75,.06), .6, .85);
+    const steps = Math.round(clamp(gauss(160,30), 120,250)*area);
+    const stepLen = rand(0.8,1.4) * (size.w/1280+size.h/720)*.5;
+    const angle = rand(0,Math.PI*2);
+    const drift = rand(.025,.040);
+    const tStart = clamp(rand(0,.15), 0, .25);
+    const tEnd = clamp(tStart+rand(.35,.55),0,0.85);
+    const b = maskBrushes.length? Math.floor(rand(0,maskBrushes.length)) : -1;
+    const seedIndex = i % seeds.length;
+    
     strokes.push({x,y,angle,baseW,alpha,steps,stepLen,drift,tStart,tEnd,idx:0,b,seedIndex});
   }
 }
 
 function makeSpirals(){
   spirals = [];
-  const COUNT = Math.round(clamp(18*(size.w*size.h)/(1280*720), 12, 28)); // más espirales
+  const COUNT = Math.round(clamp(12*(size.w*size.h)/(1280*720), 8, 18)); // reducido de 18-28 a 12-18
   for (let i=0;i<COUNT;i++){
-    const cx = rand(.15,.85)*size.w;
-    const cy = rand(.15,.85)*size.h;
-    const maxRadius = rand(80,150)*(size.w/1280+size.h/720)*.5;
-    const baseW = clamp(gauss(12,3), 6,20)*(size.w/1280+size.h/720)*.5;
-    const alpha = rand(.25,.45);
-    const steps = Math.round(rand(80,140));
-    const angleSpeed = rand(.08,.15);
+    const cx = rand(.2,.8)*size.w;
+    const cy = rand(.2,.8)*size.h;
+    const maxRadius = rand(100,180)*(size.w/1280+size.h/720)*.5; // un poco más grande
+    const baseW = clamp(gauss(14,4), 8,24)*(size.w/1280+size.h/720)*.5; // un poco más grande
+    const alpha = rand(.3,.5); // más opaco
+    const steps = Math.round(rand(60,100)); // menos pasos pero más visibles
+    const angleSpeed = rand(.1,.18);
     const radiusSpeed = maxRadius/steps;
-    const tStart = clamp(rand(.3,.7), 0,.8);
+    const tStart = clamp(rand(.25,.65), 0,.75);
     const tEnd = clamp(tStart+rand(.25,.4),0,1);
     const b = maskBrushes.length? Math.floor(rand(0,maskBrushes.length)) : -1;
     spirals.push({cx,cy,maxRadius,baseW,alpha,steps,angleSpeed,radiusSpeed,tStart,tEnd,idx:0,b,angle:rand(0,Math.PI*2),radius:maxRadius*0.05});
@@ -665,23 +1245,23 @@ function makeSpirals(){
 function makeDroplets(){
   droplets = [];
   const area = (size.w*size.h)/(1280*720);
-  const COUNT = Math.round(clamp(35*area, 25, 50)); // AÚN MÁS droplets para cobertura total
+  const COUNT = Math.round(clamp(20*area, 15, 30)); // REDUCIDO de 35-50 a 20-30
   for (let i=0;i<COUNT;i++){
-    const cx = rand(.05,.95)*size.w; // usar toda la pantalla
-    const cy = rand(.05,.95)*size.h; // usar toda la pantalla
-    const maxR = rand(60, 160) * (size.w/1280+size.h/720)*.5; // tamaño más pequeño para más suavidad
-    const tStart = clamp(rand(0.0,.35),0,.45); // distribuir más en el tiempo
-    const tEnd = clamp(tStart + rand(.35,.55), 0, 0.85); // duración larga para crecimiento suave
-    const edgeThickness = rand(0.08, 0.15); // borde más fino para suavidad
-    const fillAlpha = rand(0.10, 0.18); // más opacidad para que sean muy visibles
-    const edgeAlpha = rand(0.15, 0.30); // borde muy visible
+    const cx = rand(.05,.95)*size.w;
+    const cy = rand(.05,.95)*size.h;
+    const maxR = rand(80, 200) * (size.w/1280+size.h/720)*.5; // un poco más grande para compensar menos cantidad
+    const tStart = clamp(rand(0.0,.3),0,.4);
+    const tEnd = clamp(tStart + rand(.4,.6), 0, 0.85);
+    const edgeThickness = rand(0.1, 0.18);
+    const fillAlpha = rand(0.15, 0.25); // más opaco
+    const edgeAlpha = rand(0.2, 0.35); // más opaco
     const b = maskBrushes.length? Math.floor(rand(0,maskBrushes.length)) : -1;
     const approxCirc = 2*Math.PI*maxR;
-    const spacing = 22 * (size.w/1280+size.h/720)*.5;
-    const N = Math.max(12, Math.min(240, Math.floor(approxCirc/Math.max(16, spacing))));
+    const spacing = 28 * (size.w/1280+size.h/720)*.5; // espaciado un poco mayor
+    const N = Math.max(10, Math.min(200, Math.floor(approxCirc/Math.max(20, spacing))));
     const di = Math.max(1, Math.floor(N*0.382));
     const fillH = makeHarmonics(2);
-    const edgeH = makeHarmonics(3);
+    const edgeH = makeHarmonics(2); // reducido de 3 a 2
     droplets.push({cx,cy,maxR,tStart,tEnd,edgeThickness,fillAlpha,edgeAlpha,b,i:0,N,di,fillH,edgeH});
   }
 }
@@ -797,20 +1377,20 @@ function makeConnectors(){
 function makeColorDrops(){
   colorDrops = [];
   const area = (size.w*size.h)/(1280*720);
-  const COUNT = Math.round(clamp(45*area, 35, 70)); // MUCHAS MÁS gotas de coloreo para cobertura total
+  const COUNT = Math.round(clamp(25*area, 20, 40)); // REDUCIDO de 45-70 a 25-40
   for (let i=0;i<COUNT;i++){
-    const cx = rand(.02,.98)*size.w; // usar TODA la pantalla
-    const cy = rand(.02,.98)*size.h; // usar TODA la pantalla
-    const maxR = rand(25, 100) * (size.w/1280+size.h/720)*.5; // tamaños variados, algunos más pequeños
-    const tStart = clamp(rand(0.0,.5), 0, .55); // distribuir a lo largo del tiempo
-    const tEnd = clamp(tStart + rand(.35,.65), 0, 0.90); // crecimiento largo y suave
-    const alpha = rand(0.12, 0.28); // bien visible
-    const growthSpeed = rand(0.7, 1.1); // velocidad de crecimiento
+    const cx = rand(.02,.98)*size.w;
+    const cy = rand(.02,.98)*size.h;
+    const maxR = rand(40, 140) * (size.w/1280+size.h/720)*.5; // un poco más grande para compensar
+    const tStart = clamp(rand(0.0,.45), 0, .5);
+    const tEnd = clamp(tStart + rand(.4,.7), 0, 0.9);
+    const alpha = rand(0.18, 0.32); // más opaco
+    const growthSpeed = rand(0.8, 1.2);
     const color = {
       r: Math.floor(rand(120, 255)), 
       g: Math.floor(rand(80, 200)), 
       b: Math.floor(rand(60, 180))
-    }; // colores cálidos
+    };
     colorDrops.push({cx,cy,maxR,tStart,tEnd,alpha,growthSpeed,color,currentR:0});
   }
 }
@@ -1031,21 +1611,44 @@ function stepFinalCircle(e, sizeMultiplier){
 
 function makeSweeps(){
   sweeps = [];
-  const COUNT = 20; // más barridos para asegurar cobertura
+  const COUNT = 25; // Cantidad moderada de barridos para cobertura
   for (let i=0;i<COUNT;i++){
     const edge=Math.floor(rand(0,4));
     let x,y,angle;
-    if (edge===0){x=-size.w*.15;y=rand(.1,.9)*size.h;angle=rand(-.08,.08);} // izq→der
-    else if(edge===1){x=size.w*1.15;y=rand(.1,.9)*size.h;angle=Math.PI+rand(-.08,.08);} // der→izq
-    else if(edge===2){x=rand(.1,.9)*size.w;y=-size.h*.15;angle=Math.PI/2+rand(-.08,.08);} // top→down
-    else {x=rand(.1,.9)*size.w;y=size.h*1.15;angle=-Math.PI/2+rand(-.08,.08);} // bottom→up
-    const baseW = rand(38,75)*(size.w/1280+size.h/720)*.5; // barridos más delgados
-    const alpha = rand(.08,.16); // alpha más sutil
-    const steps = Math.round(rand(120,200)*(size.w*size.h)/(1280*720)); // más pasos
-    const stepLen = rand(4.8,8.0) * (size.w/1280+size.h/720)*.5;
-    const drift = rand(.008,.03); // muy poca deriva
-    const tStart = clamp(rand(.7,.85),0,1); // empiezan antes
-    const tEnd = clamp(tStart+rand(.18,.28),0,1);
+    if (edge===0){x=-size.w*.12;y=rand(.08,.92)*size.h;angle=rand(-.05,.05);} // izq→der
+    else if(edge===1){x=size.w*1.12;y=rand(.08,.92)*size.h;angle=Math.PI+rand(-.05,.05);} // der→izq
+    else if(edge===2){x=rand(.08,.92)*size.w;y=-size.h*.12;angle=Math.PI/2+rand(-.05,.05);} // top→down
+    else {x=rand(.08,.92)*size.w;y=size.h*1.12;angle=-Math.PI/2+rand(-.05,.05);} // bottom→up
+    const baseW = rand(60,85)*(size.w/1280+size.h/720)*.5; // Barridos moderados
+    const alpha = rand(.18,.28); // Alpha equilibrado
+    const steps = Math.round(rand(150,250)*(size.w*size.h)/(1280*720)); // Pasos moderados
+    const stepLen = rand(7.0,9.5) * (size.w/1280+size.h/720)*.5; 
+    const drift = rand(.008,.022); 
+    const tStart = clamp(rand(.35,.55),0,1); // Empiezan en tiempo equilibrado
+    const tEnd = clamp(tStart+rand(.3,.45),0,1); 
+    const b = maskBrushes.length? Math.floor(rand(0,maskBrushes.length)) : -1;
+    sweeps.push({x,y,angle,baseW,alpha,steps,stepLen,drift,tStart,tEnd,idx:0,b});
+  }
+  
+  // Barridos diagonales (reducidos)
+  const diagonalCount = 8; // Menos barridos diagonales
+  for (let i=0; i<diagonalCount; i++){
+    const corner = i % 4;
+    let x, y, angle;
+    switch(corner) {
+      case 0: x = 0; y = 0; angle = rand(0.3, 0.7); break;
+      case 1: x = size.w; y = 0; angle = rand(2.4, 2.8); break; 
+      case 2: x = size.w; y = size.h; angle = rand(3.7, 4.1); break;
+      case 3: x = 0; y = size.h; angle = rand(5.1, 5.5); break;
+    }
+    
+    const baseW = rand(55,75)*(size.w/1280+size.h/720)*.5;
+    const alpha = rand(.15,.25);
+    const steps = Math.round(rand(180,280)*(size.w*size.h)/(1280*720));
+    const stepLen = rand(8.0,11.0) * (size.w/1280+size.h/720)*.5;
+    const drift = rand(.010,.020);
+    const tStart = clamp(rand(.45,.65),0,1);
+    const tEnd = clamp(tStart+rand(.25,.4),0,1);
     const b = maskBrushes.length? Math.floor(rand(0,maskBrushes.length)) : -1;
     sweeps.push({x,y,angle,baseW,alpha,steps,stepLen,drift,tStart,tEnd,idx:0,b});
   }
@@ -1053,21 +1656,44 @@ function makeSweeps(){
 
 function makeWash(){
   wash = [];
-  const cols = Math.max(8, Math.round(size.w/220)); // un poco más denso
-  const rows = Math.max(6, Math.round(size.h/220));
+  const cols = Math.max(8, Math.round(size.w/180)); // Espaciado más denso para mejor cobertura
+  const rows = Math.max(7, Math.round(size.h/180)); // Espaciado más denso para mejor cobertura
   const dx = size.w/cols, dy = size.h/rows;
   for (let r=0;r<=rows;r++){
     for (let c=0;c<=cols;c++){
-      const x = c*dx + rand(-dx*.4, dx*.4);
-      const y = r*dy + rand(-dy*.4, dy*.4);
-      const s = rand(1.0, 1.8)*(size.w/1280+size.h/720)*.5; // un poco más grandes
-      const a = rand(.05,.10); // alpha sutil
+      const x = c*dx + rand(-dx*.3, dx*.3); // Menos variación para mejor cobertura
+      const y = r*dy + rand(-dy*.3, dy*.3);
+      const s = rand(2.0, 3.5)*(size.w/1280+size.h/720)*.5; // MÁS GRANDES para cobertura completa
+      const a = rand(.15,.28); // MÁS OPACO para cobertura visible
       const rot = rand(0,Math.PI*2);
-      const t = clamp(rand(.85,.98),0,1); // empieza un poco antes
+      const t = clamp(rand(.75,.95),0,1); // Empieza antes para cobertura temprana
       const b = maskBrushes.length? Math.floor(rand(0,maskBrushes.length)) : -1;
       wash.push({x,y,s,a,rot,t,b});
     }
   }
+  
+  // NUEVO: Agregar puntos de wash adicionales en áreas problemáticas comunes
+  const extraWashPoints = [
+    // Esquinas (que a menudo quedan sin cubrir)
+    {x: size.w*0.05, y: size.h*0.05}, {x: size.w*0.95, y: size.h*0.05},
+    {x: size.w*0.05, y: size.h*0.95}, {x: size.w*0.95, y: size.h*0.95},
+    // Centros de bordes
+    {x: size.w*0.5, y: size.h*0.05}, {x: size.w*0.5, y: size.h*0.95},
+    {x: size.w*0.05, y: size.h*0.5}, {x: size.w*0.95, y: size.h*0.5},
+    // Puntos intermedios
+    {x: size.w*0.25, y: size.h*0.25}, {x: size.w*0.75, y: size.h*0.25},
+    {x: size.w*0.25, y: size.h*0.75}, {x: size.w*0.75, y: size.h*0.75}
+  ];
+  
+  for (const point of extraWashPoints) {
+    const s = rand(2.5, 4.0)*(size.w/1280+size.h/720)*.5;
+    const a = rand(.2,.35);
+    const rot = rand(0,Math.PI*2);
+    const t = clamp(rand(.8,.98),0,1);
+    const b = maskBrushes.length? Math.floor(rand(0,maskBrushes.length)) : -1;
+    wash.push({x: point.x, y: point.y, s, a, rot, t, b});
+  }
+  
   wash.sort((a,b)=>a.t-b.t); wash._drawn=0;
 }
 
@@ -1145,11 +1771,11 @@ function stepWave(wv, n, sizeMultiplier=1){
   return spent;
 }
 
-// Puntos precomputados para el "sellado" final (cobertura de huecos)
+// Puntos precomputados para el "sellado" final (cobertura de huecos) - OPTIMIZADO
 function makeFinalSealing(){
   finalSealing = [];
-  const cols = Math.max(10, Math.round(size.w/180));
-  const rows = Math.max(8, Math.round(size.h/180));
+  const cols = Math.max(8, Math.round(size.w/220)); // REDUCIDO espaciado para menos puntos
+  const rows = Math.max(6, Math.round(size.h/220)); // REDUCIDO espaciado para menos puntos
   const dx = size.w/cols, dy = size.h/rows;
   for (let r=0; r<=rows; r++){
     for (let c=0; c<=cols; c++){
@@ -1164,18 +1790,40 @@ function makeFinalSealing(){
   finalSealing._drawn = 0;
 }
 
-// Un golpe inicial en el centro para evitar pantalla en blanco
+// Un golpe inicial en el centro para evitar pantalla en blanco + sellado adicional del centro
 function kickstartMask(){
   const cx = size.w*0.5, cy = size.h*0.5;
-  const desiredW = Math.max(60, Math.min(size.w, size.h) * 0.08);
+  const desiredW = Math.max(60, Math.min(size.w, size.h) * 0.10); // ligeramente menor para no saturar el centro
   const b = (maskBrushes && maskBrushes.length) ? maskBrushes[0] : null;
+  
+  // Golpe central principal
   if (b){
     const scale = desiredW / Math.max(1, b.width);
-    stamp(b, cx, cy, scale, 0.28, 0);
+    stamp(b, cx, cy, scale, 0.4, 0); // MÁS OPACO
   } else {
-    maskCtx.save(); maskCtx.globalAlpha=0.3; maskCtx.beginPath(); maskCtx.fillStyle="#fff";
+    maskCtx.save(); maskCtx.globalAlpha=0.4; maskCtx.beginPath(); maskCtx.fillStyle="#fff";
     maskCtx.arc(cx, cy, desiredW*0.5, 0, Math.PI*2); maskCtx.fill(); maskCtx.restore();
   }
+  
+  // NUEVO: Añadir múltiples capas concéntricas para asegurar cobertura central completa
+  for (let i = 1; i <= 3; i++) {
+    const radius = desiredW * 0.3 * i;
+    const alpha = 0.25 / i; // menos opaco en capas externas
+    if (b) {
+      const scale = radius / Math.max(1, b.width);
+      stamp(b, cx, cy, scale, alpha, i * Math.PI / 4); // rotar cada capa
+    } else {
+      maskCtx.save(); 
+      maskCtx.globalAlpha = alpha; 
+      maskCtx.beginPath(); 
+      maskCtx.fillStyle = "#fff";
+      maskCtx.arc(cx, cy, radius, 0, Math.PI*2); 
+      maskCtx.fill(); 
+      maskCtx.restore();
+    }
+  }
+  
+  console.log('🎯 *** KICKSTART *** Centro reforzado con múltiples capas');
 }
 
 function stamp(brush,x,y,scale,alpha,rot){
@@ -1378,40 +2026,57 @@ function stepConnector(con, n, sizeMultiplier = 1){
   return spent;
 }
 
-function drawProgress(p){
+function drawProgress(p, budget = MAX_UNITS_PER_FRAME){
   // Reset eventos de dibujo de este frame
   drawEvents.length = 0;
-  // Progreso lineal para evitar aceleración al final
+  // Progreso lineal para coloreado rápido y uniforme
   const e = p;
-  let budget = MAX_UNITS_PER_FRAME;
+  // budget ahora viene del llamador (loop) y es adaptativo por frame
 
-  // Empezar con 1 punto y agregar más progresivamente
-  const activeSeeds = Math.max(1, Math.ceil(Math.pow(e, 1.1) * seeds.length)); // Más gradual
+  // Instrumentación ligera para diagnóstico (log cada 60 frames)
+  if (!drawProgress._frameCount) drawProgress._frameCount = 0;
+  drawProgress._frameCount++;
+  const initialBudget = budget;
+
+  // OPTIMIZACIÓN: Activar más semillas más rápido para cobertura completa
+  const activeSeeds = Math.max(1, Math.ceil(Math.pow(e, 0.7) * seeds.length)); // Más agresivo
   
-  // El tamaño del pincel crece más suavemente
-  const sizeMultiplier = 0.2 + (1 - Math.exp(-2.8 * e)) * 1.4;
-  // Mantener velocidad de trazo constante para no acelerar al final
-  const motionScale = 0.9;
+  // El tamaño del pincel crece más rápido para cobertura completa
+  const sizeMultiplier = 0.4 + (1 - Math.exp(-3.5 * e)) * 2.2; // Más agresivo
+  // Velocidad de trazo más rápida para coloreado completo
+  const motionScale = 1.2; // Más rápido
 
-  // Trazos principales (solo de semillas activas)
-  for (let i=0;i<strokes.length && budget>0;i++){
+  // PRIORIDAD 1: Trazos principales con mayor presupuesto (solo de semillas activas)
+  let strokeBudget = Math.floor(budget * 0.6); // 60% del presupuesto para trazos principales
+  for (let i=0;i<strokes.length && strokeBudget>0;i++){
     const s=strokes[i];
     if (s.seedIndex >= activeSeeds) continue; // Saltar si la semilla de este trazo aún no está activa
     if (e < s.tStart) continue;
     const local = s.tEnd>s.tStart? clamp((e-s.tStart)/(s.tEnd-s.tStart),0,1) : 1;
     const target = Math.floor(s.steps*local); const need = target - s.idx;
-    if (need>0){ const factor = 0.35; const allow = Math.min(need, Math.floor(budget*factor), MAX_STEPS_PER_ENTITY_FRAME); budget -= stepStroke(s, allow, sizeMultiplier, motionScale); }
+    if (need>0){ 
+      const allow = Math.min(need, strokeBudget, MAX_STEPS_PER_ENTITY_FRAME * 2); // Permitir más pasos
+      strokeBudget -= stepStroke(s, allow, sizeMultiplier, motionScale); 
+    }
   }
-  
-  // Gotas (se activan progresivamente)
-  const activeDroplets = Math.ceil(e * (droplets.length||0));
-  for (let i=0;i<activeDroplets && budget>0;i++){
-    const d = droplets[i];
-    if (e < d.tStart) continue;
-    budget -= stepDroplet(d, e, sizeMultiplier, Math.floor(budget*.25));
-  }
+  budget -= (Math.floor(budget * 0.6) - strokeBudget); // Actualizar presupuesto total
 
-  // NUEVO: Gotas de coloreo (activas desde el principio)
+  // PRIORIDAD 2: Barridos grandes para rellenar rápidamente
+  let sweepBudget = Math.floor(budget * 0.3); // 30% del presupuesto restante para barridos
+  for (let i=0;i<sweeps.length && sweepBudget>0;i++){
+    const s=sweeps[i]; if (e < s.tStart) continue;
+    const local = s.tEnd>s.tStart? clamp((e-s.tStart)/(s.tEnd-s.tStart),0,1) : 1;
+    const target = Math.floor(s.steps*local); const need = target - s.idx;
+    if (need>0){
+      const allow = Math.min(need, sweepBudget, MAX_STEPS_PER_ENTITY_FRAME * 2);
+      // Tamaño más grande para cobertura rápida
+      const sweepSize = sizeMultiplier * 1.8; // Más grande
+      sweepBudget -= stepStroke(s, allow, sweepSize, motionScale);
+    }
+  }
+  budget -= (Math.floor(budget * 0.3) - sweepBudget); // Actualizar presupuesto total
+
+  // Gotas de coloreo (activas desde el principio) - presupuesto restante
   for (let i=0;i<colorDrops.length && budget>0;i++){
     const drop = colorDrops[i];
     if (e >= drop.tStart && e <= drop.tEnd) {
@@ -1420,22 +2085,22 @@ function drawProgress(p){
     }
   }
 
-  // NUEVO: Añadir gotas tardías después de 15 segundos (50% del tiempo)
-  if (e > 0.5 && !hasAddedLateDrops) {
+  // Añadir gotas tardías después de 40% del tiempo para cobertura completa
+  if (e > 0.4 && !hasAddedLateDrops) {
     addLateColorDrops();
   }
 
-  // NUEVO: Procesar gotas tardías
+  // Procesar gotas tardías
   for (let i=0;i<lateColorDrops.length && budget>0;i++){
     const drop = lateColorDrops[i];
     if (e >= drop.tStart && e <= drop.tEnd) {
       stepColorDrop(drop, e, sizeMultiplier);
-      budget -= 1; // bajo costo computacional
+      budget -= 1;
     }
   }
 
-  // NUEVO: Crear y procesar círculo final (empieza a los 18 segundos)
-  if (e > 0.58 && !hasFinalCircleStarted) { // crear un poco antes para estar listo
+  // Crear y procesar círculo final (empieza temprano para cobertura completa)
+  if (e > 0.45 && !hasFinalCircleStarted) {
     createFinalCircle();
   }
   
@@ -1443,130 +2108,178 @@ function drawProgress(p){
     stepFinalCircle(e, sizeMultiplier);
   }
 
-  // Espirales (se activan progresivamente)
-  const activeSpirals = Math.ceil(e * spirals.length);
+  // Gotas (se activan más rápido)
+  const activeDroplets = Math.ceil(Math.pow(e, 0.8) * (droplets.length||0)); // Más rápido
+  for (let i=0;i<activeDroplets && budget>0;i++){
+    const d = droplets[i];
+    if (e < d.tStart) continue;
+    budget -= stepDroplet(d, e, sizeMultiplier * 1.5, Math.floor(budget*.15)); // Más grande
+  }
+
+  // Espirales (se activan más rápido y con mayor tamaño)
+  const activeSpirals = Math.ceil(Math.pow(e, 0.8) * spirals.length);
   for (let i=0;i<activeSpirals && budget>0;i++){
     const s=spirals[i]; if (e < s.tStart) continue;
     const local = s.tEnd>s.tStart? clamp((e-s.tStart)/(s.tEnd-s.tStart),0,1) : 1;
     const target = Math.floor(s.steps*local); const need = target - s.idx;
-    if (need>0){ const factor = 0.2; const allow = Math.min(need, Math.floor(budget*factor), MAX_STEPS_PER_ENTITY_FRAME); budget -= stepSpiral(s, allow, sizeMultiplier); }
+    if (need>0){ 
+      const allow = Math.min(need, Math.floor(budget*0.1), MAX_STEPS_PER_ENTITY_FRAME); 
+      budget -= stepSpiral(s, allow, sizeMultiplier * 1.3); // Más grande
+    }
   }
   
-  // Radiantes (se activan progresivamente)
-  const activeRadiants = Math.ceil(e * radiants.length);
+  // Radiantes (más rápidos y grandes)
+  const activeRadiants = Math.ceil(Math.pow(e, 0.8) * radiants.length);
   for (let i=0;i<activeRadiants && budget>0;i++){
     const r=radiants[i]; if (e < r.tStart) continue;
     const local = r.tEnd>r.tStart? clamp((e-r.tStart)/(r.tEnd-r.tStart),0,1) : 1;
     const target = Math.floor(r.steps*local); const need = target - r.idx;
-    if (need>0){ const factor = 0.15; const allow = Math.min(need, Math.floor(budget*factor), MAX_STEPS_PER_ENTITY_FRAME); budget -= stepRadiant(r, allow, sizeMultiplier); }
+    if (need>0){ 
+      const allow = Math.min(need, Math.floor(budget*0.08), MAX_STEPS_PER_ENTITY_FRAME); 
+      budget -= stepRadiant(r, allow, sizeMultiplier * 1.4); // Más grande
+    }
   }
 
-  // Pinceladas onduladas sutiles
-  const activeWaves = Math.ceil(e * waves.length);
+  // Pinceladas onduladas más grandes
+  const activeWaves = Math.ceil(Math.pow(e, 0.8) * waves.length);
   for (let i=0;i<activeWaves && budget>0;i++){
     const wv = waves[i]; if (e < wv.tStart) continue;
     const local = wv.tEnd>wv.tStart? clamp((e-wv.tStart)/(wv.tEnd-wv.tStart),0,1) : 1;
     const target = Math.floor(wv.steps*local); const need = target - wv.idx;
-    if (need>0){ const factor = 0.2; const allow = Math.min(need, Math.floor(budget*factor), MAX_STEPS_PER_ENTITY_FRAME); budget -= stepWave(wv, allow, sizeMultiplier); }
+    if (need>0){ 
+      const allow = Math.min(need, Math.floor(budget*0.1), MAX_STEPS_PER_ENTITY_FRAME); 
+      budget -= stepWave(wv, allow, sizeMultiplier * 1.3); // Más grande
+    }
   }
   
-  // Conectores (se activan progresivamente)
-  const activeConnectors = Math.ceil(e * connectors.length);
+  // Conectores más agresivos
+  const activeConnectors = Math.ceil(Math.pow(e, 0.8) * connectors.length);
   for (let i=0;i<activeConnectors && budget>0;i++){
     const c=connectors[i]; if (e < c.tStart) continue;
     const local = c.tEnd>c.tStart? clamp((e-c.tStart)/(c.tEnd-c.tStart),0,1) : 1;
     const target = Math.floor(c.steps*local); const need = target - c.idx;
-    if (need>0){ const factor = 0.10; const allow = Math.min(need, Math.floor(budget*factor), MAX_STEPS_PER_ENTITY_FRAME); budget -= stepConnector(c, allow, sizeMultiplier); }
+    if (need>0){ 
+      const allow = Math.min(need, Math.floor(budget*0.05), MAX_STEPS_PER_ENTITY_FRAME); 
+      budget -= stepConnector(c, allow, sizeMultiplier * 1.2); // Más grande
+    }
   }
   
-  // Barridos grandes para rellenar, su tamaño también crece para asegurar cobertura total
-  for (let i=0;i<sweeps.length && budget>0;i++){
-    const s=sweeps[i]; if (e < s.tStart) continue;
-    const local = s.tEnd>s.tStart? clamp((e-s.tStart)/(s.tEnd-s.tStart),0,1) : 1;
-    const target = Math.floor(s.steps*local); const need = target - s.idx;
-    if (need>0){
-      const factor = 0.3;
-      const allow = Math.min(need, Math.floor(budget*factor), MAX_STEPS_PER_ENTITY_FRAME);
-      // Reducir levemente el tamaño de los sweeps al final para evitar manchones grandes
-      const sweepSize = sizeMultiplier * (e > 0.95 ? 1.2 : 1.4);
-      budget -= stepStroke(s, allow, sweepSize, motionScale);
-    } // tamaño y movimiento suavizados
-  }
-  
-  // Wash sutil muy al final (incremental por frame y orgánico)
+  // Wash más agresivo para cobertura completa
   if (wash.length && e >= WASH_START){
     const total=wash.length; if (wash._drawn===undefined) wash._drawn=0;
-    // Objetivo proporcional al progreso en la fase de wash
     const phase = clamp((e - WASH_START) / (1 - WASH_START), 0, 1);
     const target = Math.floor(total * phase);
     const remaining = target - wash._drawn;
-    const perFrame = Math.max(1, Math.min(WASH_CHUNK_BASE, Math.min(remaining, Math.floor(budget*0.06))));
+    const perFrame = Math.max(2, Math.min(WASH_CHUNK_BASE * 2, Math.min(remaining, Math.floor(budget*0.15)))); // Más agresivo
     const end = Math.min(total, wash._drawn + perFrame);
     for (let i=wash._drawn; i<end && budget>0; i++){
       const w=wash[i]; const br = w.b>=0? maskBrushes[w.b] : null;
       if (br) {
-        stamp(br, w.x, w.y, w.s * sizeMultiplier, w.a, w.rot);
+        stamp(br, w.x, w.y, w.s * sizeMultiplier * 1.5, w.a, w.rot); // Más grande
       } else {
-        fillIrregularBlob(w.x, w.y, 22 * sizeMultiplier, makeHarmonics(2), w.a, 26, 0.8, 0.01);
+        fillIrregularBlob(w.x, w.y, 35 * sizeMultiplier, makeHarmonics(2), w.a, 30, 1.0, 0.02); // Más grande
       }
       wash._drawn=i+1; budget-=1;
     }
   }
 
-  // Sellado final incremental y orgánico - MÁS AGRESIVO para cobertura completa
+  // Sellado final MUY AGRESIVO para cobertura completa al 100%
   if (e >= FINAL_SEAL_START && budget > 0 && finalSealing.length){
     if (finalSealing._drawn===undefined) finalSealing._drawn=0;
     const t = clamp((e - FINAL_SEAL_START) / (1 - FINAL_SEAL_START), 0, 1);
     const alpha = FINAL_SEAL_ALPHA_MIN + (FINAL_SEAL_ALPHA_MAX - FINAL_SEAL_ALPHA_MIN) * t;
-    // objetivo gradual: completar más agresivamente hacia el final
     const total = finalSealing.length;
-    const target = Math.floor(total * Math.min(1, t*1.2)); // Acelerar hacia el final
+    const target = Math.floor(total * Math.min(1, t*1.5)); // Muy agresivo
     const remaining = target - finalSealing._drawn;
-    const base = Math.max(2, Math.ceil(FINAL_SEAL_CHUNK_BASE * (1 + t*2))); // Más agresivo
-    const perFrame = Math.max(2, Math.min(base, Math.min(remaining, Math.floor(budget*0.08))));
+    const base = Math.max(5, Math.ceil(FINAL_SEAL_CHUNK_BASE * (1 + t*3))); // Mucho más agresivo
+    const perFrame = Math.max(5, Math.min(base, Math.min(remaining, Math.floor(budget*0.2)))); // 20% del presupuesto
     const end = Math.min(finalSealing.length, finalSealing._drawn + perFrame);
     for (let i = finalSealing._drawn; i < end && budget > 0; i++){
       const pt = finalSealing[i];
       const b = (pt.b>=0 && maskBrushes.length) ? maskBrushes[pt.b] : null;
       if (b){
-        // micro-trazos cortos para evitar parches notables
+        // Trazos más largos y gruesos para cobertura completa
         const angle = rand(0, Math.PI*2);
-        const len = 18 * (0.9 + 0.4*(1-t));
-        const steps = 3 + Math.floor(rand(0,2));
+        const len = 30 * (1.2 + 0.6*(1-t)); // Más largo
+        const steps = 5 + Math.floor(rand(0,3)); // Más pasos
         for (let k=0;k<steps;k++){
           const u = steps===1? 0.5 : k/(steps-1);
           const x = pt.x + Math.cos(angle)*(u-0.5)*len;
           const y = pt.y + Math.sin(angle)*(u-0.5)*len;
-          const s = 1.8 * (0.9 + u*0.3);
-          stamp(b, x, y, s, alpha*(0.8 + 0.4*u), angle + gauss(0,0.06));
+          const s = 3.0 * (1.2 + u*0.5); // Más grande
+          stamp(b, x, y, s, alpha*(0.9 + 0.3*u), angle + gauss(0,0.08));
         }
       } else {
-        fillIrregularBlob(pt.x, pt.y, 32 * sizeMultiplier, makeHarmonics(2), alpha, 26, 0.9, 0.01);
+        fillIrregularBlob(pt.x, pt.y, 45 * sizeMultiplier, makeHarmonics(3), alpha, 35, 1.2, 0.02); // Mucho más grande
       }
       finalSealing._drawn = i + 1; budget -= 1;
     }
   }
 
-  // Cobertura final adicional para asegurar 100% de revelado
-  if (e >= 0.95 && budget > 0) {
-    // Sellado extra en áreas problemáticas comunes
-    const extraSeals = [
-      {x: size.w*0.1, y: size.h*0.1}, {x: size.w*0.9, y: size.h*0.1},
-      {x: size.w*0.1, y: size.h*0.9}, {x: size.w*0.9, y: size.h*0.9},
-      {x: size.w*0.5, y: size.h*0.1}, {x: size.w*0.5, y: size.h*0.9},
-      {x: size.w*0.1, y: size.h*0.5}, {x: size.w*0.9, y: size.h*0.5}
-    ];
-    const extraAlpha = (e - 0.95) * 0.4; // Gradual desde 95%
+  // Cobertura final SÚPER AGRESIVA para asegurar 100% de revelado
+  if (e >= 0.85 && budget > 0) { // Empezar antes (85% en lugar de 95%)
+    // Más puntos de sellado para cobertura total
+    const extraSeals = [];
+    // Grid más denso para cobertura completa
+    for (let x = 0.05; x <= 0.95; x += 0.15) {
+      for (let y = 0.05; y <= 0.95; y += 0.15) {
+        extraSeals.push({x: size.w * x, y: size.h * y});
+      }
+    }
+    const extraAlpha = (e - 0.85) * 0.6; // Más opaco
     for (let i=0; i<extraSeals.length && budget>0; i++) {
       const pt = extraSeals[i];
       const b = maskBrushes.length ? maskBrushes[i % maskBrushes.length] : null;
       if (b) {
-        stamp(b, pt.x, pt.y, 2.5, extraAlpha, rand(0, Math.PI*2));
+        stamp(b, pt.x, pt.y, 4.0, extraAlpha, rand(0, Math.PI*2)); // Más grande
       } else {
-        fillIrregularBlob(pt.x, pt.y, 40, makeHarmonics(2), extraAlpha, 30, 1.0, 0.01);
+        fillIrregularBlob(pt.x, pt.y, 60, makeHarmonics(3), extraAlpha, 40, 1.4, 0.03); // Mucho más grande
       }
       budget--;
     }
+  }
+
+  // Instrumentación: reportar uso de presupuesto cada 60 frames
+  if (drawProgress._frameCount % 60 === 0) {
+    const used = initialBudget - budget;
+    console.log(`📊 COLOREADO COMPLETO - presupuesto inicial=${initialBudget}, usado=${used}, restante=${budget}, progreso=${Math.round(e*100)}%`);
+  }
+}
+
+// Función para renderizar fondo estático (sin animación)
+function renderStaticBackground() {
+  const currentBG = getCurrentPattern();
+  
+  if (!currentBG) {
+    console.warn('⚠️ No hay patrón para renderizar como fondo');
+    return;
+  }
+  
+  if (!ctx || !layout.dw || !layout.dh) {
+    console.warn('⚠️ Canvas no inicializado correctamente');
+    return;
+  }
+  
+  try {
+    // Limpiar canvas
+    ctx.clearRect(0, 0, size.w, size.h);
+    
+    // Dibujar fondo completo
+    if (layout.sourceWidth && layout.sourceHeight) {
+      // Con secciones (para wallpaper u otros patrones divididos)
+      ctx.drawImage(
+        currentBG, 
+        layout.sourceX, layout.sourceY, layout.sourceWidth, layout.sourceHeight,
+        layout.dx, layout.dy, layout.dw, layout.dh
+      );
+    } else {
+      // Imagen completa (para patrones simples como amarillo.jpg)
+      ctx.drawImage(currentBG, layout.dx, layout.dy, layout.dw, layout.dh);
+    }
+    
+    console.log('✅ Fondo estático renderizado');
+  } catch (error) {
+    console.error('❌ Error renderizando fondo estático:', error);
   }
 }
 
@@ -1578,98 +2291,140 @@ function render(){
     return;
   }
   
-  // Solo limpiar el canvas en la primera animación Y si no se debe preservar el contenido
-  if (isFirstAnimation && !preserveCanvasContent) {
-    ctx.clearRect(0,0,size.w,size.h);
+  // LÓGICA DE PRESERVACIÓN: Dibujar fondo en primera animación o cuando no hay nada
+  if (isFirstAnimation || !preserveCanvasContent) {
+    // Primera animación o reset: limpiar y dibujar fondo completo
+    ctx.clearRect(0, 0, size.w, size.h);
     
-    // Dibujar imagen de fondo solo en la primera vez usando la sección específica
-    if (layout.dw && layout.dh && layout.sourceWidth && layout.sourceHeight) {
-      ctx.drawImage(
-        currentBG, 
-        layout.sourceX, layout.sourceY, layout.sourceWidth, layout.sourceHeight,  // área fuente
-        layout.dx, layout.dy, layout.dw, layout.dh  // área destino
-      );
+    // Dibujar imagen de fondo optimizada
+    if (layout.dw && layout.dh) {
+      if (layout.sourceWidth && layout.sourceHeight) {
+        // Con secciones
+        ctx.drawImage(
+          currentBG, 
+          layout.sourceX, layout.sourceY, layout.sourceWidth, layout.sourceHeight,
+          layout.dx, layout.dy, layout.dw, layout.dh
+        );
+      } else {
+        // Imagen completa
+        ctx.drawImage(currentBG, layout.dx, layout.dy, layout.dw, layout.dh);
+      }
     }
     
-    // Aplicar máscara del efecto original
-    ctx.globalCompositeOperation='destination-in';
-    ctx.drawImage(maskCanvas, 0,0, maskCanvas.width, maskCanvas.height, 0,0, size.w, size.h);
-    ctx.globalCompositeOperation='destination-over'; 
-    ctx.fillStyle='#f8efe6'; 
-    ctx.fillRect(0,0,size.w,size.h);
+    // Si es la primera vez, marcar que ya no es primera animación
+    if (isFirstAnimation) {
+      isFirstAnimation = false;
+      preserveCanvasContent = true; // Activar preservación después del primer dibujo
+      console.log('🎨 *** FONDO INICIAL DIBUJADO *** Preservación activada para próximos coloreados');
+    }
+    
+    // Aplicar máscara
+    ctx.globalCompositeOperation = 'destination-in';
+    ctx.drawImage(maskCanvas, 0, 0, maskCanvas.width, maskCanvas.height, 0, 0, size.w, size.h);
+    ctx.globalCompositeOperation = 'destination-over'; 
+    ctx.fillStyle = '#f8efe6'; 
+    ctx.fillRect(0, 0, size.w, size.h);
   } else {
-    // Para animaciones posteriores O cuando se preserva contenido: DIBUJAR DIRECTAMENTE SOBRE LA IMAGEN ANTERIOR
-    // NO hacer clearRect() - esto permite que se dibuje sobre la imagen existente
+    // Animaciones posteriores: colorear ENCIMA del contenido existente
+    // Usar canvas temporal para el nuevo color con máscara
+    const pooled = canvasPool.getCanvas(0);
+    const tempCanvas = pooled.canvas;
+    const tempCtx = pooled.ctx;
     
-    // Crear un canvas temporal para la nueva imagen con máscara
-    const tempCanvas = document.createElement('canvas');
-    tempCanvas.width = size.w;
-    tempCanvas.height = size.h;
-    const tempCtx = tempCanvas.getContext('2d');
-    
-    // Dibujar la imagen de fondo en el canvas temporal usando la sección específica
-    if (layout.dw && layout.dh && layout.sourceWidth && layout.sourceHeight) {
-      tempCtx.drawImage(
-        currentBG, 
-        layout.sourceX, layout.sourceY, layout.sourceWidth, layout.sourceHeight,  // área fuente
-        layout.dx, layout.dy, layout.dw, layout.dh  // área destino
-      );
+    // Verificar dimensiones antes de dibujar
+    if (layout.dw && layout.dh) {
+      tempCtx.clearRect(0, 0, tempCanvas.width, tempCanvas.height);
+      if (layout.sourceWidth && layout.sourceHeight) {
+        // Con secciones
+        tempCtx.drawImage(
+          currentBG, 
+          layout.sourceX, layout.sourceY, layout.sourceWidth, layout.sourceHeight,
+          layout.dx, layout.dy, layout.dw, layout.dh
+        );
+      } else {
+        // Imagen completa
+        tempCtx.drawImage(currentBG, layout.dx, layout.dy, layout.dw, layout.dh);
+      }
     }
     
     // Aplicar máscara al canvas temporal
-    tempCtx.globalCompositeOperation='destination-in';
-    tempCtx.drawImage(maskCanvas, 0,0, maskCanvas.width, maskCanvas.height, 0,0, size.w, size.h);
+    tempCtx.globalCompositeOperation = 'destination-in';
+    tempCtx.drawImage(maskCanvas, 0, 0, maskCanvas.width, maskCanvas.height, 0, 0, size.w, size.h);
     
-    // Dibujar el canvas temporal SOBRE el canvas principal (source-over = dibuja encima)
-    ctx.globalCompositeOperation='source-over';
+    // Dibujar resultado SOBRE el canvas principal (modo normal, no multiply)
+    ctx.globalCompositeOperation = 'source-over'; // Modo normal para mantener colores vivos
     ctx.drawImage(tempCanvas, 0, 0);
   }
   
-  // Restaurar modo de composición normal
+  // Mantener modo de composición normal
   ctx.globalCompositeOperation='source-over';
 }
 function loop(ts){
-  // Si la animación ya terminó, no procesar más frames
-  if (animationFinished) {
-    console.log('Animación terminada - deteniendo loop para optimizar rendimiento');
+  // OPTIMIZACIÓN: Evitar trabajo cuando la pestaña está oculta
+  if (document.hidden) {
+    rafId = requestAnimationFrame(loop);
     return;
   }
   
-  if (!startedAt) startedAt=ts;
-  const pRaw=(ts-startedAt)/DURATION_MS;
-  const p=clamp(pRaw,0,1);
-  drawProgress(p);
+  if (!startedAt) startedAt = ts;
+  const pRaw = (ts - startedAt) / DURATION_MS;
+  const p = clamp(pRaw, 0, 1);
+  
+  // Presupuesto adaptativo MUY AGRESIVO para coloreado completo rápido
+  if (!loop._lastTs) loop._lastTs = ts;
+  const delta = Math.min(100, ts - loop._lastTs);
+  loop._lastTs = ts;
+  
+  // PRESUPUESTO MUCHO MÁS ALTO para coloreado completo
+  const unitsPerSecond = MAX_UNITS_PER_FRAME * 120; // Presupuesto base muy alto
+  let adaptiveBudget = Math.max(100, Math.round(unitsPerSecond * (delta / 1000))); // Mínimo muy alto
+  adaptiveBudget = Math.min(adaptiveBudget, MAX_UNITS_PER_FRAME * 8); // Máximo muy alto
+
+  // Actualizar progreso con presupuesto agresivo para coloreado completo
+  drawProgress(p, adaptiveBudget);
+  
   render();
   
-  // Continuar hasta que esté 100% completo Y todos los elementos hayan terminado
-  const unfinished = (finalSealing && finalSealing.length && finalSealing._drawn < finalSealing.length)
-                   || (wash && wash.length && (wash._drawn||0) < wash.length)
-                   || p < 1;
+  // Verificación de finalización optimizada
+  const finalSealingUnfinished = (finalSealing && finalSealing.length) ? ((finalSealing._drawn || 0) < finalSealing.length) : false;
+  const washUnfinished = (wash && wash.length) ? ((wash._drawn || 0) < wash.length) : false;
+  const finalCirclesUnfinished = (finalCircles && finalCircles.length) ? finalCircles.some(fc => (fc.currentRadius || 0) <= (fc.maxRadius * 0.98)) || p < 0.95 : false;
   
-  if (unfinished) {
-    rafId=requestAnimationFrame(loop);
+  const stillRunning = p < 1 || finalSealingUnfinished || washUnfinished || finalCirclesUnfinished;
+  
+  if (stillRunning) {
+    rafId = requestAnimationFrame(loop);
   } else {
-    // Animación completada - hacer render final y marcar como terminada
+    // Animación REALMENTE completada - render final
+    console.log('✅ COLOREADO COMPLETO AL 100% - Imagen totalmente coloreada');
     animationFinished = true;
-    console.log('Animación completada - realizando render final');
     
-    // Render final para asegurar que todo esté visible
+    // Render final optimizado
     render();
     
-    // Cancelar cualquier frame pendiente
-    cancelAnimationFrame(rafId);
-    rafId = 0;
+    // Limpiar frame pendiente
+    if (rafId) {
+      cancelAnimationFrame(rafId);
+      rafId = 0;
+    }
     
-    // Marcar que ya no es la primera animación para que la siguiente se dibuje por encima
+    // Marcar que ya no es la primera animación
     isFirstAnimation = false;
     
-    // ACTIVAR preservación del canvas - nunca más se limpiará
+    // ACTIVAR preservación del canvas
     preserveCanvasContent = true;
-    console.log('🎨 *** PRESERVACIÓN ACTIVADA *** - El canvas nunca más se limpiará');
+    console.log('🎨 *** COLOREADO COMPLETADO *** - Listo para recibir siguiente imagen');
     
-    // NO programar automáticamente la siguiente animación
-    // Ahora esperará comando desde control
-    console.log('🎨 Animación completada. Esperando comando desde control para nueva animación...');
+    // Notificar de forma asíncrona
+    setTimeout(() => {
+      if (socket && socket.connected) {
+        socket.emit('animationCompleted', {
+          brushId: brushId,
+          timestamp: Date.now()
+        });
+        console.log('📡 *** NOTIFICACIÓN *** Enviada animationCompleted al control');
+      }
+    }, 0);
   }
 }
 
@@ -1703,7 +2458,7 @@ function start(){
   
   // golpe inicial en el centro para que empiece a mostrarse de inmediato
   kickstartMask();
-  makeSeeds(12); // Aumentamos las semillas para una mejor distribución final
+  makeSeeds(24); // más semillas para distribuir trazos
   makeStrokes(); 
   makeSpirals();
   makeRadiants();
@@ -1718,52 +2473,60 @@ function start(){
   // render inmediato para que se vea el golpe inicial antes del primer frame
   render();
   startedAt=0; 
-  rafId=requestAnimationFrame(loop);
+  if (!rafId) rafId=requestAnimationFrame(loop);
   
   // Iniciar monitor FPS por separado
-  fpsMonitorRafId=requestAnimationFrame(fpsMonitorLoop); 
+  if (!fpsMonitorRafId) fpsMonitorRafId=requestAnimationFrame(fpsMonitorLoop); 
 }
 
 // NUEVA FUNCIÓN: Colorear ENCIMA del wallpaper existente sin resetear
 function colorOnTop(){ 
+  console.log('🎨 *** BRUSH *** Iniciando colorOnTop - COLOREADO SOBRE FONDO EXISTENTE');
+  
+  // Cancelar bucles previos y resetear IDs para permitir re-inicio correcto
   cancelAnimationFrame(rafId); 
   cancelAnimationFrame(fpsMonitorRafId);
+  rafId = 0;
+  fpsMonitorRafId = 0;
   
-  // NO resetear estado de animación - mantener lo que ya está dibujado
+  // IMPORTANTE: NO resetear estado de animación - mantener lo que ya está dibujado
   animationFinished = false;
   
-  // IMPORTANTE: NO resetear isFirstAnimation - mantener el estado para NO limpiar canvas
-  // isFirstAnimation ya se configuró como false después de la primera animación
+  // CRÍTICO: El canvas ya debe tener contenido preservado desde la primera animación
+  // preserveCanvasContent ya debe ser true desde el primer dibujo
+  isFirstAnimation = false; // Ya no es la primera animación
   
   console.log(`🎨 *** COLOR ON TOP *** preserveCanvasContent: ${preserveCanvasContent}, isFirstAnimation: ${isFirstAnimation}`);
   
-  // NO hacer resize() ni limpiar el canvas principal - MANTENER wallpaper dibujado
-  // Solo limpiar la máscara para nueva animación encima
-  maskCtx.clearRect(0,0,size.w,size.h); 
+  // Solo limpiar la máscara para nueva animación encima (NO tocar el canvas principal)
+  if (maskCtx && size.w > 0 && size.h > 0) {
+    maskCtx.clearRect(0, 0, size.w, size.h);
+  }
   
-  console.log('🎨 COLOREANDO ENCIMA del wallpaper existente - 30 SEGUNDOS...');
+  console.log('🎨 COLOREANDO SOBRE IMAGEN EXISTENTE - PRESERVANDO FONDO...');
   
-  // GENERAR ELEMENTOS BALANCEADOS PARA 30 SEGUNDOS (DURATION_MS)
+  // Generar elementos para coloreado encima
   kickstartMask();
-  makeSeeds(30); // semillas balanceadas para 30 segundos
+  makeSeeds(35); // Semillas suficientes para cobertura sin exceso
   makeStrokes(); 
   makeSpirals();
   makeRadiants();
   makeDroplets();
-  makeColorDrops(); // NUEVO: gotas de coloreo
+  makeColorDrops(); // Gotas de coloreo
   makeConnectors();
   makeSweeps(); 
   makeWaves();
   makeWash(); 
   makeFinalSealing();
   
-  // render inmediato para que se vea el golpe inicial antes del primer frame
-  render();
-  startedAt=0; 
-  rafId=requestAnimationFrame(loop);
+  // NO hacer render inmediato para preservar el fondo
+  // render();
   
-  // Iniciar monitor FPS por separado
-  fpsMonitorRafId=requestAnimationFrame(fpsMonitorLoop); 
+  startedAt = 0; 
+  if (!rafId) rafId = requestAnimationFrame(loop);
+  
+  // Monitor FPS
+  if (!fpsMonitorRafId) fpsMonitorRafId=requestAnimationFrame(fpsMonitorLoop); 
 }
 
 function startNewAnimation(){ 
@@ -1890,49 +2653,27 @@ async function updateFallbackPattern() {
   setupWebSocket();
   
   try {
-    // Cargar wallpaper.jpg desde el servidor
-    console.log('🖼️ Cargando wallpaper.jpg...');
-    const patternsLoaded = await loadLatestPatterns();
+    // PASO 1: Cargar amarillo.jpg como fondo por defecto SIEMPRE
+    console.log('🎨 Cargando amarillo.jpg como fondo por defecto...');
+    const defaultLoaded = await loadDefaultPattern();
     
-    if (!patternsLoaded || patterns.length === 0) {
-      // Fallback: intentar cargar directamente wallpaper.jpg
-      console.log('📁 loadLatestPatterns falló, intentando cargar wallpaper.jpg directamente...');
-      
-      try {
-        console.log(`🔄 Intentando cargar wallpaper.jpg directamente`);
-        const img = new Image();
-        await new Promise((resolve, reject) => {
-          img.onload = () => {
-            console.log(`✅ wallpaper.jpg cargado exitosamente (fallback)`);
-            resolve();
-          };
-          img.onerror = (err) => {
-            console.error(`❌ Error cargando wallpaper.jpg (fallback):`, err);
-            reject(err);
-          };
-          img.src = `/patterns/wallpaper.jpg?t=${Date.now()}`;
-        });
-        
-        patterns.push({
-          src: `/patterns/wallpaper.jpg`,
-          image: img,
-          filename: 'wallpaper.jpg'
-        });
-        
-        console.log(`✅ Patrón fallback cargado: wallpaper.jpg`);
-      } catch (error) {
-        console.error(`❌ Error cargando wallpaper.jpg directamente:`, error);
-      }
-    }
-    
-    if (patterns.length === 0) {
-      console.error('❌ No se pudo cargar ningún patrón');
+    if (!defaultLoaded) {
+      console.error('❌ No se pudo cargar el patrón por defecto');
       return;
     }
     
-    console.log(`🎨 Patrón inicial cargado: ${patterns[currentPatternIndex].src}`);
+    // PASO 2: Intentar cargar otros patrones disponibles
+    console.log('🔍 Cargando patrones adicionales...');
+    try {
+      await loadLatestPatterns();
+    } catch (error) {
+      console.warn('⚠️ Error cargando patrones adicionales:', error);
+    }
     
-    // Cargar brochas en paralelo
+    console.log(`🎨 Sistema inicializado con ${patterns.length} patrón(es)`);
+    console.log(`� Patrón actual: ${patterns[currentPatternIndex]?.filename || 'ninguno'}`);
+    
+    // PASO 3: Cargar brochas en paralelo
     await Promise.all(brushSrcs.map(async (src)=>{
       try{
         const im = await loadImage(src);
@@ -1946,24 +2687,32 @@ async function updateFallbackPattern() {
     
     console.log(`✅ ${maskBrushes.length} brochas cargadas.`);
     
-    // SOLO iniciar animación automáticamente la PRIMERA VEZ si hay wallpaper.jpg
-    if (patterns.length > 0 && !hasInitialAnimationStarted) {
-      console.log('🚀 PRIMERA CARGA - INICIANDO ANIMACIÓN AUTOMÁTICA CON WALLPAPER.JPG');
-      hasInitialAnimationStarted = true;
-      start();
-    } else if (hasInitialAnimationStarted) {
-      console.log('⏸️ Sistema ya inicializado - esperando eventos de control...');
-    } else {
-      console.log('⏸️ No hay patrones disponibles, esperando eventos...');
-    }
+    // PASO 4: Inicializar canvas y comenzar con fondo pre-coloreado
+    resize(); // Asegurar que el canvas tenga el tamaño correcto
+    
+    // Mostrar amarillo.jpg como fondo inicial
+    console.log('🎨 Mostrando fondo por defecto (amarillo.jpg)...');
+    renderStaticBackground();
+    
+    // PASO 5: Iniciar rotación automática de coloreado después de mostrar el fondo
+    console.log('🔄 Iniciando rotación automática de coloreado...');
+    startAutoColorSequence();
+    
+    // PASO 6: Inicializar sistema de slideshow
+    initializeSlideshow();
+    
+    console.log('✅ Sistema completamente inicializado y listo para colorear');
     
   } catch(e) {
-    console.warn('Error en inicialización, iniciando sin brochas.', e);
-    maskBrushes=[]; 
+    console.error('❌ Error en inicialización:', e);
+    // Intentar cargar patrón por defecto como última opción
+    await loadDefaultPattern();
   }
 })();
 
 // Forzar recarga de patrones más recientes cuando la página esté completamente cargada
+// COMENTADO: Removido para evitar conflictos con el sistema de patrones
+/*
 window.addEventListener('load', async () => {
   console.log('🔄 Página completamente cargada - verificando patrones más recientes...');
   try {
@@ -1975,6 +2724,31 @@ window.addEventListener('load', async () => {
   
   // Inicializar slideshow si este brush lo necesita
   initializeSlideshow();
+});
+*/
+
+// Pausar animación/monitor cuando la pestaña no está visible para evitar trabajo en background
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) {
+    // Pausa segura: cancelar RAFs e intervalos
+    cancelAnimationFrame(rafId);
+    cancelAnimationFrame(fpsMonitorRafId);
+    rafId = 0;
+    fpsMonitorRafId = 0;
+    stopSlideshow();
+    console.log('⏸️ Pestaña oculta: pausado RAF/monitor y slideshow');
+  } else {
+    // Reanudar solo el monitor FPS; la animación se reanuda con eventos
+    if (!animationFinished && rafId === 0) {
+      rafId = requestAnimationFrame(loop);
+    }
+    if (fpsMonitorRafId === 0) {
+      fpsMonitorRafId = requestAnimationFrame(fpsMonitorLoop);
+    }
+    // Si el slideshow está habilitado, reiniciarlo
+    if (slideshowConfig.enabled) startSlideshow();
+    console.log('▶️ Pestaña visible: reanudado monitor y slideshow');
+  }
 });
 
 // ==============================
@@ -1988,6 +2762,19 @@ async function initializeSlideshow() {
   }
   
   console.log(`📺 Inicializando slideshow para brush ${brushId}`);
+  
+  // Configurar valores específicos por brush
+  if (brushId === 3) {
+    slideshowConfig.folder = '3';
+    // Los valores ya están configurados arriba para brush-3
+  } else if (brushId === 7) {
+    slideshowConfig.folder = '4';
+    // Mantener los valores por defecto para brush-7 (anteriores valores grandes)
+    slideshowConfig.width = 1670;
+    slideshowConfig.height = 1912;
+    slideshowConfig.x = 256;
+    slideshowConfig.y = 300;
+  }
   
   // Obtener configuración inicial del servidor
   try {
@@ -2018,7 +2805,12 @@ async function loadSlideshowImages() {
     const data = await response.json();
     
     if (data.success && data.images.length > 0) {
-      slideshowImages = data.images;
+  slideshowImages = data.images;
+  currentSlideshowIndex = 0; // reset index to avoid OOB
+      
+      // PRECARGAR IMÁGENES PARA MEJOR PERFORMANCE
+      preloadSlideshowImages();
+      
       console.log(`📸 ${slideshowImages.length} imágenes cargadas para slideshow:`, slideshowImages);
     } else {
       console.warn('No se encontraron imágenes para el slideshow');
@@ -2030,36 +2822,51 @@ async function loadSlideshowImages() {
   }
 }
 
+// NUEVA FUNCIÓN: Precargar imágenes para evitar lag durante el slideshow
+function preloadSlideshowImages() {
+  slideshowImages.forEach((imageSrc, index) => {
+    const img = new Image();
+    img.src = imageSrc;
+    // Opcional: agregar a caché
+    if (index === 0) {
+      console.log('📥 Precarga de imágenes del slideshow iniciada');
+    }
+  });
+}
+
 function createSlideshowContainer() {
   // Eliminar contenedor existente si ya existe
   if (slideshowContainer) {
     slideshowContainer.remove();
   }
   
-  // Crear nuevo contenedor
+  // Crear nuevo contenedor - OPTIMIZADO PARA PERFORMANCE
   slideshowContainer = document.createElement('div');
   slideshowContainer.id = 'slideshow-container';
   slideshowContainer.style.position = 'absolute';
   slideshowContainer.style.zIndex = slideshowConfig.zIndex;
   slideshowContainer.style.pointerEvents = 'none';
   slideshowContainer.style.overflow = 'hidden';
-  slideshowContainer.style.borderRadius = '8px';
-  slideshowContainer.style.boxShadow = '0 4px 8px rgba(0,0,0,0.3)';
-  slideshowContainer.style.border = '2px solid rgba(255,255,255,0.8)';
+  // REMOVIDO: borderRadius, boxShadow y border que consumen GPU
+  slideshowContainer.style.willChange = 'transform'; // Optimizar para cambios
+  slideshowContainer.style.backfaceVisibility = 'hidden'; // Optimizar GPU
   
-  // Crear elemento de imagen
+  // Crear elemento de imagen - OPTIMIZADO SIN TRANSICIONES COSTOSAS
   const img = document.createElement('img');
   img.id = 'slideshow-image';
   img.style.width = '100%';
   img.style.height = '100%';
-  img.style.objectFit = 'contain'; // Cambiar de 'cover' a 'contain' para respetar el tamaño del contenedor
+  img.style.objectFit = 'cover';
   img.style.display = 'block';
-  img.style.backgroundColor = 'rgba(0,0,0,0.1)'; // Fondo sutil para ver el área del slideshow
+  img.style.imageRendering = 'auto'; // Optimizar renderizado
+  img.style.backfaceVisibility = 'hidden'; // Optimizar GPU
+  img.style.transform = 'translateZ(0)'; // Forzar aceleración GPU
+  // REMOVIDO: transition costosa que causa lag
   
   slideshowContainer.appendChild(img);
   document.body.appendChild(slideshowContainer);
   
-  console.log('📺 Contenedor de slideshow creado con object-fit: contain');
+  console.log('📺 Contenedor de slideshow creado con optimizaciones de rendimiento');
 }
 
 function updateSlideshowDisplay() {
@@ -2094,8 +2901,11 @@ function startSlideshow() {
     return;
   }
   
-  // Mostrar primera imagen inmediatamente
-  showSlideshowImage(currentSlideshowIndex);
+  // Mostrar primera imagen inmediatamente - SIN FADE PARA PERFORMANCE
+  const img = document.getElementById('slideshow-image');
+  if (img && slideshowImages[currentSlideshowIndex]) {
+    img.src = slideshowImages[currentSlideshowIndex];
+  }
   
   // Iniciar intervalo para cambio automático
   if (slideshowImages.length > 1) {
@@ -2105,7 +2915,7 @@ function startSlideshow() {
     }, slideshowConfig.interval);
   }
   
-  console.log(`📺 Slideshow iniciado con ${slideshowImages.length} imágenes, intervalo: ${slideshowConfig.interval}ms`);
+  console.log(`📺 Slideshow iniciado con ${slideshowImages.length} imágenes, intervalo: ${slideshowConfig.interval}ms - OPTIMIZADO`);
 }
 
 function stopSlideshow() {
@@ -2118,7 +2928,8 @@ function stopSlideshow() {
 function showSlideshowImage(index) {
   const img = document.getElementById('slideshow-image');
   if (img && slideshowImages[index]) {
+    // CAMBIO DIRECTO SIN FADE - OPTIMIZADO PARA PERFORMANCE
     img.src = slideshowImages[index];
-    console.log(`📺 Mostrando imagen ${index + 1}/${slideshowImages.length}: ${slideshowImages[index]}`);
+    console.log(`📺 Imagen ${index + 1}/${slideshowImages.length} cargada: ${slideshowImages[index]}`);
   }
 }

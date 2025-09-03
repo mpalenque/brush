@@ -134,6 +134,12 @@ function initializeControlPanel() {
     setupEventListeners();
     setupOffsetControls(); // Agregar controles de offset manual
     
+    // Configurar auto-rotación
+    setupAutoRotationControl();
+    
+    // Configurar monitoreo de actividad
+    setupActivityMonitoring();
+    
     // Generar UI
     generateScreenControls();
     updateUI();
@@ -178,6 +184,14 @@ function initializeDOMElements() {
     elements.overlayAlternateRowY = document.getElementById('overlayAlternateRowY');
     elements.overlayAlternateColX = document.getElementById('overlayAlternateColX');
     elements.overlayAlternateColY = document.getElementById('overlayAlternateColY');
+
+    // Elementos de coloreado automático
+    elements.startColorSequenceBtn = document.getElementById('startColorSequenceBtn');
+    elements.stopColorSequenceBtn = document.getElementById('stopColorSequenceBtn');
+    elements.nextColorBtn = document.getElementById('nextColorBtn');
+    elements.resetColorBtn = document.getElementById('resetColorBtn');
+    elements.switchModeBtn = document.getElementById('switchModeBtn');
+    elements.colorSequenceStatus = document.getElementById('colorSequenceStatus');
 
     // Valores mostrados
     values.repetitionXValue = document.getElementById('repetitionXValue');
@@ -359,7 +373,7 @@ function loadGeneralConfig(config) {
 function setupGeneralControls() {
     const generalControls = [
         'patternType', 'repetitionX', 'repetitionY', 'separationX', 'separationY', 'spacingX', 'spacingY', 'patternSize', 
-        'rotation', 'zoom', 'perfumeSpacingH', 'perfumeSpacingV', 'perfumeSizeFactor'
+        'rotation', 'zoom'
     ];
 
     const overlayControls = [
@@ -369,11 +383,61 @@ function setupGeneralControls() {
         'overlayAlternateRowX', 'overlayAlternateRowY', 'overlayAlternateColX', 'overlayAlternateColY'
     ];
 
+    // Controles especiales que afectan las imágenes superpuestas con factor de escala
+    const imageScaleControls = ['perfumeSpacingH', 'perfumeSpacingV', 'perfumeSizeFactor'];
+
     generalControls.forEach(controlName => {
         const element = elements[controlName];
         if (element) {
             element.addEventListener('input', (e) => {
                 const config = { [controlName]: e.target.value };
+                socket?.emit('updateGeneralConfig', config);
+                updateUI();
+            });
+        }
+    });
+
+    // Configurar controles de escala de imágenes (antiguos "perfume")
+    imageScaleControls.forEach(controlName => {
+        const element = elements[controlName];
+        if (element) {
+            element.addEventListener('input', (e) => {
+                // Obtener configuración actual de overlay
+                const currentOverlayConfig = {
+                    countX: parseInt(elements.overlayCountX?.value) || 10,
+                    countY: parseInt(elements.overlayCountY?.value) || 8,
+                    offsetX: parseInt(elements.overlayOffsetX?.value) || -550,
+                    offsetY: parseInt(elements.overlayOffsetY?.value) || -150,
+                    size: parseInt(elements.overlaySize?.value) || 192,
+                    spacingX: parseInt(elements.overlaySpacingX?.value) || 400,
+                    spacingY: parseInt(elements.overlaySpacingY?.value) || 250,
+                    rowOffsetX: parseInt(elements.overlayRowOffsetX?.value) || 60,
+                    rowOffsetY: parseInt(elements.overlayRowOffsetY?.value) || 0,
+                    colOffsetX: parseInt(elements.overlayColOffsetX?.value) || 0,
+                    colOffsetY: parseInt(elements.overlayColOffsetY?.value) || 0,
+                    alternateRowX: parseInt(elements.overlayAlternateRowX?.value) || 140,
+                    alternateRowY: parseInt(elements.overlayAlternateRowY?.value) || 0,
+                    alternateColX: parseInt(elements.overlayAlternateColX?.value) || 0,
+                    alternateColY: parseInt(elements.overlayAlternateColY?.value) || 0
+                };
+
+                // Aplicar factores de escala según el control
+                const factor = parseFloat(e.target.value);
+                if (controlName === 'perfumeSpacingH') {
+                    // Escalar espaciado horizontal
+                    currentOverlayConfig.spacingX = Math.round(currentOverlayConfig.spacingX * factor);
+                } else if (controlName === 'perfumeSpacingV') {
+                    // Escalar espaciado vertical
+                    currentOverlayConfig.spacingY = Math.round(currentOverlayConfig.spacingY * factor);
+                } else if (controlName === 'perfumeSizeFactor') {
+                    // Escalar tamaño de imágenes
+                    currentOverlayConfig.size = Math.round(currentOverlayConfig.size * factor);
+                }
+
+                const config = { 
+                    overlayImages: currentOverlayConfig,
+                    [controlName]: factor // Mantener también el valor original para la UI
+                };
                 socket?.emit('updateGeneralConfig', config);
                 updateUI();
             });
@@ -464,6 +528,9 @@ function setupEventListeners() {
             socket?.emit('updateGeneralConfig', { backgroundColor: hex });
         });
     }
+    
+    // Event listeners para controles de coloreado automático
+    setupColorSequenceEventListeners();
     
     // Configurar controles de rango con actualización en tiempo real
     setupRangeControls();
@@ -764,14 +831,20 @@ function setupImageSelectionButtons() {
 
 function setupKeyboardControls() {
     document.addEventListener('keydown', (e) => {
-        // Teclas "1", "2", "3" - Selección de imagen
+        // Tecla "1" - Iniciar secuencia de brush reveal (antes era 'a')
         if (e.key === '1') {
             e.preventDefault();
+            console.log('🎯 Tecla "1" presionada - Iniciando secuencia de brush reveal');
+            startBrushRevealSequence();
+        }
+        // Teclas "z", "a", "q" - Selección de imagen (antes era 1, 2, 3)
+        else if (e.key === 'z' || e.key === 'Z') {
+            e.preventDefault();
             selectImage('red');
-        } else if (e.key === '2') {
+        } else if (e.key === 'a' || e.key === 'A') {
             e.preventDefault();
             selectImage('pink');
-        } else if (e.key === '3') {
+        } else if (e.key === 'q' || e.key === 'Q') {
             e.preventDefault();
             selectImage('blue');
         }
@@ -787,8 +860,8 @@ function setupKeyboardControls() {
                 console.warn('Funciones de proceso automático no disponibles');
             }
         }
-    // Tecla rápida para cambiar a fuente procesada
-    else if (e.key === 'p' || e.key === 'P') { setPatternSource('processed'); }
+        // Tecla rápida para cambiar a fuente procesada
+        else if (e.key === 'p' || e.key === 'P') { setPatternSource('processed'); }
     });
 }
 
@@ -836,6 +909,265 @@ function updateImageSelection() {
             btn.classList.add('selected');
         }
     });
+}
+
+// ==============================
+// BRUSH REVEAL SEQUENCE FUNCTIONS
+// ==============================
+
+// Variables globales para la auto-rotación
+// Variables para auto-rotación y actividad
+let autoRotationEnabled = false;
+let inactivityTimer = null;
+let lastActivityTime = Date.now();
+
+// Función para iniciar la secuencia de brush reveal (tecla "1")
+function startBrushRevealSequence() {
+    console.log('🎯 INICIANDO SECUENCIA BRUSH REVEAL');
+    
+    if (socket && socket.connected) {
+        socket.emit('startBrushRevealSequence');
+    }
+    
+    // Mostrar feedback visual
+    const status = document.getElementById('connectionStatus');
+    if (status) {
+        const originalText = status.textContent;
+        status.textContent = '🎯 Secuencia de Brush Reveal iniciada';
+        status.style.background = '#17a2b8';
+        
+        setTimeout(() => {
+            status.textContent = originalText;
+            status.style.background = '';
+        }, 2000);
+    }
+    
+    // Registrar actividad
+    registerActivity();
+}
+
+// ==============================
+// COLOR SEQUENCE CONTROL FUNCTIONS
+// ==============================
+
+function setupColorSequenceEventListeners() {
+    // Iniciar secuencia de coloreado
+    if (elements.startColorSequenceBtn) {
+        elements.startColorSequenceBtn.addEventListener('click', () => {
+            console.log('🎨 *** CONTROL *** Iniciando secuencia de coloreado automático');
+            startColorSequence();
+        });
+    }
+    
+    // Detener secuencia de coloreado
+    if (elements.stopColorSequenceBtn) {
+        elements.stopColorSequenceBtn.addEventListener('click', () => {
+            console.log('⏹️ *** CONTROL *** Deteniendo secuencia de coloreado automático');
+            stopColorSequence();
+        });
+    }
+    
+    // Siguiente color manualmente
+    if (elements.nextColorBtn) {
+        elements.nextColorBtn.addEventListener('click', () => {
+            console.log('⏭️ *** CONTROL *** Siguiente color manual');
+            nextColorStep();
+        });
+    }
+    
+    // Reset a amarillo
+    if (elements.resetColorBtn) {
+        elements.resetColorBtn.addEventListener('click', () => {
+            console.log('🔄 *** CONTROL *** Reset a fondo amarillo');
+            resetToYellow();
+        });
+    }
+    
+    // Switch entre modos de coloreado
+    if (elements.switchModeBtn) {
+        elements.switchModeBtn.addEventListener('click', () => {
+            switchColoringMode();
+        });
+    }
+}
+
+function startColorSequence() {
+    if (socket && socket.connected) {
+        socket.emit('startAutoColorSequence');
+        updateColorSequenceStatus('🔄 Secuencia activa - Coloreando automáticamente...');
+    } else {
+        console.error('❌ No hay conexión WebSocket para iniciar coloreado');
+        updateColorSequenceStatus('❌ Error: Sin conexión al servidor');
+    }
+}
+
+function stopColorSequence() {
+    if (socket && socket.connected) {
+        socket.emit('stopAutoColorSequence');
+        updateColorSequenceStatus('⏸️ Secuencia detenida');
+    } else {
+        console.error('❌ No hay conexión WebSocket para detener coloreado');
+    }
+}
+
+function nextColorStep() {
+    if (socket && socket.connected) {
+        socket.emit('nextColorStep');
+        updateColorSequenceStatus('⏭️ Avanzando al siguiente color...');
+    } else {
+        console.error('❌ No hay conexión WebSocket para siguiente color');
+    }
+}
+
+function resetToYellow() {
+    if (socket && socket.connected) {
+        socket.emit('resetColorSequence');
+        updateColorSequenceStatus('🔄 Reseteando a fondo amarillo...');
+    } else {
+        console.error('❌ No hay conexión WebSocket para reset');
+    }
+}
+
+function updateColorSequenceStatus(message) {
+    if (elements.colorSequenceStatus) {
+        elements.colorSequenceStatus.textContent = message;
+        elements.colorSequenceStatus.style.fontWeight = 'bold';
+        
+        // Actualizar color según el estado
+        if (message.includes('activa')) {
+            elements.colorSequenceStatus.style.color = '#28a745'; // Verde
+        } else if (message.includes('detenida') || message.includes('Error')) {
+            elements.colorSequenceStatus.style.color = '#dc3545'; // Rojo
+        } else if (message.includes('Reset') || message.includes('amarillo')) {
+            elements.colorSequenceStatus.style.color = '#ffc107'; // Amarillo
+        } else {
+            elements.colorSequenceStatus.style.color = '#17a2b8'; // Azul
+        }
+    }
+}
+
+function switchColoringMode() {
+    const currentMode = elements.switchModeBtn.dataset.mode;
+    
+    if (currentMode === 'sequence') {
+        // Cambiar a modo wallpaper
+        console.log('🔀 *** CONTROL *** Cambiando a modo Wallpaper');
+        
+        if (socket && socket.connected) {
+            socket.emit('switchToWallpaperMode');
+            elements.switchModeBtn.dataset.mode = 'wallpaper';
+            elements.switchModeBtn.innerHTML = '🔀 SWITCH a Secuencia';
+            elements.switchModeBtn.style.background = '#28a745';
+            updateColorSequenceStatus('🖼️ Modo: Wallpaper (coloreando con wallpaper.jpg)');
+        }
+    } else {
+        // Cambiar a modo secuencia
+        console.log('🔀 *** CONTROL *** Cambiando a modo Secuencia');
+        
+        if (socket && socket.connected) {
+            socket.emit('switchToSequenceMode');
+            elements.switchModeBtn.dataset.mode = 'sequence';
+            elements.switchModeBtn.innerHTML = '🔀 SWITCH a Wallpaper';
+            elements.switchModeBtn.style.background = '#6f42c1';
+            updateColorSequenceStatus('🟡 Modo: Secuencia (rojo→azul→amarillo)');
+        }
+    }
+}
+
+// Auto-rotación de imágenes cada 2 minutos con amarillo, azul, rojo
+function toggleAutoRotation() {
+    autoRotationEnabled = !autoRotationEnabled;
+    
+    const btn = document.getElementById('autoRotationBtn');
+    const status = document.getElementById('rotationStatus');
+    
+    console.log(`🔄 *** CONTROL *** toggleAutoRotation llamado - Estado: ${autoRotationEnabled}`);
+    console.log(`🔌 *** CONTROL *** Socket conectado: ${socket && socket.connected}`);
+    
+    if (autoRotationEnabled) {
+        console.log('🔄 Auto-rotación ACTIVADA - 2 minutos entre cambios');
+        btn.textContent = '⏹️ Auto-Rotación ON';
+        btn.style.background = '#28a745';
+        status.textContent = 'Rotación activada - iniciando con amarillo.jpg...';
+        
+        // Enviar comando al servidor para iniciar rotación automática
+        if (socket && socket.connected) {
+            socket.emit('startPatternRotation', {
+                patterns: ['amarillo', 'azul', 'rojo'],
+                interval: 120000 // 2 minutos en milisegundos
+            });
+            console.log('📡 Comando startPatternRotation enviado al servidor');
+        } else {
+            console.error('❌ Socket no conectado - no se puede enviar comando startPatternRotation');
+        }
+        
+    } else {
+        console.log('🔄 Auto-rotación DESACTIVADA');
+        btn.textContent = '⏸️ Auto-Rotación OFF';
+        btn.style.background = '#6c757d';
+        status.textContent = 'Rotación desactivada';
+        
+        // Enviar comando al servidor para detener rotación automática
+        if (socket && socket.connected) {
+            socket.emit('stopPatternRotation');
+            console.log('📡 Comando stopPatternRotation enviado al servidor');
+        } else {
+            console.error('❌ Socket no conectado - no se puede enviar comando stopPatternRotation');
+        }
+    }
+}
+
+// Exponer para posibles llamadas externas sin duplicar lógica
+window.toggleAutoRotation = toggleAutoRotation;
+
+// Registrar actividad para monitores
+function registerActivity() {
+    lastActivityTime = Date.now();
+    
+    // Limpiar timer existente
+    if (inactivityTimer) {
+        clearTimeout(inactivityTimer);
+    }
+    
+    // Configurar nuevo timer de 2 minutos
+    inactivityTimer = setTimeout(() => {
+        console.log('⏰ 2 minutos de inactividad - se podría activar auto-rotación');
+        // Opcionalmente activar auto-rotación automáticamente
+        // if (!autoRotationEnabled) {
+        //     toggleAutoRotation();
+        // }
+    }, 120000); // 2 minutos = 120,000 ms
+}
+
+// Registrar actividad en eventos de usuario
+function setupActivityMonitoring() {
+    // Registrar actividad en clicks, teclas, movimientos, etc.
+    document.addEventListener('click', registerActivity);
+    document.addEventListener('keydown', registerActivity);
+    document.addEventListener('mousemove', registerActivity);
+    document.addEventListener('input', registerActivity);
+    
+    // Inicializar el timer de inactividad
+    registerActivity();
+}
+
+// Configurar el control de auto-rotación
+function setupAutoRotationControl() {
+    const autoRotationBtn = document.getElementById('autoRotationBtn');
+    
+    if (autoRotationBtn) {
+        // Evitar múltiples bindings si hay scripts inline
+        if (!autoRotationBtn.dataset.handlerAttached) {
+            autoRotationBtn.addEventListener('click', () => {
+                toggleAutoRotation();
+            });
+            autoRotationBtn.dataset.handlerAttached = 'true';
+        }
+        
+        console.log('🔄 Control de auto-rotación configurado');
+    } else {
+        console.warn('⚠️ Botón de auto-rotación no encontrado');
+    }
 }
 
 // ==============================

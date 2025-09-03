@@ -174,47 +174,71 @@ app.get('/processed/processed.png', (req, res) => {
 
 app.use(express.json());
 
-// Estado global del sistema - CON OFFSETS MANUALES
+// Estado global del sistema - CON VALORES ACTUALIZADOS Y PERSISTENCIA
+const CONFIG_FILE = path.join(__dirname, 'config.json');
+
+// Función para cargar configuración desde archivo
+function loadConfig() {
+    try {
+        if (fs.existsSync(CONFIG_FILE)) {
+            const data = fs.readFileSync(CONFIG_FILE, 'utf8');
+            const savedConfig = JSON.parse(data);
+            console.log('📂 Configuración cargada desde config.json');
+            return savedConfig;
+        }
+    } catch (error) {
+        console.warn('⚠️ Error cargando configuración:', error.message);
+    }
+    return null;
+}
+
+// Función para guardar configuración
+function saveConfig(config) {
+    try {
+        fs.writeFileSync(CONFIG_FILE, JSON.stringify(config, null, 2));
+        console.log('💾 Configuración guardada en config.json');
+    } catch (error) {
+        console.error('❌ Error guardando configuración:', error.message);
+    }
+}
+
 let globalState = {
     // Configuración general (aplicada a todas las pantallas)
     general: {
         patternType: 'organic-complex',
-        repetitionX: 200,        // Aumentado a 200 para mayor extensión
-        repetitionY: 8,
+        repetitionX: 265,        // NUEVO VALOR
+        repetitionY: 23,         // NUEVO VALOR
         patternSize: 300,
-        separationX: 300,        // Solo separación horizontal configurable
-        separationY: 300,        // Separación vertical
-        spacingX: 0,             // Espaciado adicional X entre repeticiones
-        spacingY: 0,             // Espaciado adicional Y entre repeticiones
+        separationX: 80,         // NUEVO VALOR
+        separationY: 119,        // NUEVO VALOR
+        spacingX: 0,
+        spacingY: 0,
         rotation: 0,
         zoom: 2.3,
         blendMode: 'multiply',
-        perfumeSpacingH: 0.45,
-        perfumeSpacingV: 0.7,
-        perfumeSizeFactor: 0.85,
-        backgroundColor: '#F5DDC7',
-        selectedImage: 'red', // Imagen seleccionada: red, pink, o blue
-        // NUEVO: Fuente del patrón para las screens
-        // 'processed' usa /processed/processed.png (actualizado con tecla 9)
-        // 'rojo' | 'azul' | 'amarillo' usan /rojo.png, /azul.png, /amarillo.png
+        perfumeSpacingH: 0.25,   // NUEVO VALOR
+        perfumeSpacingV: 0.30,   // NUEVO VALOR
+        perfumeSizeFactor: 0.55, // NUEVO VALOR
+        backgroundColor: '#FFF2E5', // NUEVO COLOR
+        selectedImage: 'red',
         patternSource: 'processed',
-        // Configuración de imágenes superpuestas
+        // Configuración de imágenes superpuestas - NUEVOS VALORES
         overlayImages: {
-            countX: 3,              // Cantidad en eje X
-            countY: 2,              // Cantidad en eje Y  
-            offsetX: 0,             // Offset horizontal global
-            offsetY: 0,             // Offset vertical global
-            size: 200,              // Tamaño de las imágenes
-            spacingX: 800,          // Espaciado entre imágenes en X
-            spacingY: 600,          // Espaciado entre imágenes en Y
-            rowOffsetX: 0,          // Desfase de filas en X
-            rowOffsetY: 0,          // Desfase de filas en Y
-            colOffsetX: 0,          // Desfase de columnas en X
-            colOffsetY: 0,          // Desfase de columnas en Y
-            alternateRowX: 0,       // Desfase filas intercaladas en X
-            alternateRowY: 0,       // Desfase filas intercaladas en Y
-            alternateColX: 0,       // Desfase columnas intercaladas en X
-            alternateColY: 0        // Desfase columnas intercaladas en Y
+            countX: 10,             // NUEVO VALOR
+            countY: 8,              // NUEVO VALOR
+            offsetX: -550,          // NUEVO VALOR
+            offsetY: -150,          // NUEVO VALOR
+            size: 192,              // NUEVO VALOR
+            spacingX: 400,          // NUEVO VALOR
+            spacingY: 250,          // NUEVO VALOR
+            rowOffsetX: 60,         // NUEVO VALOR
+            rowOffsetY: 0,
+            colOffsetX: 0,
+            colOffsetY: 0,
+            alternateRowX: 140,     // NUEVO VALOR
+            alternateRowY: 0,
+            alternateColX: 0,
+            alternateColY: 0
         }
     },
     // Configuración específica de cada pantalla (solo offset horizontal manual)
@@ -241,25 +265,25 @@ let globalState = {
         8: { offsetX: 2160, offsetY: 0 },   // Sección 8: repetir centro
         9: { offsetX: 4320, offsetY: 0 }    // Sección 9: repetir derecha
     },
-    // Configuración del slideshow para brush-reveal específicos
+    // Configuración del slideshow para brush-reveal específicos - NUEVOS VALORES
     slideshow: {
         3: {
             enabled: true,
             folder: '3',
-            width: 200,
-            height: 200,
-            x: 50,
-            y: 50,
+            width: 865,          // NUEVO VALOR
+            height: 972,         // NUEVO VALOR  
+            x: 102,              // NUEVO VALOR
+            y: 153,              // NUEVO VALOR
             interval: 3000,
             zIndex: 1000
         },
         7: {
             enabled: true,
             folder: '4',
-            width: 200,
-            height: 200,
-            x: 50,
-            y: 50,
+            width: 1670,         // NUEVO VALOR
+            height: 1912,        // NUEVO VALOR
+            x: 256,              // NUEVO VALOR
+            y: 300,              // NUEVO VALOR
             interval: 3000,
             zIndex: 1000
         }
@@ -290,6 +314,15 @@ let globalState = {
         isActive: true // Activado por defecto
     }
 };
+
+// Cargar configuración guardada al iniciar servidor
+const savedConfig = loadConfig();
+if (savedConfig) {
+    globalState = { ...globalState, ...savedConfig };
+    console.log('✅ Configuración anterior restaurada');
+} else {
+    console.log('🆕 Usando configuración por defecto');
+}
 
 // Clientes conectados
 let connectedClients = new Map();
@@ -329,6 +362,11 @@ app.get('/brush-reveal/:id', (req, res) => {
 // Página de prueba para todos los brush-reveals
 app.get('/test-brush', (req, res) => {
     res.sendFile(path.join(__dirname, 'test-brush-reveals.html'));
+});
+
+// Página de test para rotación automática
+app.get('/test-rotation', (req, res) => {
+    res.sendFile(path.join(__dirname, 'test-rotation.html'));
 });
 
 // API para obtener imágenes del slideshow
@@ -371,6 +409,7 @@ app.get('/api/state', (req, res) => {
 
 app.post('/api/general', (req, res) => {
     globalState.general = { ...globalState.general, ...req.body };
+    saveConfig(globalState); // GUARDAR CONFIGURACIÓN
     io.emit('generalConfigUpdate', globalState.general);
     res.json({ success: true });
 });
@@ -379,6 +418,7 @@ app.post('/api/screen/:id', (req, res) => {
     const screenId = parseInt(req.params.id);
     if (screenId >= 1 && screenId <= 9) {
         globalState.screens[screenId] = { ...globalState.screens[screenId], ...req.body };
+        saveConfig(globalState); // GUARDAR CONFIGURACIÓN
         io.emit('screenConfigUpdate', { screenId, config: globalState.screens[screenId] });
         res.json({ success: true });
     } else {
@@ -390,6 +430,7 @@ app.post('/api/brush-reveal/:id', (req, res) => {
     const brushId = parseInt(req.params.id);
     if (brushId >= 1 && brushId <= 9) {
         globalState.brushReveal[brushId] = { ...globalState.brushReveal[brushId], ...req.body };
+        saveConfig(globalState); // GUARDAR CONFIGURACIÓN
         io.emit('brushRevealConfigUpdate', { brushId, config: globalState.brushReveal[brushId] });
         res.json({ success: true });
     } else {
@@ -402,6 +443,7 @@ app.post('/api/slideshow/:id', (req, res) => {
     const brushId = parseInt(req.params.id);
     if ([3, 7].includes(brushId)) {
         globalState.slideshow[brushId] = { ...globalState.slideshow[brushId], ...req.body };
+        saveConfig(globalState); // GUARDAR CONFIGURACIÓN
         io.emit('slideshowConfigUpdate', { brushId, config: globalState.slideshow[brushId] });
         res.json({ success: true });
     } else {
@@ -429,6 +471,22 @@ app.post('/api/animation/stop', (req, res) => {
 // WebSocket handling
 io.on('connection', (socket) => {
     console.log('Client connected:', socket.id);
+
+    // Optimización: Rate limiting para evitar spam de mensajes
+    const messageThrottle = new Map();
+    const THROTTLE_TIME = 100; // 100ms entre mensajes del mismo tipo
+    
+    function isThrottled(eventName) {
+        const now = Date.now();
+        const lastTime = messageThrottle.get(eventName) || 0;
+        
+        if (now - lastTime < THROTTLE_TIME) {
+            return true; // Throttled
+        }
+        
+        messageThrottle.set(eventName, now);
+        return false; // Not throttled
+    }
 
     socket.on('registerScreen', (data) => {
         const { screenId, type, brushId } = data;
@@ -496,10 +554,20 @@ io.on('connection', (socket) => {
     });
 
     socket.on('updateGeneralConfig', (config) => {
+        // Optimización: throttling para configuración general
+        if (isThrottled('updateGeneralConfig')) {
+            return; // Ignorar si está en throttle
+        }
+        
         const client = connectedClients.get(socket.id);
         if (client && client.type === 'control') {
             globalState.general = { ...globalState.general, ...config };
-            io.emit('generalConfigUpdate', globalState.general);
+            // Solo enviar a screens, no a brush-reveal para optimizar
+            connectedClients.forEach((otherClient) => {
+                if (otherClient.type === 'screen' && otherClient.socket.connected) {
+                    otherClient.socket.emit('generalConfigUpdate', globalState.general);
+                }
+            });
         }
     });
 
@@ -546,10 +614,190 @@ io.on('connection', (socket) => {
     socket.on('brushRevealRotateImage', (data) => {
         const client = connectedClients.get(socket.id);
         if (client && client.type === 'control') {
-            console.log(`🎨 *** SERVER *** Retransmitiendo rotación automática: ${data.imageName} (${data.imageType})`);
-            console.log(`📡 *** SERVER *** Datos del evento:`, data);
-            // Retransmitir el evento a todos los brush-reveal conectados
-            io.emit('brushRevealRotateImage', data);
+            console.log(`🎨 *** SERVER *** Retransmitiendo rotación automática: ${data.image}`);
+            
+            // Optimización: solo enviar a brush-reveal clients, no a todos
+            connectedClients.forEach((otherClient) => {
+                if (otherClient.type === 'brush-reveal' && otherClient.socket.connected) {
+                    otherClient.socket.emit('brushRevealRotateImage', data);
+                }
+            });
+            
+            console.log('📡 *** SERVER *** brushRevealRotateImage enviado a brush-reveal clients');
+        } else {
+            console.warn('⚠️ *** SERVER *** brushRevealRotateImage recibido de cliente no-control:', client?.type);
+        }
+    });
+
+    // NUEVO: Manejar secuencia de brush reveal (tecla "1")
+    socket.on('startBrushRevealSequence', () => {
+        const client = connectedClients.get(socket.id);
+        if (client && client.type === 'control') {
+            console.log('🎯 *** SERVER *** Iniciando secuencia de brush reveal');
+            
+            // Enviar comando a todos los brush-reveal
+            connectedClients.forEach((otherClient) => {
+                if (otherClient.type === 'brush-reveal' && otherClient.socket.connected) {
+                    otherClient.socket.emit('startBrushRevealSequence');
+                }
+            });
+            
+            console.log('📡 *** SERVER *** startBrushRevealSequence enviado a brush-reveal clients');
+        }
+    });
+
+    // NUEVO: Iniciar rotación automática de patrones cada 2 minutos
+    socket.on('startPatternRotation', (data) => {
+        const client = connectedClients.get(socket.id);
+        if (client && client.type === 'control') {
+            console.log('🔄 *** SERVER *** Iniciando rotación automática de patrones cada 2 minutos');
+            
+            // Contar brush-reveal conectados
+            const brushRevealClients = Array.from(connectedClients.values()).filter(c => c.type === 'brush-reveal');
+            console.log(`📊 *** SERVER *** ${brushRevealClients.length} brush-reveal clients conectados`);
+            
+            // Enviar comando a todos los brush-reveal
+            connectedClients.forEach((otherClient) => {
+                if (otherClient.type === 'brush-reveal' && otherClient.socket.connected) {
+                    console.log(`📡 *** SERVER *** Enviando startPatternRotation a brush ${otherClient.brushId}`);
+                    otherClient.socket.emit('startPatternRotation', {
+                        patterns: ['amarillo', 'azul', 'rojo'],
+                        interval: 120000, // 2 minutos en milisegundos
+                        timestamp: Date.now()
+                    });
+                }
+            });
+            
+            console.log('📡 *** SERVER *** startPatternRotation enviado a brush-reveal clients');
+        }
+    });
+
+    // NUEVO: Controles de secuencia de coloreado automático
+    socket.on('startAutoColorSequence', () => {
+        const client = connectedClients.get(socket.id);
+        if (client && client.type === 'control') {
+            console.log('🎨 *** SERVER *** Iniciando secuencia automática de coloreado');
+            
+            // Crear timestamp de sincronización para todas las pantallas
+            const syncTimestamp = Date.now();
+            const syncData = {
+                timestamp: syncTimestamp,
+                intervalTime: 16000, // 16 segundos por color
+                patterns: ['rojo.jpg', 'azul.jpg', 'amarillo.jpg']
+            };
+            
+            console.log(`⏰ *** SERVER *** Timestamp de sincronización: ${syncTimestamp}`);
+            
+            // Enviar comando con datos de sincronización a todos los brush-reveal
+            connectedClients.forEach((otherClient) => {
+                if (otherClient.type === 'brush-reveal' && otherClient.socket.connected) {
+                    otherClient.socket.emit('startAutoColorSequence', syncData);
+                }
+            });
+            
+            console.log('📡 *** SERVER *** Comando startAutoColorSequence con sincronización enviado a brush-reveal clients');
+        }
+    });
+
+    socket.on('stopAutoColorSequence', () => {
+        const client = connectedClients.get(socket.id);
+        if (client && client.type === 'control') {
+            console.log('⏹️ *** SERVER *** Deteniendo secuencia automática de coloreado');
+            
+            // Enviar comando a todos los brush-reveal
+            connectedClients.forEach((otherClient) => {
+                if (otherClient.type === 'brush-reveal' && otherClient.socket.connected) {
+                    otherClient.socket.emit('stopAutoColorSequence');
+                }
+            });
+            
+            console.log('📡 *** SERVER *** Comando stopAutoColorSequence enviado a brush-reveal clients');
+        }
+    });
+
+    socket.on('nextColorStep', () => {
+        const client = connectedClients.get(socket.id);
+        if (client && client.type === 'control') {
+            console.log('⏭️ *** SERVER *** Ejecutando siguiente paso de color');
+            
+            // Crear timestamp de sincronización
+            const syncTimestamp = Date.now();
+            
+            // Enviar comando con timestamp a todos los brush-reveal
+            connectedClients.forEach((otherClient) => {
+                if (otherClient.type === 'brush-reveal' && otherClient.socket.connected) {
+                    otherClient.socket.emit('nextColorStep', { timestamp: syncTimestamp });
+                }
+            });
+            
+            console.log(`📡 *** SERVER *** Comando nextColorStep con timestamp ${syncTimestamp} enviado a brush-reveal clients`);
+        }
+    });
+
+    socket.on('resetColorSequence', () => {
+        const client = connectedClients.get(socket.id);
+        if (client && client.type === 'control') {
+            console.log('🔄 *** SERVER *** Reseteando secuencia de coloreado a amarillo');
+            
+            // Enviar comando a todos los brush-reveal
+            connectedClients.forEach((otherClient) => {
+                if (otherClient.type === 'brush-reveal' && otherClient.socket.connected) {
+                    otherClient.socket.emit('resetColorSequence');
+                }
+            });
+            
+            console.log('📡 *** SERVER *** Comando resetColorSequence enviado a brush-reveal clients');
+        }
+    });
+
+    // NUEVO: Switch a modo wallpaper
+    socket.on('switchToWallpaperMode', () => {
+        const client = connectedClients.get(socket.id);
+        if (client && client.type === 'control') {
+            console.log('🔀 *** SERVER *** Cambiando a modo Wallpaper (wallpaper.jpg)');
+            
+            // Enviar comando a todos los brush-reveal
+            connectedClients.forEach((otherClient) => {
+                if (otherClient.type === 'brush-reveal' && otherClient.socket.connected) {
+                    otherClient.socket.emit('switchToWallpaperMode');
+                }
+            });
+            
+            console.log('📡 *** SERVER *** Comando switchToWallpaperMode enviado a brush-reveal clients');
+        }
+    });
+
+    // NUEVO: Switch a modo secuencia
+    socket.on('switchToSequenceMode', () => {
+        const client = connectedClients.get(socket.id);
+        if (client && client.type === 'control') {
+            console.log('🔀 *** SERVER *** Cambiando a modo Secuencia (rojo→azul→amarillo)');
+            
+            // Enviar comando a todos los brush-reveal
+            connectedClients.forEach((otherClient) => {
+                if (otherClient.type === 'brush-reveal' && otherClient.socket.connected) {
+                    otherClient.socket.emit('switchToSequenceMode');
+                }
+            });
+            
+            console.log('📡 *** SERVER *** Comando switchToSequenceMode enviado a brush-reveal clients');
+        }
+    });
+
+    // NUEVO: Detener rotación automática de patrones
+    socket.on('stopPatternRotation', (data) => {
+        const client = connectedClients.get(socket.id);
+        if (client && client.type === 'control') {
+            console.log('⏹️ *** SERVER *** Deteniendo rotación automática de patrones');
+            
+            // Enviar comando a todos los brush-reveal
+            connectedClients.forEach((otherClient) => {
+                if (otherClient.type === 'brush-reveal' && otherClient.socket.connected) {
+                    otherClient.socket.emit('stopPatternRotation');
+                }
+            });
+            
+            console.log('📡 *** SERVER *** stopPatternRotation enviado a brush-reveal clients');
         }
     });
 
@@ -870,6 +1118,78 @@ io.on('connection', (socket) => {
         } catch (error) {
             console.error('❌ Error guardando wallpaper:', error);
         }
+    });
+
+    // NUEVOS EVENTOS PARA EL PROCESO DE ACTUALIZACIÓN CON TECLA 'A'
+    
+    socket.on('reloadScreen', (data) => {
+        console.log(`🔄 *** SERVER *** Recargando screen/${data.screenId}...`);
+        // Enviar comando a la pantalla específica para que se recargue
+        io.emit('reloadRequest', { screenId: data.screenId });
+        console.log(`✅ *** CONFIRMACIÓN *** Comando de recarga enviado a screen/${data.screenId}`);
+    });
+
+    socket.on('saveAsWallpaper', async () => {
+        try {
+            console.log('💾 *** SERVER *** Iniciando guardado como wallpaper.jpg...');
+            
+            // Leer processed.png
+            const processedPath = path.join(__dirname, 'processed', 'processed.png');
+            if (!fs.existsSync(processedPath)) {
+                console.error('❌ processed.png no existe');
+                socket.emit('wallpaperSaved', { success: false, error: 'processed.png no encontrado' });
+                return;
+            }
+
+            // Copiar processed.png a patterns/wallpaper.jpg
+            const wallpaperPath = path.join(__dirname, 'patterns', 'wallpaper.jpg');
+            fs.copyFileSync(processedPath, wallpaperPath);
+            
+            console.log('✅ *** CONFIRMACIÓN *** wallpaper.jpg guardado exitosamente desde processed.png');
+            socket.emit('wallpaperSaved', { 
+                success: true, 
+                message: 'wallpaper.jpg guardado desde processed.png',
+                timestamp: Date.now()
+            });
+
+        } catch (error) {
+            console.error('❌ Error guardando wallpaper.jpg:', error);
+            socket.emit('wallpaperSaved', { success: false, error: error.message });
+        }
+    });
+
+    socket.on('activateBrushRevealColoring', () => {
+        console.log('🎨 *** SERVER *** Activando coloreo en todos los brush-reveals...');
+        console.log('📊 *** SERVER *** Clientes conectados:', connectedClients.size);
+        
+        // Enviar comando a todos los brush-reveals para que inicien coloreo con la nueva imagen
+        const payload = {
+            patternId: `wallpaper_${Date.now()}`,
+            filename: 'wallpaper.jpg',
+            timestamp: Date.now()
+        };
+        
+        io.emit('newPatternReady', payload);
+        console.log('📡 *** SERVER *** newPatternReady emitido:', payload);
+        
+        console.log('✅ *** CONFIRMACIÓN *** Comando de coloreo enviado a todos los brush-reveals');
+        socket.emit('brushRevealColoringActivated', {
+            success: true,
+            message: 'Coloreo activado en todos los brush-reveals',
+            timestamp: Date.now()
+        });
+    });
+
+    // NUEVO: Manejar notificación de animación completada desde brush-reveal
+    socket.on('animationCompleted', (data) => {
+        console.log(`✅ *** SERVER *** Animación completada recibida de brush ${data.brushId}`);
+        // Retransmitir a todos los clientes de control
+        connectedClients.forEach((client) => {
+            if (client.type === 'control') {
+                client.socket.emit('animationCompleted', data);
+                console.log(`📡 *** SERVER *** animationCompleted reenviado a control`);
+            }
+        });
     });
 
     socket.on('disconnect', () => {

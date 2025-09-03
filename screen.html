@@ -14,7 +14,7 @@
         body {
             font-family: 'Arial', sans-serif;
             background-color: #f0f0f0;
-            overflow: hidden;
+            overflow: auto; /* Permitir scroll */
         }
 
         .wallpaper-container {
@@ -78,6 +78,13 @@
 
     <script src="/socket.io/socket.io.js"></script>
     <script>
+        // Detectar screenId desde la URL: /screen/:id
+        function getScreenIdFromURL() {
+            const match = window.location.pathname.match(/\/screen\/(\d+)/);
+            return match ? parseInt(match[1], 10) : 1;
+        }
+        const SCREEN_ID = getScreenIdFromURL();
+
         const socket = io();
         const patternCanvas = document.getElementById('patternCanvas');
         const ctx = patternCanvas.getContext('2d');
@@ -401,7 +408,7 @@
         socket.on('connect', () => {
             elements.connectionStatus.textContent = '✅ Conectado';
             elements.connectionStatus.style.background = '#28a745';
-            socket.emit('registerScreen', { screenId: 'main', type: 'screen' });
+            socket.emit('registerScreen', { screenId: SCREEN_ID, type: 'screen' });
         });
 
         socket.on('disconnect', () => {
@@ -456,15 +463,28 @@
             }
         });
 
-        // NUEVO: Capturar y enviar canvas completo cuando se solicite (para tecla 'a')
-        socket.on('requestCanvasCapture', () => {
+    // NUEVO: Capturar y enviar canvas completo cuando se solicite (para tecla 'a')
+        socket.on('requestCanvasCapture', async () => {
             try {
                 console.log('📸 Capturando canvas completo para guardar como wallpaper.jpg...');
                 
                 // Asegurar que el patrón esté completamente renderizado
                 if (!imgLoaded) {
-                    console.warn('⚠️ Imagen no cargada, no se puede capturar canvas');
-                    return;
+                    console.warn('⚠️ Imagen no cargada, regenerando patrón antes de captura...');
+                    await new Promise(resolve => {
+                        img.onload = () => {
+                            imgLoaded = true;
+                            generateStaticPattern();
+                            setTimeout(resolve, 200); // esperar render completo
+                        };
+                        img.src = `${resolvePatternSrc()}?t=${Date.now()}`;
+                    });
+                } else {
+                    // Regenerar patrón para asegurar estado actual
+                    console.log('🔄 Regenerando patrón antes de captura...');
+                    generateStaticPattern();
+                    // Esperar que el render se complete
+                    await new Promise(resolve => setTimeout(resolve, 200));
                 }
                 
                 // Capturar canvas como imagen base64
@@ -473,7 +493,7 @@
                 // Enviar al servidor
                 socket.emit('saveScreenCanvas', {
                     imageData: imageData,
-                    screenId: 'main',
+            screenId: SCREEN_ID,
                     timestamp: Date.now()
                 });
                 
@@ -493,19 +513,68 @@
             }
         });
 
+        // NUEVO: Manejar comando de recarga desde el proceso de tecla 'A'
+        socket.on('reloadRequest', (data) => {
+            if (data.screenId === SCREEN_ID) {
+                console.log('🔄 *** SCREEN *** Recibido comando de recarga - actualizando...');
+                
+                // Recargar imagen base para obtener processed.png actualizado
+                imgLoaded = false;
+                img.src = `${resolvePatternSrc()}?t=${Date.now()}`;
+                
+                console.log('✅ *** CONFIRMACIÓN *** Screen/1 actualizado con processed.png más reciente');
+            }
+        });
+
         // Redimensionar canvas cuando cambie el tamaño de ventana
         window.addEventListener('resize', () => {
             setupCanvas();
             generateStaticPattern();
         });
 
-        // Toggle info con tecla 'i' (ELIMINADO GUARDAR CON 'a' - ahora se hace desde control)
+        // Toggle info con tecla 'i' y GUARDAR con 'a' directamente desde la pantalla
         document.addEventListener('keydown', (e) => {
             if (e.key === 'i' || e.key === 'I') {
                 elements.screenInfo.style.display = 
                     elements.screenInfo.style.display === 'none' ? 'block' : 'none';
                 elements.connectionStatus.style.display = 
                     elements.connectionStatus.style.display === 'none' ? 'block' : 'none';
+            }
+
+            // Guardar exactamente lo que se ve en esta pantalla (6480x3840)
+            if (e.key === 'a' || e.key === 'A') {
+                (async () => {
+                    try {
+                        console.log('📸 Tecla A: guardando canvas actual como wallpaper.jpg...');
+                        
+                        if (!imgLoaded) {
+                            console.warn('⚠️ Imagen no cargada, regenerando patrón antes de captura...');
+                            await new Promise(resolve => {
+                                img.onload = () => {
+                                    imgLoaded = true;
+                                    generateStaticPattern();
+                                    setTimeout(resolve, 200);
+                                };
+                                img.src = `${resolvePatternSrc()}?t=${Date.now()}`;
+                            });
+                        } else {
+                            // Regenerar patrón para asegurar estado actual
+                            console.log('🔄 Regenerando patrón antes de captura...');
+                            generateStaticPattern();
+                            await new Promise(resolve => setTimeout(resolve, 200));
+                        }
+                        
+                        const imageData = patternCanvas.toDataURL('image/png', 1.0);
+                        socket.emit('saveScreenCanvas', {
+                            imageData,
+                            screenId: SCREEN_ID,1111111111
+                            timestamp: Date.now()
+                        });
+                        console.log('✅ Canvas enviado por tecla A');
+                    } catch (err) {
+                        console.error('❌ Error guardando por tecla A:', err);
+                    }
+                })();
             }
         });
 
@@ -516,7 +585,7 @@
             generateStaticPattern();
         };
 
-        img.onerror = () => {
+    img.onerror = () => {
             console.error('Error loading pattern image');
             elements.connectionStatus.textContent = '❌ Error cargando imagen de patrón';
             elements.connectionStatus.style.background = '#dc3545';
@@ -540,8 +609,9 @@
         // Cargar imagen superpuesta inicial
         overlayImg.src = `/${selectedImage}.png`;
 
-        // Inicialización
+    // Inicialización
         setupCanvas();
+
     </script>
 </body>
 </html>

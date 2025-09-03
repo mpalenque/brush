@@ -19,6 +19,25 @@
             🔌 Conectando al servidor...
         </div>
 
+        <!-- Atajos de Teclado -->
+        <div class="section" style="background: #e8f4fd; border-left: 4px solid #007bff;">
+            <h2>⌨️ Atajos de Teclado</h2>
+            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 10px; font-size: 14px;">
+                <div><strong>Tecla 1:</strong> Iniciar secuencia brush reveal</div>
+                <div><strong>Tecla Z:</strong> Seleccionar imagen roja</div>
+                <div><strong>Tecla A:</strong> Seleccionar imagen rosa</div>
+                <div><strong>Tecla Q:</strong> Seleccionar imagen azul</div>
+                <div><strong>Tecla 9:</strong> Procesar desde captura</div>
+                <div><strong>Tecla P:</strong> Cambiar a fuente procesada</div>
+            </div>
+            <div style="margin-top: 10px; padding: 8px; background: #d4edda; border-radius: 4px; border-left: 3px solid #28a745;">
+                <strong>🖌️ Coloreo Directo:</strong> Usa el botón "Iniciar Coloreo Directo" para colorear automáticamente cada 30s rotando entre amarillo.jpg, rojo.jpg y azul.jpg sin depender del wallpaper grabado.
+            </div>
+            <small style="color:#666; display: block; margin-top: 8px;">
+                ⏰ <strong>Auto-rotación:</strong> Después de 2 minutos sin actividad, se inicia automáticamente la rotación entre amarillo.jpg, rojo.jpg y azul.jpg cada minuto.
+            </small>
+        </div>
+
         <!-- Configuración General -->
         <div class="section">
             <h2>⚙️ Configuración General</h2>
@@ -31,16 +50,46 @@
             </div>
             
             <div class="control-group" style="margin-bottom:12px;">
-                <label>🎨 Rotación Automática Brush Reveal:</label>
+                <label>🎨 Rotación Automática Brush Reveal (2 min cada imagen):</label>
                 <div class="auto-rotation-controls">
                     <button id="autoRotationBtn" class="image-btn" data-active="false">
-                        � Auto-Rotación OFF
+                        ⏸️ Auto-Rotación OFF
                     </button>
                     <div class="rotation-status" id="rotationStatus" style="margin-top: 8px; font-size: 12px; color: #666;">
                         Rotación desactivada
                     </div>
                 </div>
-                <small style="color:#666;">Cada 1 minuto cambia entre amarillo.jpg, rojo.jpg, azul.jpg para colorear encima en Brush Reveal.</small>
+                <small style="color:#666;">Cada 2 minutos cambia entre amarillo.jpg, azul.jpg, rojo.jpg para colorear encima en Brush Reveal.</small>
+            </div>
+            
+            <!-- Controles de Coloreado Automático -->
+            <div class="control-group" style="margin-bottom:12px; border: 2px solid #28a745; border-radius: 8px; padding: 15px; background: #f8fff9;">
+                <label style="font-weight: bold; color: #28a745;">🎨 Control de Coloreado Automático:</label>
+                <div class="color-sequence-controls" style="display: flex; gap: 10px; margin: 10px 0; flex-wrap: wrap;">
+                    <button id="startColorSequenceBtn" class="image-btn" style="background: #28a745; color: white;">
+                        ▶️ Iniciar Coloreado
+                    </button>
+                    <button id="stopColorSequenceBtn" class="image-btn" style="background: #dc3545; color: white;">
+                        ⏹️ Detener Coloreado
+                    </button>
+                    <button id="nextColorBtn" class="image-btn" style="background: #17a2b8; color: white;">
+                        ⏭️ Siguiente Color
+                    </button>
+                    <button id="resetColorBtn" class="image-btn" style="background: #ffc107; color: black;">
+                        🔄 Reset a Amarillo
+                    </button>
+                    <button id="switchModeBtn" class="image-btn" style="background: #6f42c1; color: white;" data-mode="sequence">
+                        🔀 SWITCH a Wallpaper
+                    </button>
+                </div>
+                <div class="color-sequence-status" id="colorSequenceStatus" style="margin-top: 8px; font-size: 12px; color: #666; font-weight: bold;">
+                    🟡 Fondo: amarillo.jpg | Modo: Secuencia (rojo→azul→amarillo)
+                </div>
+                <small style="color:#666;">
+                    <strong>Modo Secuencia:</strong> rojo.jpg → azul.jpg → amarillo.jpg encima del fondo (cada 16s).
+                    <br><strong>Modo Wallpaper:</strong> Colorea con wallpaper.jpg procesado desde screen/1.
+                    <br><strong>SWITCH:</strong> Alterna entre los dos modos de coloreado.
+                </small>
             </div>
             <div class="controls-grid">
                 <div class="control-group">
@@ -63,23 +112,23 @@
                 </div>
 
                 <div class="control-group">
-                    <label for="repetitionX">🔄 Repeticiones X: <span id="repetitionXValue" class="range-display">200</span></label>
-                    <input type="range" id="repetitionX" min="1" max="500" value="200">
+                    <label for="repetitionX">🔄 Repeticiones X: <span id="repetitionXValue" class="range-display">265</span></label>
+                    <input type="range" id="repetitionX" min="1" max="500" value="265">
                 </div>
 
                 <div class="control-group">
-                    <label for="repetitionY">🔄 Repeticiones Y: <span id="repetitionYValue" class="range-display">8</span></label>
-                    <input type="range" id="repetitionY" min="1" max="25" value="8">
+                    <label for="repetitionY">🔄 Repeticiones Y: <span id="repetitionYValue" class="range-display">23</span></label>
+                    <input type="range" id="repetitionY" min="1" max="25" value="23">
                 </div>
 
                 <div class="control-group">
-                    <label for="separationX">↔️ Separación X: <span id="separationXValue" class="range-display">300px</span></label>
-                    <input type="range" id="separationX" min="50" max="1000" value="300">
+                    <label for="separationX">↔️ Separación X: <span id="separationXValue" class="range-display">80px</span></label>
+                    <input type="range" id="separationX" min="50" max="1000" value="80">
                 </div>
 
                 <div class="control-group">
-                    <label for="separationY">↕️ Separación Y: <span id="separationYValue" class="range-display">300px</span></label>
-                    <input type="range" id="separationY" min="50" max="1000" value="300">
+                    <label for="separationY">↕️ Separación Y: <span id="separationYValue" class="range-display">119px</span></label>
+                    <input type="range" id="separationY" min="50" max="1000" value="119">
                 </div>
 
                 <div class="control-group">
@@ -108,23 +157,23 @@
                 </div>
 
                 <div class="control-group">
-                    <label for="perfumeSpacingH">↔️ Espaciado H Perfume: <span id="perfumeSpacingHValue" class="range-display">0.45×</span></label>
-                    <input type="range" id="perfumeSpacingH" min="0.1" max="2.0" step="0.05" value="0.45">
+                    <label for="perfumeSpacingH">↔️ Espaciado H Imágenes: <span id="perfumeSpacingHValue" class="range-display">0.25×</span></label>
+                    <input type="range" id="perfumeSpacingH" min="0.1" max="2.0" step="0.05" value="0.25">
                 </div>
 
                 <div class="control-group">
-                    <label for="perfumeSpacingV">↕️ Espaciado V Perfume: <span id="perfumeSpacingVValue" class="range-display">0.70×</span></label>
-                    <input type="range" id="perfumeSpacingV" min="0.1" max="2.0" step="0.05" value="0.7">
+                    <label for="perfumeSpacingV">↕️ Espaciado V Imágenes: <span id="perfumeSpacingVValue" class="range-display">0.30×</span></label>
+                    <input type="range" id="perfumeSpacingV" min="0.1" max="2.0" step="0.05" value="0.30">
                 </div>
 
                 <div class="control-group">
-                    <label for="perfumeSizeFactor">📐 Tamaño Perfume: <span id="perfumeSizeFactorValue" class="range-display">85%</span></label>
-                    <input type="range" id="perfumeSizeFactor" min="0.3" max="2.0" step="0.05" value="0.85">
+                    <label for="perfumeSizeFactor">📐 Escala Imágenes: <span id="perfumeSizeFactorValue" class="range-display">55%</span></label>
+                    <input type="range" id="perfumeSizeFactor" min="0.3" max="2.0" step="0.05" value="0.55">
                 </div>
 
                 <div class="control-group">
-                    <label for="backgroundColor">🎨 Color de Fondo: <span id="backgroundRgb" class="range-display">RGB: 245, 221, 199</span></label>
-                    <input type="color" id="backgroundColor" value="#F5DDC7">
+                    <label for="backgroundColor">🎨 Color de Fondo: <span id="backgroundRgb" class="range-display">RGB: 255, 242, 229</span></label>
+                    <input type="color" id="backgroundColor" value="#FFF2E5">
                 </div>
             </div>
         </div>
@@ -137,43 +186,43 @@
             </p>
             <div class="controls-grid">
                 <div class="control-group">
-                    <label for="overlayCountX">🔢 Cantidad X: <span id="overlayCountXValue" class="range-display">3</span></label>
-                    <input type="range" id="overlayCountX" min="1" max="10" value="3">
+                    <label for="overlayCountX">🔢 Cantidad X: <span id="overlayCountXValue" class="range-display">10</span></label>
+                    <input type="range" id="overlayCountX" min="1" max="10" value="10">
                 </div>
 
                 <div class="control-group">
-                    <label for="overlayCountY">🔢 Cantidad Y: <span id="overlayCountYValue" class="range-display">2</span></label>
-                    <input type="range" id="overlayCountY" min="1" max="8" value="2">
+                    <label for="overlayCountY">🔢 Cantidad Y: <span id="overlayCountYValue" class="range-display">8</span></label>
+                    <input type="range" id="overlayCountY" min="1" max="8" value="8">
                 </div>
 
                 <div class="control-group">
-                    <label for="overlayOffsetX">↔️ Offset X: <span id="overlayOffsetXValue" class="range-display">0px</span></label>
-                    <input type="range" id="overlayOffsetX" min="-2000" max="2000" value="0" step="50">
+                    <label for="overlayOffsetX">↔️ Offset X: <span id="overlayOffsetXValue" class="range-display">-550px</span></label>
+                    <input type="range" id="overlayOffsetX" min="-2000" max="2000" value="-550" step="50">
                 </div>
 
                 <div class="control-group">
-                    <label for="overlayOffsetY">↕️ Offset Y: <span id="overlayOffsetYValue" class="range-display">0px</span></label>
-                    <input type="range" id="overlayOffsetY" min="-2000" max="2000" value="0" step="50">
+                    <label for="overlayOffsetY">↕️ Offset Y: <span id="overlayOffsetYValue" class="range-display">-150px</span></label>
+                    <input type="range" id="overlayOffsetY" min="-2000" max="2000" value="-150" step="50">
                 </div>
 
                 <div class="control-group">
-                    <label for="overlaySize">📏 Tamaño: <span id="overlaySizeValue" class="range-display">200px</span></label>
-                    <input type="range" id="overlaySize" min="50" max="500" value="200">
+                    <label for="overlaySize">📏 Tamaño: <span id="overlaySizeValue" class="range-display">192px</span></label>
+                    <input type="range" id="overlaySize" min="50" max="500" value="192">
                 </div>
 
                 <div class="control-group">
-                    <label for="overlaySpacingX">↔️ Espaciado X: <span id="overlaySpacingXValue" class="range-display">800px</span></label>
-                    <input type="range" id="overlaySpacingX" min="200" max="2000" value="800" step="50">
+                    <label for="overlaySpacingX">↔️ Espaciado X: <span id="overlaySpacingXValue" class="range-display">400px</span></label>
+                    <input type="range" id="overlaySpacingX" min="200" max="2000" value="400" step="50">
                 </div>
 
                 <div class="control-group">
-                    <label for="overlaySpacingY">↕️ Espaciado Y: <span id="overlaySpacingYValue" class="range-display">600px</span></label>
-                    <input type="range" id="overlaySpacingY" min="200" max="1500" value="600" step="50">
+                    <label for="overlaySpacingY">↕️ Espaciado Y: <span id="overlaySpacingYValue" class="range-display">250px</span></label>
+                    <input type="range" id="overlaySpacingY" min="200" max="1500" value="250" step="50">
                 </div>
 
                 <div class="control-group">
-                    <label for="overlayRowOffsetX">🔀 Desfase Filas X: <span id="overlayRowOffsetXValue" class="range-display">0px</span></label>
-                    <input type="range" id="overlayRowOffsetX" min="-500" max="500" value="0" step="10">
+                    <label for="overlayRowOffsetX">🔀 Desfase Filas X: <span id="overlayRowOffsetXValue" class="range-display">60px</span></label>
+                    <input type="range" id="overlayRowOffsetX" min="-500" max="500" value="60" step="10">
                 </div>
 
                 <div class="control-group">
@@ -192,8 +241,8 @@
                 </div>
 
                 <div class="control-group">
-                    <label for="overlayAlternateRowX">🔄 Filas Alternas X: <span id="overlayAlternateRowXValue" class="range-display">0px</span></label>
-                    <input type="range" id="overlayAlternateRowX" min="-1000" max="1000" value="0" step="10">
+                    <label for="overlayAlternateRowX">🔄 Filas Alternas X: <span id="overlayAlternateRowXValue" class="range-display">140px</span></label>
+                    <input type="range" id="overlayAlternateRowX" min="-1000" max="1000" value="140" step="10">
                 </div>
 
                 <div class="control-group">
@@ -355,33 +404,33 @@
                 Control del slideshow superpuesto en brush-reveal/3 y brush-reveal/7.<br>
                 Las imágenes se cargan desde las carpetas slideshow/3 y slideshow/4 respectivamente.<br>
                 <strong>Posición X:</strong> 0-2160px (ancho de la sección brush) | <strong>Posición Y:</strong> 0-3840px (alto de la sección)<br>
-                <strong>Tamaño:</strong> Controla el tamaño real del cuadrado del slideshow (no solo el crop)
+                <strong>Tamaño:</strong> Controla el tamaño real del cuadrado del slideshow (50px-2000px para doble escala)
             </p>
             
             <!-- Slideshow para Brush 3 -->
             <div class="slideshow-config">
-                <h3>📺 Slideshow Brush 3 (Carpeta: slideshow/3)</h3>
+        <h3>📺 Slideshow Brush 3 (Carpeta: slideshow/3)</h3>
                 <div class="controls-grid">
                     <div class="control-group">
                         <label>
-                            <input type="checkbox" id="slideshow3Enabled"> Activar Slideshow Brush 3
+                            <input type="checkbox" id="slideshow3Enabled" checked> Activar Slideshow Brush 3
                         </label>
                     </div>
                     <div class="control-group">
-                        <label for="slideshow3Width">Ancho: <span id="slideshow3WidthValue" class="range-display">200px</span></label>
-                        <input type="range" id="slideshow3Width" min="50" max="1000" value="200">
+            <label for="slideshow3Width">Ancho: <span id="slideshow3WidthValue" class="range-display">865px</span></label>
+            <input type="range" id="slideshow3Width" min="50" max="2000" value="865">
                     </div>
                     <div class="control-group">
-                        <label for="slideshow3Height">Alto: <span id="slideshow3HeightValue" class="range-display">200px</span></label>
-                        <input type="range" id="slideshow3Height" min="50" max="1000" value="200">
+            <label for="slideshow3Height">Alto: <span id="slideshow3HeightValue" class="range-display">972px</span></label>
+            <input type="range" id="slideshow3Height" min="50" max="2000" value="972">
                     </div>
                     <div class="control-group">
-                        <label for="slideshow3X">Posición X: <span id="slideshow3XValue" class="range-display">50px</span></label>
-                        <input type="range" id="slideshow3X" min="0" max="2160" value="50">
+            <label for="slideshow3X">Posición X: <span id="slideshow3XValue" class="range-display">102px</span></label>
+            <input type="range" id="slideshow3X" min="0" max="2160" value="102">
                     </div>
                     <div class="control-group">
-                        <label for="slideshow3Y">Posición Y: <span id="slideshow3YValue" class="range-display">50px</span></label>
-                        <input type="range" id="slideshow3Y" min="0" max="3840" value="50">
+            <label for="slideshow3Y">Posición Y: <span id="slideshow3YValue" class="range-display">153px</span></label>
+            <input type="range" id="slideshow3Y" min="0" max="3840" value="153">
                     </div>
                     <div class="control-group">
                         <label for="slideshow3Interval">Intervalo: <span id="slideshow3IntervalValue" class="range-display">3000ms</span></label>
@@ -396,24 +445,24 @@
                 <div class="controls-grid">
                     <div class="control-group">
                         <label>
-                            <input type="checkbox" id="slideshow7Enabled"> Activar Slideshow Brush 7
+                            <input type="checkbox" id="slideshow7Enabled" checked> Activar Slideshow Brush 7
                         </label>
                     </div>
                     <div class="control-group">
-                        <label for="slideshow7Width">Ancho: <span id="slideshow7WidthValue" class="range-display">200px</span></label>
-                        <input type="range" id="slideshow7Width" min="50" max="1000" value="200">
+                        <label for="slideshow7Width">Ancho: <span id="slideshow7WidthValue" class="range-display">1670px</span></label>
+                        <input type="range" id="slideshow7Width" min="50" max="2000" value="1670">
                     </div>
                     <div class="control-group">
-                        <label for="slideshow7Height">Alto: <span id="slideshow7HeightValue" class="range-display">200px</span></label>
-                        <input type="range" id="slideshow7Height" min="50" max="1000" value="200">
+                        <label for="slideshow7Height">Alto: <span id="slideshow7HeightValue" class="range-display">1912px</span></label>
+                        <input type="range" id="slideshow7Height" min="50" max="2000" value="1912">
                     </div>
                     <div class="control-group">
-                        <label for="slideshow7X">Posición X: <span id="slideshow7XValue" class="range-display">50px</span></label>
-                        <input type="range" id="slideshow7X" min="0" max="2160" value="50">
+                        <label for="slideshow7X">Posición X: <span id="slideshow7XValue" class="range-display">256px</span></label>
+                        <input type="range" id="slideshow7X" min="0" max="2160" value="256">
                     </div>
                     <div class="control-group">
-                        <label for="slideshow7Y">Posición Y: <span id="slideshow7YValue" class="range-display">50px</span></label>
-                        <input type="range" id="slideshow7Y" min="0" max="3840" value="50">
+                        <label for="slideshow7Y">Posición Y: <span id="slideshow7YValue" class="range-display">300px</span></label>
+                        <input type="range" id="slideshow7Y" min="0" max="3840" value="300">
                     </div>
                     <div class="control-group">
                         <label for="slideshow7Interval">Intervalo: <span id="slideshow7IntervalValue" class="range-display">3000ms</span></label>
@@ -475,127 +524,201 @@
         
         // Sistema de rotación automática de imágenes para Brush Reveal
         let autoRotationActive = false;
-        let rotationInterval = null;
-        let currentRotationIndex = 0;
-        const rotationImages = ['amarillo', 'rojo', 'azul'];
         
         function toggleAutoRotation() {
-            const btn = document.getElementById('autoRotationBtn');
-            const status = document.getElementById('rotationStatus');
-            
-            autoRotationActive = !autoRotationActive;
-            
-            if (autoRotationActive) {
-                btn.textContent = '🔄 Auto-Rotación ON';
-                btn.style.backgroundColor = '#28a745';
-                btn.style.color = 'white';
-                btn.setAttribute('data-active', 'true');
-                
-                // Iniciar rotación inmediatamente
-                rotateToNextImage();
-                
-                // Configurar intervalo de 1 minuto (60000 ms) para testing
-                rotationInterval = setInterval(rotateToNextImage, 60000);
-                
-                updateRotationStatus();
-                console.log('🎨 Auto-rotación activada - rotando cada 1 minuto entre:', rotationImages);
-            } else {
-                btn.textContent = '🔄 Auto-Rotación OFF';
-                btn.style.backgroundColor = '';
-                btn.style.color = '';
-                btn.setAttribute('data-active', 'false');
-                
-                if (rotationInterval) {
-                    clearInterval(rotationInterval);
-                    rotationInterval = null;
-                }
-                
-                status.textContent = 'Rotación desactivada';
-                console.log('🛑 Auto-rotación desactivada');
+            // Delegar a la implementación central en assets/js/control.js
+            if (window.toggleAutoRotation) {
+                return window.toggleAutoRotation();
             }
+            console.error('❌ toggleAutoRotation global no disponible');
         }
-        
-        function rotateToNextImage() {
-            const currentImage = rotationImages[currentRotationIndex];
-            console.log(`🎨 Rotando a imagen: ${currentImage}.jpg`);
-            console.log(`📡 Socket conectado:`, window.socket && window.socket.connected);
-            
-            // Enviar comando al brush-reveal para que use esta nueva imagen
-            if (window.socket && window.socket.connected) {
-                const payload = { 
-                    imageName: `${currentImage}.jpg`,
-                    imageType: currentImage 
-                };
-                window.socket.emit('brushRevealRotateImage', payload);
-                console.log(`📡 Enviado comando brush-reveal:`, payload);
-            } else {
-                console.error('❌ Socket no conectado - no se puede enviar comando');
-            }
-            
-            // Avanzar al siguiente índice
-            currentRotationIndex = (currentRotationIndex + 1) % rotationImages.length;
-            
-            updateRotationStatus();
-        }
-        
-        function updateRotationStatus() {
-            const status = document.getElementById('rotationStatus');
-            if (autoRotationActive) {
-                const currentImage = rotationImages[(currentRotationIndex - 1 + rotationImages.length) % rotationImages.length];
-                const nextImage = rotationImages[currentRotationIndex];
-                status.innerHTML = `Activa • Actual: <strong>${currentImage}.jpg</strong> • Próxima: <strong>${nextImage}.jpg</strong> (en 1 min)`;
-            }
+
+        // Asegura que la rotación esté corriendo (ON) sin requerir clic manual
+        function ensureAutoRotationRunning() {
+            // Deshabilitado para evitar conflictos de doble toggle
+            return;
         }
         
         // Agregar event listener al botón cuando el DOM esté listo
         document.addEventListener('DOMContentLoaded', function() {
             const autoRotationBtn = document.getElementById('autoRotationBtn');
-            if (autoRotationBtn) {
-                autoRotationBtn.addEventListener('click', toggleAutoRotation);
+            if (autoRotationBtn && !autoRotationBtn.dataset.handlerAttached) {
+                autoRotationBtn.addEventListener('click', () => {
+                    if (window.toggleAutoRotation) window.toggleAutoRotation();
+                });
+                autoRotationBtn.dataset.handlerAttached = 'true';
             }
-            
+            // No forzar auto-rotación al cargar para evitar toggles duplicados antes de que el socket esté listo
             // Inicializar controles de slideshow
             initializeSlideshowControls();
+            
+            // NUEVO: Escuchar cuando las animaciones de brush-reveal terminan
+            // Configurar listener cuando el socket esté conectado
+            function setupAnimationCompletedListener() {
+                if (window.socket && window.socket.connected) {
+                    window.socket.on('animationCompleted', (data) => {
+                        console.log(`✅ *** CONTROL *** Animación completada en brush ${data.brushId} - reanudando auto-rotación`);
+                        // Solo reanudar si no estamos en modo "A" activo
+                        if (rotationActive) {
+                            setTimeout(() => {
+                                ensureAutoRotationRunning();
+                            }, 1000); // pequeña pausa antes de reanudar
+                        }
+                    });
+                    console.log('👂 *** CONTROL *** Listener animationCompleted configurado');
+                } else {
+                    // Reintentar después de un momento
+                    setTimeout(setupAnimationCompletedListener, 1000);
+                }
+            }
+            
+            // Iniciar configuración del listener
+            setupAnimationCompletedListener();
         });
         
-        // NUEVO: Manejador de tecla 'a' para capturar wallpaper
+        // --- MODO ROTACIÓN SIEMPRE ACTIVO, INTERRUPCIONES POR 'A' ---
+        let rotationActive = true;
+        let lastAReceived = Date.now();
+        let rotationTimeoutMinutes = 3; // default
+        let rotationTimeoutId = null;
+
+        // UI: Agregar input para ajustar tiempo de espera
+        document.addEventListener('DOMContentLoaded', function() {
+            const timeoutDiv = document.createElement('div');
+            timeoutDiv.style = 'margin: 10px 0;';
+            timeoutDiv.innerHTML = '<label for="rotationTimeoutInput">⏱️ Tiempo de espera para volver a rotación (min): </label>' +
+                '<input id="rotationTimeoutInput" type="number" min="1" max="30" value="3" style="width: 60px;">';
+            document.body.insertBefore(timeoutDiv, document.body.firstChild);
+            const timeoutInput = document.getElementById('rotationTimeoutInput');
+            timeoutInput.addEventListener('change', function() {
+                rotationTimeoutMinutes = Math.max(1, parseInt(timeoutInput.value, 10) || 3);
+                resetRotationTimeout();
+            });
+        });
+
+        function resetRotationTimeout() {
+            if (rotationTimeoutId) clearTimeout(rotationTimeoutId);
+            rotationTimeoutId = setTimeout(() => {
+                if (!rotationActive) {
+                    rotationActive = true;
+                    triggerRotationColoring();
+                }
+            }, rotationTimeoutMinutes * 60 * 1000);
+        }
+
+        function triggerRotationColoring() {
+            // Colorear con imagen rotatoria (no wallpaper.jpg) Y asegurar rotación
+            if (window.socket && window.socket.connected) {
+                window.socket.emit('activateBrushRevealColoring');
+                console.log('🔄 Modo rotación activado: coloreando con imagen rotatoria');
+            }
+            // También asegurar que la auto-rotación esté corriendo
+            ensureAutoRotationRunning();
+        }
+
+        // Iniciar rotación al cargar
+    // Deshabilitado autostart para no interferir con la rotación de patrones
+    // document.addEventListener('DOMContentLoaded', function() {
+    //     rotationActive = true;
+    //     triggerRotationColoring();
+    //     resetRotationTimeout();
+    // });
         document.addEventListener('keydown', (e) => {
             if (e.key === 'a' || e.key === 'A') {
                 e.preventDefault();
-                console.log('📸 Tecla A presionada - solicitando captura de canvas...');
-                
+                lastAReceived = Date.now();
+                rotationActive = false;
+                if (rotationTimeoutId) clearTimeout(rotationTimeoutId);
+                // Pausar auto-rotación mientras se ejecuta el flujo de "A"
+                if (rotationInterval) { clearInterval(rotationInterval); rotationInterval = null; }
+                autoRotationActive = false;
+                console.log('🅰️ *** Tecla A recibida: interrumpiendo rotación y ejecutando secuencia wallpaper.jpg...');
                 if (window.socket && window.socket.connected) {
-                    // Solicitar a screen.html que capture y envíe el canvas
-                    window.socket.emit('requestCanvasCapture');
-                    console.log('📡 Solicitud de captura enviada a screen.html');
-                    
-                    // Mostrar feedback visual
-                    const feedback = document.createElement('div');
-                    feedback.style.cssText = `
-                        position: fixed;
-                        top: 20px;
-                        right: 20px;
-                        background: #28a745;
-                        color: white;
-                        padding: 15px 20px;
-                        border-radius: 8px;
-                        z-index: 10000;
-                        font-weight: bold;
-                        box-shadow: 0 4px 12px rgba(0,0,0,0.3);
-                    `;
-                    feedback.textContent = '📸 Capturando wallpaper...';
-                    document.body.appendChild(feedback);
-                    
-                    setTimeout(() => {
-                        if (feedback.parentNode) {
-                            feedback.remove();
-                        }
-                    }, 3000);
+                    executeUpdateProcess();
                 } else {
-                    console.error('❌ Socket no conectado - no se puede solicitar captura');
+                    console.error('❌ Socket no conectado - no se puede iniciar el proceso');
                 }
             }
         });
+
+        async function executeUpdateProcess() {
+            try {
+                // Mostrar feedback visual inicial
+                const feedback = createFeedback('🔄 Paso 1/4: Iniciando proceso...', '#007bff');
+                // PASO 1: Esperar 4 segundos
+                console.log('⏳ *** PASO 2/4 *** Esperando 4 segundos antes de continuar...');
+                updateFeedback(feedback, '⏳ Paso 2/4: Esperando 4 segundos...', '#ffc107');
+                await new Promise(resolve => setTimeout(resolve, 4000));
+                // PASO 2: Recargar screen/1
+                console.log('🔄 *** PASO 3/4 *** Recargando screen/1 para asegurar última vista...');
+                updateFeedback(feedback, '🔄 Paso 3/4: Recargando screen/1...', '#17a2b8');
+                window.socket.emit('reloadScreen', { screenId: 1 });
+                await new Promise(resolve => setTimeout(resolve, 1000));
+                // PASO 3: Solicitar CAPTURA EXACTA de screen/1 y guardar como wallpaper.jpg
+                console.log('📸 *** PASO 4/4 *** Solicitando captura de screen/1 para guardar exactamente lo visible...');
+                updateFeedback(feedback, '📸 Paso 4/4: Capturando screen/1 → wallpaper.jpg...', '#fd7e14');
+                window.socket.emit('requestCanvasCaptureFromScreen', { screenId: 1 });
+                // Esperar confirmación del servidor de que se guardó el canvas
+                await new Promise((resolve) => {
+                    const timeout = setTimeout(() => {
+                        console.warn('⚠️ Timeout esperando captura; continuando');
+                        resolve();
+                    }, 10000);
+                    window.socket.once('canvasSaved', (data) => {
+                        clearTimeout(timeout);
+                        if (data?.success) {
+                            console.log('✅ *** CONFIRMACIÓN *** wallpaper.jpg guardado desde captura de screen/1:', data);
+                        } else {
+                            console.error('❌ Error al guardar desde captura; datos:', data);
+                        }
+                        resolve();
+                    });
+                });
+                // No emitir newPatternReady aquí: el servidor ya lo emitió al guardar canvas
+                console.log('🎨 Coloreo con wallpaper.jpg activado por el servidor (evitando duplicados)');
+                // Reiniciar el temporizador para volver a rotación
+                resetRotationTimeout();
+                setTimeout(() => {
+                    if (feedback.parentNode) {
+                        feedback.remove();
+                    }
+                }, 3000);
+            } catch (error) {
+                console.error('❌ Error durante el proceso de actualización:', error);
+                const errorFeedback = createFeedback('❌ Error en el proceso', '#dc3545');
+                setTimeout(() => {
+                    if (errorFeedback.parentNode) {
+                        errorFeedback.remove();
+                    }
+                }, 3000);
+            }
+        }
+
+        function createFeedback(text, color) {
+            const feedback = document.createElement('div');
+            feedback.style.cssText = `
+                position: fixed;
+                top: 20px;
+                right: 20px;
+                background: ${color};
+                color: white;
+                padding: 15px 20px;
+                border-radius: 8px;
+                z-index: 10000;
+                font-weight: bold;
+                box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+                min-width: 250px;
+                text-align: center;
+            `;
+            feedback.textContent = text;
+            document.body.appendChild(feedback);
+            return feedback;
+        }
+
+        function updateFeedback(feedback, text, color) {
+            feedback.textContent = text;
+            feedback.style.background = color;
+        }
         
         // Limpiar interval al cerrar
         window.addEventListener('beforeunload', () => {
@@ -675,6 +798,6 @@
             });
         }
     </script>
-    <script src="assets/js/control.js"></script>
+    <script src="assets/js/control.js?v=3"></script>
 </body>
 </html>
