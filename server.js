@@ -26,6 +26,8 @@ app.use(express.static(__dirname));
 app.use('/patterns', express.static(path.join(__dirname, 'patterns')));
 app.use('/processed', express.static(path.join(__dirname, 'processed')));
 app.use('/captura', express.static(path.join(__dirname, 'captura')));
+app.use('/js', express.static(path.join(__dirname, 'js')));
+app.use('/css', express.static(path.join(__dirname, 'css')));
 
 // Ruta para la pantalla de 3 monitores
 app.get('/3screens', (req, res) => {
@@ -197,6 +199,7 @@ function saveConfig(config) {
     try {
         fs.writeFileSync(CONFIG_FILE, JSON.stringify(config, null, 2));
         console.log('💾 Configuración guardada en config.json');
+        console.log('📊 Guardado - RepX:', config.general?.repetitionX, 'RepY:', config.general?.repetitionY);
     } catch (error) {
         console.error('❌ Error guardando configuración:', error.message);
     }
@@ -223,7 +226,7 @@ let globalState = {
         selectedImage: 'red',
         patternSource: 'processed',
         // Configuración de imágenes superpuestas - NUEVOS VALORES
-        overlayImages: {
+    overlayImages: {
             countX: 10,             // NUEVO VALOR
             countY: 8,              // NUEVO VALOR
             offsetX: -550,          // NUEVO VALOR
@@ -239,7 +242,9 @@ let globalState = {
             alternateRowY: 0,
             alternateColX: 0,
             alternateColY: 0
-        }
+    },
+    // NUEVO: Intervalo único para la secuencia de coloreado (ms) - default 40s
+    colorSequenceIntervalMs: 40000
     },
     // Configuración específica de cada pantalla (solo offset horizontal manual)
     screens: {
@@ -275,7 +280,8 @@ let globalState = {
             x: 102,              // NUEVO VALOR
             y: 153,              // NUEVO VALOR
             interval: 3000,
-            zIndex: 1000
+            zIndex: 1000,
+            shadowWidth: 20      // NUEVO: Ancho de sombra
         },
         7: {
             enabled: true,
@@ -285,7 +291,8 @@ let globalState = {
             x: 256,              // NUEVO VALOR
             y: 300,              // NUEVO VALOR
             interval: 3000,
-            zIndex: 1000
+            zIndex: 1000,
+            shadowWidth: 20      // NUEVO: Ancho de sombra
         }
     },
     // Wallpaper state
@@ -315,11 +322,25 @@ let globalState = {
     }
 };
 
+// Función para merge profundo de configuraciones
+function deepMerge(target, source) {
+    const result = { ...target };
+    for (const key in source) {
+        if (source[key] && typeof source[key] === 'object' && !Array.isArray(source[key])) {
+            result[key] = deepMerge(target[key] || {}, source[key]);
+        } else {
+            result[key] = source[key];
+        }
+    }
+    return result;
+}
+
 // Cargar configuración guardada al iniciar servidor
 const savedConfig = loadConfig();
 if (savedConfig) {
-    globalState = { ...globalState, ...savedConfig };
+    globalState = deepMerge(globalState, savedConfig);
     console.log('✅ Configuración anterior restaurada');
+    console.log('📊 Valores cargados - RepX:', globalState.general.repetitionX, 'RepY:', globalState.general.repetitionY);
 } else {
     console.log('🆕 Usando configuración por defecto');
 }
@@ -412,6 +433,16 @@ app.post('/api/general', (req, res) => {
     saveConfig(globalState); // GUARDAR CONFIGURACIÓN
     io.emit('generalConfigUpdate', globalState.general);
     res.json({ success: true });
+});
+
+// NUEVO: Endpoint para forzar guardado de configuración
+app.post('/api/save-config', (req, res) => {
+    try {
+        saveConfig(globalState);
+        res.json({ success: true, message: 'Configuración guardada exitosamente' });
+    } catch (error) {
+        res.status(500).json({ success: false, error: error.message });
+    }
 });
 
 app.post('/api/screen/:id', (req, res) => {
@@ -554,20 +585,22 @@ io.on('connection', (socket) => {
     });
 
     socket.on('updateGeneralConfig', (config) => {
-        // Optimización: throttling para configuración general
-        if (isThrottled('updateGeneralConfig')) {
-            return; // Ignorar si está en throttle
-        }
-        
         const client = connectedClients.get(socket.id);
         if (client && client.type === 'control') {
+            // Siempre actualizar y guardar la configuración
             globalState.general = { ...globalState.general, ...config };
-            // Solo enviar a screens, no a brush-reveal para optimizar
-            connectedClients.forEach((otherClient) => {
-                if (otherClient.type === 'screen' && otherClient.socket.connected) {
-                    otherClient.socket.emit('generalConfigUpdate', globalState.general);
-                }
-            });
+            saveConfig(globalState); // GUARDAR CONFIGURACIÓN SIEMPRE
+            console.log('💾 Configuración general actualizada y guardada');
+            
+            // Aplicar throttling solo para la emisión a clientes
+            if (!isThrottled('updateGeneralConfig')) {
+                // Solo enviar a screens, no a brush-reveal para optimizar
+                connectedClients.forEach((otherClient) => {
+                    if (otherClient.type === 'screen' && otherClient.socket.connected) {
+                        otherClient.socket.emit('generalConfigUpdate', globalState.general);
+                    }
+                });
+            }
         }
     });
 
@@ -579,7 +612,8 @@ io.on('connection', (socket) => {
             const src = (data && data.source) ? String(data.source) : 'processed';
             if (!allowed.includes(src)) return;
             globalState.general.patternSource = src;
-            console.log(`🧩 patternSource cambiado a: ${src}`);
+            saveConfig(globalState); // GUARDAR CONFIGURACIÓN
+            console.log(`🧩 patternSource cambiado a: ${src} y guardado`);
             io.emit('patternSourceChanged', { source: src });
             // También reenviar el estado general para que screen.html lo tenga sincronizado
             io.emit('generalConfigUpdate', globalState.general);
@@ -603,7 +637,8 @@ io.on('connection', (socket) => {
             const { image } = data;
             if (['red', 'pink', 'blue'].includes(image)) {
                 globalState.general.selectedImage = image;
-                console.log(`🖼️ Imagen seleccionada: ${image}.png`);
+                saveConfig(globalState); // GUARDAR CONFIGURACIÓN
+                console.log(`🖼️ Imagen seleccionada: ${image}.png y guardada`);
                 // Notificar a todos los clientes sobre el cambio
                 io.emit('imageSelected', { image });
             }
@@ -629,20 +664,25 @@ io.on('connection', (socket) => {
         }
     });
 
-    // NUEVO: Manejar secuencia de brush reveal (tecla "1")
+    // NUEVO: Orquestación al presionar "1": recarga screen/1, captura y guarda wallpaper.jpg, luego colorear con wallpaper, y tras 2m volver a secuencia
     socket.on('startBrushRevealSequence', () => {
         const client = connectedClients.get(socket.id);
         if (client && client.type === 'control') {
-            console.log('🎯 *** SERVER *** Iniciando secuencia de brush reveal');
-            
-            // Enviar comando a todos los brush-reveal
-            connectedClients.forEach((otherClient) => {
-                if (otherClient.type === 'brush-reveal' && otherClient.socket.connected) {
-                    otherClient.socket.emit('startBrushRevealSequence');
-                }
-            });
-            
-            console.log('📡 *** SERVER *** startBrushRevealSequence enviado a brush-reveal clients');
+            console.log('🎯 *** SERVER *** Orquestando flujo de tecla 1');
+            setTimeout(() => {
+                io.emit('reloadRequest', { screenId: 1 });
+                console.log('🔄 *** SERVER *** reloadRequest enviado a screen/1');
+                setTimeout(() => {
+                    let sent = false;
+                    connectedClients.forEach((c) => {
+                        if (c.type === 'screen' && c.screenId === 1 && c.socket.connected) {
+                            c.socket.emit('requestCanvasCapture');
+                            sent = true;
+                        }
+                    });
+                    if (!sent) console.warn('⚠️ *** SERVER *** No hay screen/1 conectado para capturar');
+                }, 800);
+            }, 4000);
         }
     });
 
@@ -682,8 +722,8 @@ io.on('connection', (socket) => {
             const syncTimestamp = Date.now();
             const syncData = {
                 timestamp: syncTimestamp,
-                intervalTime: 16000, // 16 segundos por color
-                patterns: ['rojo.jpg', 'azul.jpg', 'amarillo.jpg']
+                intervalTime: globalState.general.colorSequenceIntervalMs || 40000,
+                patterns: ['amarillo.jpg', 'rojo.jpg', 'azul.jpg']
             };
             
             console.log(`⏰ *** SERVER *** Timestamp de sincronización: ${syncTimestamp}`);
@@ -747,6 +787,27 @@ io.on('connection', (socket) => {
             });
             
             console.log('📡 *** SERVER *** Comando resetColorSequence enviado a brush-reveal clients');
+        }
+    });
+
+    // NUEVO: Actualizar el intervalo de secuencia de coloreado (ms) desde el control
+    socket.on('setColorSequenceInterval', (data) => {
+        const client = connectedClients.get(socket.id);
+        if (client && client.type === 'control') {
+            const value = Number(data?.intervalMs);
+            if (!Number.isFinite(value) || value < 1000 || value > 10 * 60 * 1000) {
+                console.warn('⚠️ *** SERVER *** Intervalo inválido, se ignora:', data);
+                return;
+            }
+            globalState.general.colorSequenceIntervalMs = value;
+            saveConfig(globalState);
+            console.log(`⏱️ *** SERVER *** Intervalo de secuencia actualizado: ${value}ms`);
+            // Informar a todos los brush-reveal para que adopten el nuevo valor
+            connectedClients.forEach((otherClient) => {
+                if (otherClient.type === 'brush-reveal' && otherClient.socket.connected) {
+                    otherClient.socket.emit('colorSequenceIntervalUpdated', { intervalMs: value });
+                }
+            });
         }
     });
 
@@ -836,10 +897,10 @@ io.on('connection', (socket) => {
     });
 
     // ========================================
-    // STEP 1: Save OpenCV processed image to temp folder
+    // STEP 1: Save processed image to temp folder
     // ========================================
     socket.on('saveProcessedImage', async (data) => {
-        console.log('📥 PASO 1: Recibiendo imagen procesada por OpenCV...');
+        console.log('📥 PASO 1: Recibiendo imagen procesada...');
         try {
                 const { imageDataUrl } = data;
                 
@@ -985,6 +1046,22 @@ io.on('connection', (socket) => {
                 filename: filename,
                 timestamp: Date.now()
             });
+            // Ordenar a todos los brush-reveal a usar wallpaper.jpg y colorear
+            io.emit('switchToWallpaperMode');
+            // Programar regreso a modo secuencia tras 40 segundos
+            setTimeout(() => {
+                io.emit('switchToSequenceMode');
+                console.log('🔁 *** SERVER *** Regresando a modo secuencia (40s)');
+                // Kick de seguridad: (re)iniciar secuencia automática sincronizada a 30s
+                const syncTimestamp = Date.now();
+                const syncData = {
+                    timestamp: syncTimestamp,
+                    intervalTime: globalState.general.colorSequenceIntervalMs || 40000,
+                    patterns: ['rojo.jpg', 'azul.jpg', 'amarillo.jpg']
+                };
+                io.emit('startAutoColorSequence', syncData);
+                console.log('📡 *** SERVER *** Kick: startAutoColorSequence enviado tras volver a secuencia');
+            }, globalState.general.colorSequenceIntervalMs || 40000);
             
             console.log('📢 Evento newPatternReady enviado para brush-reveal (SIN duplicar imageUpdated)');
             

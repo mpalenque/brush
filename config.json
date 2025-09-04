@@ -1,11 +1,11 @@
 {
   "general": {
     "patternType": "organic-complex",
-    "repetitionX": 265,
-    "repetitionY": 23,
+    "repetitionX": 300,
+    "repetitionY": 25,
     "patternSize": 300,
-    "separationX": 80,
-    "separationY": 119,
+    "separationX": "754",
+    "separationY": 130,
     "spacingX": 0,
     "spacingY": 0,
     "rotation": 0,
@@ -15,16 +15,16 @@
     "perfumeSpacingV": 0.3,
     "perfumeSizeFactor": 0.55,
     "backgroundColor": "#FFF2E5",
-    "selectedImage": "red",
+    "selectedImage": "pink",
     "patternSource": "processed",
     "overlayImages": {
-      "countX": 10,
-      "countY": 8,
-      "offsetX": -550,
-      "offsetY": -150,
-      "size": 192,
-      "spacingX": 400,
-      "spacingY": 250,
+      "countX": 12,
+      "countY": 12,
+      "offsetX": -400,
+      "offsetY": 50,
+      "size": 180,
+      "spacingX": 350,
+      "spacingY": 300,
       "rowOffsetX": 60,
       "rowOffsetY": 0,
       "colOffsetX": 0,
@@ -111,7 +111,8 @@
       "x": 102,
       "y": 153,
       "interval": 3000,
-      "zIndex": 1000
+      "zIndex": 1000,
+      "shadowWidth": 20
     },
     "7": {
       "enabled": true,
@@ -121,7 +122,8 @@
       "x": 256,
       "y": 300,
       "interval": 3000,
-      "zIndex": 1000
+      "zIndex": 1000,
+      "shadowWidth": 20
     }
   },
   "wallpaper": {

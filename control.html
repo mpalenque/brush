@@ -6,7 +6,7 @@
     <title>Control Panel - Multi-Screen Wallpaper</title>
     
     <!-- Estilos -->
-    <link rel="stylesheet" href="assets/css/control.css">
+    <link rel="stylesheet" href="css/control.css">
     
 
 </head>
@@ -23,15 +23,15 @@
         <div class="section" style="background: #e8f4fd; border-left: 4px solid #007bff;">
             <h2>⌨️ Atajos de Teclado</h2>
             <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 10px; font-size: 14px;">
-                <div><strong>Tecla 1:</strong> Iniciar secuencia brush reveal</div>
+                <div><strong>Tecla 1:</strong> Capturar screen/1 → guardar wallpaper.jpg y mostrarlo</div>
+                <div><strong>Tecla A:</strong> Cambiar imagen a rosa (no captura wallpaper)</div>
                 <div><strong>Tecla Z:</strong> Seleccionar imagen roja</div>
-                <div><strong>Tecla A:</strong> Seleccionar imagen rosa</div>
                 <div><strong>Tecla Q:</strong> Seleccionar imagen azul</div>
                 <div><strong>Tecla 9:</strong> Procesar desde captura</div>
                 <div><strong>Tecla P:</strong> Cambiar a fuente procesada</div>
             </div>
             <div style="margin-top: 10px; padding: 8px; background: #d4edda; border-radius: 4px; border-left: 3px solid #28a745;">
-                <strong>🖌️ Coloreo Directo:</strong> Usa el botón "Iniciar Coloreo Directo" para colorear automáticamente cada 30s rotando entre amarillo.jpg, rojo.jpg y azul.jpg sin depender del wallpaper grabado.
+                <strong>🖌️ Coloreo Directo:</strong> Usa "Iniciar Coloreado" para colorear automáticamente cada 40s rotando entre amarillo.jpg, rojo.jpg y azul.jpg sin depender del wallpaper grabado.
             </div>
             <small style="color:#666; display: block; margin-top: 8px;">
                 ⏰ <strong>Auto-rotación:</strong> Después de 2 minutos sin actividad, se inicia automáticamente la rotación entre amarillo.jpg, rojo.jpg y azul.jpg cada minuto.
@@ -49,18 +49,7 @@
                 <small style="color:#666;">Las pantallas cargarán desde la imagen procesada.</small>
             </div>
             
-            <div class="control-group" style="margin-bottom:12px;">
-                <label>🎨 Rotación Automática Brush Reveal (2 min cada imagen):</label>
-                <div class="auto-rotation-controls">
-                    <button id="autoRotationBtn" class="image-btn" data-active="false">
-                        ⏸️ Auto-Rotación OFF
-                    </button>
-                    <div class="rotation-status" id="rotationStatus" style="margin-top: 8px; font-size: 12px; color: #666;">
-                        Rotación desactivada
-                    </div>
-                </div>
-                <small style="color:#666;">Cada 2 minutos cambia entre amarillo.jpg, azul.jpg, rojo.jpg para colorear encima en Brush Reveal.</small>
-            </div>
+            <!-- Rotación automática siempre activa por defecto; controles removidos para simplificar UI -->
             
             <!-- Controles de Coloreado Automático -->
             <div class="control-group" style="margin-bottom:12px; border: 2px solid #28a745; border-radius: 8px; padding: 15px; background: #f8fff9;">
@@ -86,8 +75,8 @@
                     🟡 Fondo: amarillo.jpg | Modo: Secuencia (rojo→azul→amarillo)
                 </div>
                 <small style="color:#666;">
-                    <strong>Modo Secuencia:</strong> rojo.jpg → azul.jpg → amarillo.jpg encima del fondo (cada 16s).
-                    <br><strong>Modo Wallpaper:</strong> Colorea con wallpaper.jpg procesado desde screen/1.
+                    <strong>Modo Secuencia:</strong> rojo.jpg → azul.jpg → amarillo.jpg encima del fondo (cada 40s después de terminar).
+                    <br><strong>Modo Wallpaper:</strong> Colorea con wallpaper.jpg procesado desde screen/1 y luego vuelve a Secuencia.
                     <br><strong>SWITCH:</strong> Alterna entre los dos modos de coloreado.
                 </small>
             </div>
@@ -436,6 +425,10 @@
                         <label for="slideshow3Interval">Intervalo: <span id="slideshow3IntervalValue" class="range-display">3000ms</span></label>
                         <input type="range" id="slideshow3Interval" min="1000" max="10000" value="3000" step="500">
                     </div>
+                    <div class="control-group">
+                        <label for="slideshow3ShadowWidth">🌑 Ancho Sombra: <span id="slideshow3ShadowWidthValue" class="range-display">20px</span></label>
+                        <input type="range" id="slideshow3ShadowWidth" min="0" max="100" value="20" step="5">
+                    </div>
                 </div>
             </div>
 
@@ -467,6 +460,10 @@
                     <div class="control-group">
                         <label for="slideshow7Interval">Intervalo: <span id="slideshow7IntervalValue" class="range-display">3000ms</span></label>
                         <input type="range" id="slideshow7Interval" min="1000" max="10000" value="3000" step="500">
+                    </div>
+                    <div class="control-group">
+                        <label for="slideshow7ShadowWidth">🌑 Ancho Sombra: <span id="slideshow7ShadowWidthValue" class="range-display">20px</span></label>
+                        <input type="range" id="slideshow7ShadowWidth" min="0" max="100" value="20" step="5">
                     </div>
                 </div>
             </div>
@@ -626,73 +623,23 @@
         document.addEventListener('keydown', (e) => {
             if (e.key === 'a' || e.key === 'A') {
                 e.preventDefault();
-                lastAReceived = Date.now();
-                rotationActive = false;
-                if (rotationTimeoutId) clearTimeout(rotationTimeoutId);
-                // Pausar auto-rotación mientras se ejecuta el flujo de "A"
-                if (rotationInterval) { clearInterval(rotationInterval); rotationInterval = null; }
-                autoRotationActive = false;
-                console.log('🅰️ *** Tecla A recibida: interrumpiendo rotación y ejecutando secuencia wallpaper.jpg...');
+                // Solo cambiar imagen a rosa, sin capturar wallpaper
                 if (window.socket && window.socket.connected) {
-                    executeUpdateProcess();
+                    window.socket.emit('selectImage', { image: 'pink' });
+                }
+                console.log('🅰️ Tecla A: cambiar imagen a rosa (sin capturar wallpaper)');
+            } else if (e.key === '1') {
+                e.preventDefault();
+                console.log('1️⃣ *** Tecla 1 recibida: iniciando captura de screen/1...');
+                if (window.socket && window.socket.connected) {
+                    executeScreenCapture();
                 } else {
-                    console.error('❌ Socket no conectado - no se puede iniciar el proceso');
+                    console.error('❌ Socket no conectado - no se puede iniciar captura');
                 }
             }
         });
 
-        async function executeUpdateProcess() {
-            try {
-                // Mostrar feedback visual inicial
-                const feedback = createFeedback('🔄 Paso 1/4: Iniciando proceso...', '#007bff');
-                // PASO 1: Esperar 4 segundos
-                console.log('⏳ *** PASO 2/4 *** Esperando 4 segundos antes de continuar...');
-                updateFeedback(feedback, '⏳ Paso 2/4: Esperando 4 segundos...', '#ffc107');
-                await new Promise(resolve => setTimeout(resolve, 4000));
-                // PASO 2: Recargar screen/1
-                console.log('🔄 *** PASO 3/4 *** Recargando screen/1 para asegurar última vista...');
-                updateFeedback(feedback, '🔄 Paso 3/4: Recargando screen/1...', '#17a2b8');
-                window.socket.emit('reloadScreen', { screenId: 1 });
-                await new Promise(resolve => setTimeout(resolve, 1000));
-                // PASO 3: Solicitar CAPTURA EXACTA de screen/1 y guardar como wallpaper.jpg
-                console.log('📸 *** PASO 4/4 *** Solicitando captura de screen/1 para guardar exactamente lo visible...');
-                updateFeedback(feedback, '📸 Paso 4/4: Capturando screen/1 → wallpaper.jpg...', '#fd7e14');
-                window.socket.emit('requestCanvasCaptureFromScreen', { screenId: 1 });
-                // Esperar confirmación del servidor de que se guardó el canvas
-                await new Promise((resolve) => {
-                    const timeout = setTimeout(() => {
-                        console.warn('⚠️ Timeout esperando captura; continuando');
-                        resolve();
-                    }, 10000);
-                    window.socket.once('canvasSaved', (data) => {
-                        clearTimeout(timeout);
-                        if (data?.success) {
-                            console.log('✅ *** CONFIRMACIÓN *** wallpaper.jpg guardado desde captura de screen/1:', data);
-                        } else {
-                            console.error('❌ Error al guardar desde captura; datos:', data);
-                        }
-                        resolve();
-                    });
-                });
-                // No emitir newPatternReady aquí: el servidor ya lo emitió al guardar canvas
-                console.log('🎨 Coloreo con wallpaper.jpg activado por el servidor (evitando duplicados)');
-                // Reiniciar el temporizador para volver a rotación
-                resetRotationTimeout();
-                setTimeout(() => {
-                    if (feedback.parentNode) {
-                        feedback.remove();
-                    }
-                }, 3000);
-            } catch (error) {
-                console.error('❌ Error durante el proceso de actualización:', error);
-                const errorFeedback = createFeedback('❌ Error en el proceso', '#dc3545');
-                setTimeout(() => {
-                    if (errorFeedback.parentNode) {
-                        errorFeedback.remove();
-                    }
-                }, 3000);
-            }
-        }
+    // executeUpdateProcess eliminado: la tecla A ya no captura wallpaper
 
         function createFeedback(text, color) {
             const feedback = document.createElement('div');
@@ -718,6 +665,63 @@
         function updateFeedback(feedback, text, color) {
             feedback.textContent = text;
             feedback.style.background = color;
+        }
+
+        async function executeScreenCapture() {
+            try {
+                // Mostrar feedback visual inicial
+                const feedback = createFeedback('🔄 Paso 1/3: Iniciando captura...', '#007bff');
+                
+                // PASO 1: Esperar 4 segundos
+                console.log('⏳ *** PASO 1/3 *** Esperando 4 segundos...');
+                updateFeedback(feedback, '⏳ Paso 1/3: Esperando 4 segundos...', '#ffc107');
+                await new Promise(resolve => setTimeout(resolve, 4000));
+                
+                // PASO 2: Recargar screen/1
+                console.log('🔄 *** PASO 2/3 *** Recargando screen/1...');
+                updateFeedback(feedback, '🔄 Paso 2/3: Recargando screen/1...', '#17a2b8');
+                window.socket.emit('reloadScreen', { screenId: 1 });
+                await new Promise(resolve => setTimeout(resolve, 1000));
+                
+                // PASO 3: Capturar y guardar como wallpaper.jpg (6480x3840)
+                console.log('📸 *** PASO 3/3 *** Capturando screen/1 → wallpaper.jpg (6480x3840)...');
+                updateFeedback(feedback, '📸 Paso 3/3: Capturando como wallpaper.jpg...', '#28a745');
+                window.socket.emit('requestCanvasCaptureFromScreen', { 
+                    screenId: 1,
+                    saveAs: 'wallpaper.jpg',
+                    resolution: { width: 6480, height: 3840 }
+                });
+                
+                // Esperar confirmación del servidor
+                await new Promise((resolve) => {
+                    const timeout = setTimeout(() => {
+                        console.warn('⚠️ Timeout esperando captura; continuando');
+                        updateFeedback(feedback, '⚠️ Timeout - captura completada', '#ffc107');
+                        setTimeout(() => feedback.remove(), 3000);
+                        resolve();
+                    }, 10000);
+                    
+                    window.socket.once('canvasSaved', (data) => {
+                        clearTimeout(timeout);
+                        if (data?.success) {
+                            console.log('✅ *** CONFIRMACIÓN *** wallpaper.jpg guardado exitosamente:', data);
+                            updateFeedback(feedback, '✅ wallpaper.jpg guardado exitosamente!', '#28a745');
+                        } else {
+                            console.error('❌ Error al guardar wallpaper.jpg:', data);
+                            updateFeedback(feedback, '❌ Error al guardar wallpaper.jpg', '#dc3545');
+                        }
+                        setTimeout(() => feedback.remove(), 3000);
+                        resolve();
+                    });
+                });
+                
+                console.log('✅ *** PROCESO COMPLETADO *** Captura de tecla 1 finalizada');
+                
+            } catch (error) {
+                console.error('❌ Error en executeScreenCapture:', error);
+                const feedback = createFeedback('❌ Error en captura', '#dc3545');
+                setTimeout(() => feedback.remove(), 3000);
+            }
         }
         
         // Limpiar interval al cerrar
@@ -745,6 +749,7 @@
             const x = document.getElementById(`slideshow${brushId}X`);
             const y = document.getElementById(`slideshow${brushId}Y`);
             const interval = document.getElementById(`slideshow${brushId}Interval`);
+            const shadowWidth = document.getElementById(`slideshow${brushId}ShadowWidth`);
 
             // Event listeners para actualizar valores en tiempo real
             enabled.addEventListener('change', () => updateSlideshowConfig(brushId));
@@ -768,6 +773,10 @@
                 document.getElementById(`slideshow${brushId}IntervalValue`).textContent = e.target.value + 'ms';
                 updateSlideshowConfig(brushId);
             });
+            shadowWidth.addEventListener('input', (e) => {
+                document.getElementById(`slideshow${brushId}ShadowWidthValue`).textContent = e.target.value + 'px';
+                updateSlideshowConfig(brushId);
+            });
         }
 
         function updateSlideshowConfig(brushId) {
@@ -778,6 +787,7 @@
                 x: parseInt(document.getElementById(`slideshow${brushId}X`).value),
                 y: parseInt(document.getElementById(`slideshow${brushId}Y`).value),
                 interval: parseInt(document.getElementById(`slideshow${brushId}Interval`).value),
+                shadowWidth: parseInt(document.getElementById(`slideshow${brushId}ShadowWidth`).value),
                 folder: brushId === 3 ? '3' : '4'
             };
 
@@ -798,6 +808,6 @@
             });
         }
     </script>
-    <script src="assets/js/control.js?v=3"></script>
+    <script src="js/control.js?v=3"></script>
 </body>
 </html>
