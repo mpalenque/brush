@@ -127,7 +127,7 @@ let autoColorSequence = {
   patterns: ['rojo.jpg', 'azul.jpg', 'amarillo.jpg'],
   currentIndex: 0,
   interval: null, // deprecado: ya no usamos setInterval
-CON  intervalTime: 40000, // esperar 40s DESPUÉS de terminar de colorear (default configurable)
+  intervalTime: 40000, // esperar 40s DESPUÉS de terminar de colorear (default configurable)
   timeoutId: null, // timeout para el siguiente paso
   nextStepScheduled: false, // guardia para programar el siguiente paso una sola vez al finalizar
   // Watchdog para asegurar avance aunque falle la programación en loop-end

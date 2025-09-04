@@ -33,7 +33,8 @@
       "alternateRowY": 0,
       "alternateColX": 0,
       "alternateColY": 0
-    }
+    },
+    "colorSequenceIntervalMs": 40000
   },
   "screens": {
     "1": {
