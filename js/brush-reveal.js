@@ -325,41 +325,30 @@ function switchToSequenceMode() {
   // Resetear a amarillo como base
   currentPatternIndex = 0;
   
-  // Si había una secuencia previa, reanudarla tal cual
-  if (savedSequenceState && savedSequenceState.active) {
-    autoColorSequence.patterns = [...savedSequenceState.patterns];
-    autoColorSequence.currentIndex = savedSequenceState.currentIndex % autoColorSequence.patterns.length;
-    autoColorSequence.intervalTime = savedSequenceState.intervalTime;
-    autoColorSequence.active = true;
-    autoColorSequence.nextStepScheduled = false;
-    if (autoColorSequence.timeoutId) { clearTimeout(autoColorSequence.timeoutId); autoColorSequence.timeoutId = null; }
-    console.log('✅ Reanudando secuencia guardada:', {
-      index: autoColorSequence.currentIndex,
-      interval: autoColorSequence.intervalTime,
-      patterns: autoColorSequence.patterns
-    });
-    // Ejecutar siguiente paso inmediatamente para retomar
-    executeColorStep();
-    // Configurar un watchdog corto adicional tras la reanudación para cubrir fallos inmediatos
-    if (autoColorSequence.watchdogId) { clearTimeout(autoColorSequence.watchdogId); }
-    const myStepIdResume = autoColorSequence.stepId;
-    autoColorSequence.watchdogId = setTimeout(() => {
-      if (!autoColorSequence.active || coloringMode !== 'sequence') return;
-      if (autoColorSequence.stepId !== myStepIdResume) return;
-      if (autoColorSequence.timeoutId) return;
-      console.warn('⏰ Watchdog (resume): no se programó el siguiente paso tras reanudar; forzando avance');
-      try { executeColorStep(); } catch (e) { console.error('❌ Error en watchdog resume executeColorStep:', e); }
-    }, DURATION_MS + autoColorSequence.intervalTime + 2500);
-  } else {
-    // Resetear índice de secuencia
-    autoColorSequence.currentIndex = 0;
-    // Asegurar que la secuencia automática esté activa
+  // Importante: NO reanudar inmediatamente la secuencia previa para evitar doble inicio
+  // tras volver desde wallpaper. En su lugar, reiniciar estado y esperar al
+  // startAutoColorSequence(startAutoColorSequenceSync) que envía el servidor.
+  // Esto evita la "pasada rápida" de los 3 colores.
+  stopAutoColorSequence();
+  autoColorSequence.currentIndex = 0; // empezar desde el comienzo: rojo → azul → amarillo
+  autoColorSequence.nextStepScheduled = false;
+  // Mantener el orden por defecto salvo que el servidor envíe otro
+  autoColorSequence.patterns = autoColorSequence.patterns && autoColorSequence.patterns.length
+    ? autoColorSequence.patterns
+    : ['rojo.jpg', 'azul.jpg', 'amarillo.jpg'];
+  
+  console.log('✅ Modo secuencia preparado. Esperando señal de inicio sincronizada del servidor...');
+  
+  // Fallback suave: si en ~2s no llega la orden del servidor, iniciar localmente
+  setTimeout(() => {
+    if (coloringMode !== 'sequence') return;
     if (!autoColorSequence.active) {
+      console.log('⏱️ Fallback: iniciando secuencia automática local (no llegó señal del servidor)');
       startAutoColorSequence();
     }
-    console.log('✅ Modo secuencia activado - Secuencia automática corriendo');
-  }
-  // Limpiar estado guardado
+  }, 2000);
+  
+  // Limpiar estado guardado: no reanudamos desde mitad de ciclo
   savedSequenceState = null;
 }
 
