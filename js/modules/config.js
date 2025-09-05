@@ -29,7 +29,7 @@ const CONFIG = {
     // Pattern settings
     PATTERNS: {
         BASE_PATH: '/patterns/',
-        DEFAULT_PATTERNS: ['amarillo.jpg', 'wallpaper.jpg', 'azul.jpg', 'rojo.jpg'],
+    DEFAULT_PATTERNS: ['amarillo.jpg', 'wallpaper.jpg', 'azul.jpg', 'rojo.jpg', 'logo1.jpg', 'logo2.jpg'],
         DEFAULT_PATTERN: 'amarillo.jpg',
         CACHE_BUST: true
     },
@@ -65,18 +65,18 @@ const CONFIG = {
             selectedImage: 'red',
             patternSource: 'processed',
             overlayImages: {
-                countX: 3,
-                countY: 2,
-                offsetX: 0,
-                offsetY: 0,
-                size: 200,
-                spacingX: 800,
-                spacingY: 600,
-                rowOffsetX: 0,
+                countX: 10,
+                countY: 4,
+                offsetX: -650,
+                offsetY: 600,
+                size: 382,
+                spacingX: 450,
+                spacingY: 550,
+                rowOffsetX: 60,
                 rowOffsetY: 0,
                 colOffsetX: 0,
                 colOffsetY: 0,
-                alternateRowX: 0,
+                alternateRowX: 140,
                 alternateRowY: 0,
                 alternateColX: 0,
                 alternateColY: 0

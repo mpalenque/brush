@@ -109,7 +109,7 @@
                 rotation: 0,
                 zoom: 2.3,
                 blendMode: 'multiply',
-                backgroundColor: '#F5DDC7',
+                backgroundColor: '#FFC48A',
                 selectedImage: 'red',
                 patternSource: 'processed',
                 // Controles para imágenes superpuestas (blue.png, red.png, pink.png)
@@ -513,13 +513,47 @@
             }
         });
 
-        // NUEVO: Manejar comando de recarga desde el proceso de tecla 'A'
-        socket.on('reloadRequest', (data) => {
+        // MEJORADO: Manejar comando de recarga sincronizada
+        socket.on('reloadRequestSync', (data) => {
             if (data.screenId === SCREEN_ID) {
-                console.log('🔄 *** SCREEN *** Recibido comando de recarga - actualizando...');
+                console.log(`🔄 *** SCREEN *** Recibido comando de recarga SINCRONIZADA - Op:${data.operationId}`);
                 
                 // Recargar imagen base para obtener processed.png actualizado
                 imgLoaded = false;
+                img.onload = () => {
+                    imgLoaded = true;
+                    generateStaticPattern();
+                    
+                    // Confirmar que estamos listos
+                    socket.emit('clientReady', {
+                        operationId: data.operationId,
+                        screenId: SCREEN_ID,
+                        timestamp: Date.now()
+                    });
+                    
+                    console.log(`✅ *** SCREEN *** clientReady enviado para operación ${data.operationId}`);
+                };
+                const srcForced = (data.forceProcessed) ? '/processed/processed.png' : resolvePatternSrc();
+                img.src = `${srcForced}?t=${Date.now()}`;
+                
+                console.log('✅ *** CONFIRMACIÓN *** Screen/1 actualizando con processed.png más reciente SINCRONIZADO');
+            }
+        });
+
+        // COMPATIBILIDAD: Mantener evento original
+        socket.on('reloadRequest', (data) => {
+            if (data.screenId === SCREEN_ID) {
+                console.log('🔄 *** SCREEN *** Recibido comando de recarga - actualizando... (LEGACY)');
+                
+                // Recargar imagen base para obtener processed.png actualizado
+                imgLoaded = false;
+                img.onload = () => {
+                    imgLoaded = true;
+                    generateStaticPattern();
+                    // Notificar al servidor que esta pantalla ya está lista para capturar
+                    socket.emit('screenReady', { screenId: SCREEN_ID, ts: Date.now() });
+                    console.log('✅ *** SCREEN *** screenReady enviado tras recarga');
+                };
                 img.src = `${resolvePatternSrc()}?t=${Date.now()}`;
                 
                 console.log('✅ *** CONFIRMACIÓN *** Screen/1 actualizado con processed.png más reciente');

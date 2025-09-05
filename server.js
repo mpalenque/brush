@@ -3,7 +3,25 @@ const http = require('http');
 const socketIo = require('socket.io');
 const path = require('path');
 const fs = require('fs');
-const { createCanvas, loadImage } = require('canvas');
+
+// Prefer prebuilt @napi-rs/canvas on Windows; fallback to node-canvas
+let createCanvas, loadImage;
+try {
+    const napiCanvas = require('@napi-rs/canvas');
+    createCanvas = napiCanvas.createCanvas;
+    loadImage = napiCanvas.loadImage;
+    console.log('🖼️ Using @napi-rs/canvas');
+} catch (e) {
+    try {
+        const nodeCanvas = require('canvas');
+        createCanvas = nodeCanvas.createCanvas;
+        loadImage = nodeCanvas.loadImage;
+        console.log('🖼️ Using node-canvas');
+    } catch (e2) {
+        console.error('❌ No canvas library found. Install one of:\n  npm i @napi-rs/canvas\n  or\n  npm i canvas');
+        process.exit(1);
+    }
+}
 
 const app = express();
 const server = http.createServer(app);
@@ -28,6 +46,22 @@ app.use('/processed', express.static(path.join(__dirname, 'processed')));
 app.use('/captura', express.static(path.join(__dirname, 'captura')));
 app.use('/js', express.static(path.join(__dirname, 'js')));
 app.use('/css', express.static(path.join(__dirname, 'css')));
+
+// Utilidad: limpiar temporales relacionados a wallpaper en /patterns
+function cleanWallpaperTemps() {
+    try {
+        const dir = path.join(__dirname, 'patterns');
+        if (!fs.existsSync(dir)) return;
+        const files = fs.readdirSync(dir);
+        files.forEach(f => {
+            if (f.startsWith('wallpaper_temp_') || f.startsWith('wallpaper_3screens_')) {
+                try { fs.unlinkSync(path.join(dir, f)); } catch (_) {}
+            }
+        });
+    } catch (e) {
+        console.warn('⚠️ No se pudieron limpiar temporales de wallpaper:', e.message);
+    }
+}
 
 // Ruta para la pantalla de 3 monitores
 app.get('/3screens', (req, res) => {
@@ -227,21 +261,21 @@ let globalState = {
         patternSource: 'processed',
         // Configuración de imágenes superpuestas - NUEVOS VALORES
     overlayImages: {
-            countX: 10,             // NUEVO VALOR
-            countY: 8,              // NUEVO VALOR
-            offsetX: -550,          // NUEVO VALOR
-            offsetY: -150,          // NUEVO VALOR
-            size: 192,              // NUEVO VALOR
-            spacingX: 400,          // NUEVO VALOR
-            spacingY: 250,          // NUEVO VALOR
-            rowOffsetX: 60,         // NUEVO VALOR
-            rowOffsetY: 0,
-            colOffsetX: 0,
-            colOffsetY: 0,
-            alternateRowX: 140,     // NUEVO VALOR
-            alternateRowY: 0,
-            alternateColX: 0,
-            alternateColY: 0
+        countX: 10,
+        countY: 4,
+        offsetX: -650,
+        offsetY: 600,
+        size: 382,
+        spacingX: 450,
+        spacingY: 550,
+        rowOffsetX: 60,
+        rowOffsetY: 0,
+        colOffsetX: 0,
+        colOffsetY: 0,
+        alternateRowX: 140,
+        alternateRowY: 0,
+        alternateColX: 0,
+        alternateColY: 0
     },
     // NUEVO: Intervalo único para la secuencia de coloreado (ms) - default 40s
     colorSequenceIntervalMs: 40000
@@ -281,7 +315,8 @@ let globalState = {
             y: 153,              // NUEVO VALOR
             interval: 3000,
             zIndex: 1000,
-            shadowWidth: 20      // NUEVO: Ancho de sombra
+            shadowWidth: 20,      // NUEVO: Ancho de sombra
+            shadowOpacity: 0.3    // NUEVO: Opacidad de sombra
         },
         7: {
             enabled: true,
@@ -292,7 +327,8 @@ let globalState = {
             y: 300,              // NUEVO VALOR
             interval: 3000,
             zIndex: 1000,
-            shadowWidth: 20      // NUEVO: Ancho de sombra
+            shadowWidth: 20,      // NUEVO: Ancho de sombra
+            shadowOpacity: 0.3    // NUEVO: Opacidad de sombra
         }
     },
     // Wallpaper state
@@ -681,7 +717,7 @@ io.on('connection', (socket) => {
                         }
                     });
                     if (!sent) console.warn('⚠️ *** SERVER *** No hay screen/1 conectado para capturar');
-                }, 800);
+                }, 3800); // ⏱️ Esperar 2s más (total +2s) tras recargar antes de capturar
             }, 4000);
         }
     });
@@ -719,14 +755,16 @@ io.on('connection', (socket) => {
             console.log('🎨 *** SERVER *** Iniciando secuencia automática de coloreado');
             
             // Crear timestamp de sincronización para todas las pantallas
-            const syncTimestamp = Date.now();
+            const nowTs = Date.now();
+            const startAt = nowTs + 1500; // pequeño buffer para que todos lleguen
             const syncData = {
-                timestamp: syncTimestamp,
+                timestamp: nowTs,
+                startAt,
                 intervalTime: globalState.general.colorSequenceIntervalMs || 40000,
-                patterns: ['amarillo.jpg', 'rojo.jpg', 'azul.jpg']
+                patterns: ['amarillo.jpg', 'rojo.jpg', 'azul.jpg', 'logo1.jpg', 'logo2.jpg']
             };
             
-            console.log(`⏰ *** SERVER *** Timestamp de sincronización: ${syncTimestamp}`);
+            console.log(`⏰ *** SERVER *** Sync ts=${nowTs}, startAt=${startAt}`);
             
             // Enviar comando con datos de sincronización a todos los brush-reveal
             connectedClients.forEach((otherClient) => {
@@ -1011,26 +1049,14 @@ io.on('connection', (socket) => {
             // Dibujar la imagen completa
             ctx.drawImage(img, 0, 0);
             
-            // Guardar como JPG con método atómico
-            const tempFilename = `wallpaper_temp_${Date.now()}.jpg`;
-            const tempPath = path.join(patternsDir, tempFilename);
+            // Limpiar temporales antes de escribir
+            cleanWallpaperTemps();
+
+            // Guardar como JPG sobreescribiendo directamente
             const finalPath = path.join(patternsDir, filename);
-            
             const jpgBuffer = canvas.toBuffer('image/jpeg', { quality: 0.95 });
-            
             console.log(`💾 Buffer JPG generado: ${jpgBuffer.length} bytes`);
-            
-            // Escribir archivo temporal
-            fs.writeFileSync(tempPath, jpgBuffer);
-            console.log(`📝 Archivo temporal creado: ${tempFilename}`);
-            
-            // Operación atómica: eliminar archivo anterior y renombrar
-            if (fs.existsSync(finalPath)) {
-                fs.unlinkSync(finalPath);
-                console.log(`🗑️ Archivo anterior eliminado: ${filename}`);
-            }
-            
-            fs.renameSync(tempPath, finalPath);
+            fs.writeFileSync(finalPath, jpgBuffer);
             console.log(`✅ Canvas completo guardado: ${filename}`);
             console.log(`📐 Dimensiones finales: ${img.width}x${img.height}`);
             
@@ -1053,11 +1079,13 @@ io.on('connection', (socket) => {
                 io.emit('switchToSequenceMode');
                 console.log('🔁 *** SERVER *** Regresando a modo secuencia (40s)');
                 // Kick de seguridad: (re)iniciar secuencia automática sincronizada a 30s
-                const syncTimestamp = Date.now();
+                const nowTs = Date.now();
+                const startAt = nowTs + 1500; // buffer para alinear clientes
                 const syncData = {
-                    timestamp: syncTimestamp,
+                    timestamp: nowTs,
+                    startAt,
                     intervalTime: globalState.general.colorSequenceIntervalMs || 40000,
-                    patterns: ['rojo.jpg', 'azul.jpg', 'amarillo.jpg']
+                    patterns: ['amarillo.jpg', 'rojo.jpg', 'azul.jpg', 'logo1.jpg', 'logo2.jpg']
                 };
                 io.emit('startAutoColorSequence', syncData);
                 console.log('📡 *** SERVER *** Kick: startAutoColorSequence enviado tras volver a secuencia');
@@ -1171,31 +1199,7 @@ io.on('connection', (socket) => {
         }
     });
 
-    // Manejar guardado de wallpaper desde screen.html
-    socket.on('saveWallpaper', (data) => {
-        try {
-            console.log('💾 Guardando wallpaper desde screen.html...');
-            
-            if (!data.imageData) {
-                console.error('❌ No hay datos de imagen para guardar');
-                return;
-            }
-            
-            // Decodificar la imagen base64
-            const base64Data = data.imageData.replace(/^data:image\/png;base64,/, '');
-            const imageBuffer = Buffer.from(base64Data, 'base64');
-            
-            // Guardar en la carpeta patterns
-            const filename = `wallpaper_3screens_${data.timestamp || Date.now()}.png`;
-            const outputPath = path.join(__dirname, 'patterns', filename);
-            
-            fs.writeFileSync(outputPath, imageBuffer);
-            console.log(`✅ Wallpaper de 3 pantallas guardado: ${filename}`);
-            
-        } catch (error) {
-            console.error('❌ Error guardando wallpaper:', error);
-        }
-    });
+    // Eliminado: saveWallpaper con nombres timestamped (siempre usaremos saveScreenCanvas -> wallpaper.jpg)
 
     // NUEVOS EVENTOS PARA EL PROCESO DE ACTUALIZACIÓN CON TECLA 'A'
     

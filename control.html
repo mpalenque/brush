@@ -429,6 +429,10 @@
                         <label for="slideshow3ShadowWidth">🌑 Ancho Sombra: <span id="slideshow3ShadowWidthValue" class="range-display">20px</span></label>
                         <input type="range" id="slideshow3ShadowWidth" min="0" max="100" value="20" step="5">
                     </div>
+                    <div class="control-group">
+                        <label for="slideshow3ShadowOpacity">🌗 Oscuridad Borde: <span id="slideshow3ShadowOpacityValue" class="range-display">30%</span></label>
+                        <input type="range" id="slideshow3ShadowOpacity" min="0" max="100" value="30" step="5">
+                    </div>
                 </div>
             </div>
 
@@ -464,6 +468,10 @@
                     <div class="control-group">
                         <label for="slideshow7ShadowWidth">🌑 Ancho Sombra: <span id="slideshow7ShadowWidthValue" class="range-display">20px</span></label>
                         <input type="range" id="slideshow7ShadowWidth" min="0" max="100" value="20" step="5">
+                    </div>
+                    <div class="control-group">
+                        <label for="slideshow7ShadowOpacity">🌗 Oscuridad Borde: <span id="slideshow7ShadowOpacityValue" class="range-display">30%</span></label>
+                        <input type="range" id="slideshow7ShadowOpacity" min="0" max="100" value="30" step="5">
                     </div>
                 </div>
             </div>
@@ -750,6 +758,7 @@
             const y = document.getElementById(`slideshow${brushId}Y`);
             const interval = document.getElementById(`slideshow${brushId}Interval`);
             const shadowWidth = document.getElementById(`slideshow${brushId}ShadowWidth`);
+            const shadowOpacity = document.getElementById(`slideshow${brushId}ShadowOpacity`);
 
             // Event listeners para actualizar valores en tiempo real
             enabled.addEventListener('change', () => updateSlideshowConfig(brushId));
@@ -777,6 +786,12 @@
                 document.getElementById(`slideshow${brushId}ShadowWidthValue`).textContent = e.target.value + 'px';
                 updateSlideshowConfig(brushId);
             });
+            if (shadowOpacity) {
+                shadowOpacity.addEventListener('input', (e) => {
+                    document.getElementById(`slideshow${brushId}ShadowOpacityValue`).textContent = e.target.value + '%';
+                    updateSlideshowConfig(brushId);
+                });
+            }
         }
 
         function updateSlideshowConfig(brushId) {
@@ -788,6 +803,7 @@
                 y: parseInt(document.getElementById(`slideshow${brushId}Y`).value),
                 interval: parseInt(document.getElementById(`slideshow${brushId}Interval`).value),
                 shadowWidth: parseInt(document.getElementById(`slideshow${brushId}ShadowWidth`).value),
+                shadowOpacity: (parseInt(document.getElementById(`slideshow${brushId}ShadowOpacity`)?.value ?? '30') || 30) / 100,
                 folder: brushId === 3 ? '3' : '4'
             };
 

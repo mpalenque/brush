@@ -1,30 +1,30 @@
 {
   "general": {
     "patternType": "organic-complex",
-    "repetitionX": 300,
+    "repetitionX": "272",
     "repetitionY": 25,
-    "patternSize": 300,
+    "patternSize": "718",
     "separationX": "754",
     "separationY": 130,
-    "spacingX": 0,
-    "spacingY": 0,
+    "spacingX": "176",
+    "spacingY": "100",
     "rotation": 0,
     "zoom": 2.3,
     "blendMode": "multiply",
     "perfumeSpacingH": 0.25,
     "perfumeSpacingV": 0.3,
-    "perfumeSizeFactor": 0.55,
-    "backgroundColor": "#FFF2E5",
-    "selectedImage": "blue",
+    "perfumeSizeFactor": 1.35,
+    "backgroundColor": "#e89e54",
+    "selectedImage": "red",
     "patternSource": "processed",
     "overlayImages": {
       "countX": 10,
-      "countY": 8,
-      "offsetX": -400,
-      "offsetY": 50,
-      "size": 114,
+      "countY": 4,
+      "offsetX": -650,
+      "offsetY": 600,
+      "size": 382,
       "spacingX": 450,
-      "spacingY": 300,
+      "spacingY": 550,
       "rowOffsetX": 60,
       "rowOffsetY": 0,
       "colOffsetX": 0,
@@ -109,23 +109,33 @@
       "folder": "3",
       "width": 865,
       "height": 972,
-      "x": 102,
+      "x": 105,
       "y": 153,
       "interval": 3000,
       "zIndex": 1000,
-      "shadowWidth": 20
+      "shadowWidth": 20,
+      "shadowOpacity": 0.3
     },
     "7": {
       "enabled": true,
       "folder": "4",
-      "width": 1670,
+      "width": 1707,
       "height": 1912,
-      "x": 256,
+      "x": 220,
       "y": 300,
       "interval": 3000,
       "zIndex": 1000,
-      "shadowWidth": 20
+      "shadowWidth": 30,
+      "shadowOpacity": 0.3
     }
+  },
+  "videoMode": {
+    "enabled": true,
+    "src": "/vid.mp4",
+    "targets": [
+      1,
+      4
+    ]
   },
   "wallpaper": {
     "isActive": true

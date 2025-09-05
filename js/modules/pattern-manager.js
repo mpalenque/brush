@@ -50,7 +50,7 @@ class PatternManager {
      * Cargar múltiples patrones
      */
     async loadPatterns(patternList = null) {
-        const defaultPatterns = ['amarillo.jpg', 'wallpaper.jpg', 'azul.jpg', 'rojo.jpg'];
+    const defaultPatterns = ['amarillo.jpg', 'wallpaper.jpg', 'azul.jpg', 'rojo.jpg', 'logo1.jpg', 'logo2.jpg'];
         const patternsToLoad = patternList || defaultPatterns;
         
         console.log('🔍 Cargando patrones disponibles...');
