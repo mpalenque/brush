@@ -67,6 +67,10 @@ let slideshowImages = [];
 let currentSlideshowIndex = 0;
 let slideshowInterval = null;
 let slideshowContainer = null;
+// Control de ciclos y video
+let slideshowCycleCount = 0; // cuenta de vueltas completas (recorrer todas las imágenes)
+let inVideoPlayback = false; // bandera mientras se reproduce el video
+let slideshowVideoEl = null; // referencia al elemento <video>
 
 // Patrones para alternar secuencialmente
 let patterns = [];
@@ -2839,6 +2843,10 @@ document.addEventListener('visibilitychange', () => {
     rafId = 0;
     fpsMonitorRafId = 0;
     stopSlideshow();
+    // Pausar video si está en reproducción
+    if (inVideoPlayback && slideshowVideoEl && !slideshowVideoEl.paused) {
+      try { slideshowVideoEl.pause(); } catch (_) {}
+    }
     console.log('⏸️ Pestaña oculta: pausado RAF/monitor y slideshow');
   } else {
     // Reanudar solo el monitor FPS; la animación se reanuda con eventos
@@ -2848,8 +2856,15 @@ document.addEventListener('visibilitychange', () => {
     if (fpsMonitorRafId === 0) {
       fpsMonitorRafId = requestAnimationFrame(fpsMonitorLoop);
     }
-    // Si el slideshow está habilitado, reiniciarlo
-    if (slideshowConfig.enabled) startSlideshow();
+    // Si el slideshow está habilitado, reiniciarlo o continuar video
+    if (slideshowConfig.enabled) {
+      if (inVideoPlayback && slideshowVideoEl) {
+        // Reanudar video
+        slideshowVideoEl.play().catch(() => {});
+      } else {
+        startSlideshow();
+      }
+    }
     console.log('▶️ Pestaña visible: reanudado monitor y slideshow');
     
     // IMPORTANTE: Asegurar que la secuencia automática siga activa
@@ -2983,7 +2998,7 @@ function createSlideshowContainer() {
   slideshowContainer.style.willChange = 'transform';
   slideshowContainer.style.backfaceVisibility = 'hidden';
   
-  // Contenedor de imágenes apiladas
+  // Wrapper del slideshow
   const imageWrapper = document.createElement('div');
   imageWrapper.id = 'slideshow-image-wrapper';
   imageWrapper.style.position = 'relative';
@@ -2991,7 +3006,37 @@ function createSlideshowContainer() {
   imageWrapper.style.height = '100%';
   imageWrapper.style.overflow = 'hidden';
   
+  // Capa para imágenes (separada para no borrar el <video>)
+  const imagesLayer = document.createElement('div');
+  imagesLayer.id = 'slideshow-images-layer';
+  imagesLayer.style.position = 'absolute';
+  imagesLayer.style.top = '0';
+  imagesLayer.style.left = '0';
+  imagesLayer.style.width = '100%';
+  imagesLayer.style.height = '100%';
+  imagesLayer.style.overflow = 'hidden';
+  imagesLayer.style.zIndex = '1';
+  imageWrapper.appendChild(imagesLayer);
+  
   slideshowContainer.appendChild(imageWrapper);
+
+  // Crear (o asegurarse) del elemento de video para reproducción puntual
+  // Se insertará dentro del wrapper para que las sombras queden arriba
+  slideshowVideoEl = document.createElement('video');
+  slideshowVideoEl.id = 'slideshow-video';
+  slideshowVideoEl.style.position = 'absolute';
+  slideshowVideoEl.style.top = '0';
+  slideshowVideoEl.style.left = '0';
+  slideshowVideoEl.style.width = '100%';
+  slideshowVideoEl.style.height = '100%';
+  slideshowVideoEl.style.objectFit = 'cover';
+  slideshowVideoEl.style.display = 'none';
+  slideshowVideoEl.style.zIndex = '5';
+  slideshowVideoEl.style.pointerEvents = 'none';
+  slideshowVideoEl.muted = true; // asegurar autoplay
+  slideshowVideoEl.playsInline = true;
+  slideshowVideoEl.preload = 'auto';
+  imageWrapper.appendChild(slideshowVideoEl);
   
   // Crear elementos de sombra (izquierda y arriba) - OPTIMIZADOS
   const shadowLeft = document.createElement('div');
@@ -3051,7 +3096,10 @@ function updateSlideshowDisplay() {
   // Mostrar/ocultar según configuración
   if (slideshowConfig.enabled && slideshowImages.length > 0) {
     slideshowContainer.style.display = 'block';
-    startSlideshow();
+    // Si estamos en reproducción de video, no tocar el slideshow aquí
+    if (!inVideoPlayback) {
+      startSlideshow();
+    }
   } else {
     slideshowContainer.style.display = 'none';
     stopSlideshow();
@@ -3068,20 +3116,42 @@ function startSlideshow() {
     return;
   }
   
-  // Limpiar contenedor y mostrar primera imagen
-  const imageWrapper = document.getElementById('slideshow-image-wrapper');
-  if (imageWrapper) {
-    imageWrapper.innerHTML = ''; // Limpiar todo
-    
+  // Limpiar capa de imágenes y mostrar primera imagen
+  const imagesLayer = document.getElementById('slideshow-images-layer');
+  if (imagesLayer) {
+    imagesLayer.innerHTML = '';
     // Crear y mostrar primera imagen
     const firstImg = createSlideshowImage(slideshowImages[currentSlideshowIndex], 1);
-    imageWrapper.appendChild(firstImg);
+    imagesLayer.appendChild(firstImg);
+  }
+
+  // Asegurar que el video esté oculto al iniciar slideshow
+  if (slideshowVideoEl) {
+    slideshowVideoEl.style.display = 'none';
+    try { slideshowVideoEl.pause(); } catch (_) {}
+    try { slideshowVideoEl.src = ''; } catch (_) {}
   }
   
+  // Reiniciar contador de vueltas si no venimos de video
+  if (!inVideoPlayback) {
+    slideshowCycleCount = 0;
+  }
+  inVideoPlayback = false;
+
   // Iniciar intervalo para cambio automático
   if (slideshowImages.length > 1) {
     slideshowInterval = setInterval(() => {
+      const prevIndex = currentSlideshowIndex;
       currentSlideshowIndex = (currentSlideshowIndex + 1) % slideshowImages.length;
+
+      // Si dimos la vuelta completa, reproducir el video una vez por vuelta
+      if (currentSlideshowIndex === 0 && slideshowImages.length > 0 && !inVideoPlayback) {
+        // Opcional: mantener contador informativo
+        slideshowCycleCount++;
+        triggerVideoPlayback();
+        return; // no agregar imagen en este tick
+      }
+
       addNextSlideshowImage();
     }, slideshowConfig.interval);
   }
@@ -3108,15 +3178,15 @@ function createSlideshowImage(src, opacity = 0) {
 
 // FUNCIÓN SIMPLE: Agregar siguiente imagen con fade
 function addNextSlideshowImage() {
-  const imageWrapper = document.getElementById('slideshow-image-wrapper');
-  if (!imageWrapper || !slideshowImages[currentSlideshowIndex]) {
+  const imagesLayer = document.getElementById('slideshow-images-layer');
+  if (!imagesLayer || !slideshowImages[currentSlideshowIndex]) {
     return;
   }
 
   // Crear nueva imagen encima de las existentes, pero iniciar fade cuando esté decodificada
   const src = slideshowImages[currentSlideshowIndex];
   const newImg = createSlideshowImage(src, 0);
-  imageWrapper.appendChild(newImg);
+  imagesLayer.appendChild(newImg);
 
   // Asegurar que la imagen esté lista para un crossfade suave
   const startFadeIn = () => requestAnimationFrame(() => { newImg.style.opacity = '1'; });
@@ -3131,9 +3201,9 @@ function addNextSlideshowImage() {
 
   // Limpiar imágenes viejas después del fade para evitar acumulación
   setTimeout(() => {
-    const images = imageWrapper.children;
+    const images = imagesLayer.children;
     while (images.length > 2) {
-      imageWrapper.removeChild(images[0]);
+      imagesLayer.removeChild(images[0]);
     }
   }, SLIDESHOW_FADE_MS + 200);
 
@@ -3149,14 +3219,83 @@ function stopSlideshow() {
 
 function showSlideshowImage(index) {
   // Esta función se usa para cambios manuales inmediatos
-  const imageWrapper = document.getElementById('slideshow-image-wrapper');
+  const imagesLayer = document.getElementById('slideshow-images-layer');
   
-  if (imageWrapper && slideshowImages[index]) {
-    // Limpiar y mostrar imagen seleccionada inmediatamente
-    imageWrapper.innerHTML = '';
+  if (imagesLayer && slideshowImages[index]) {
+    // Limpiar capa y mostrar imagen seleccionada inmediatamente
+    imagesLayer.innerHTML = '';
     const img = createSlideshowImage(slideshowImages[index], 1);
-    imageWrapper.appendChild(img);
+    imagesLayer.appendChild(img);
     
     // console.log(`📺 Imagen cambiada directamente a ${index + 1}/${slideshowImages.length}: ${slideshowImages[index]}`);
+  }
+}
+
+// ==============================
+// VIDEO: Reproducir elixir.webm tras 10 vueltas
+// ==============================
+
+function triggerVideoPlayback() {
+  // Proteger de reentradas
+  if (inVideoPlayback) return;
+  inVideoPlayback = true;
+
+  // Detener el slideshow mientras se reproduce el video
+  stopSlideshow();
+
+  // Asegurar que el elemento de video exista
+  if (!slideshowVideoEl) {
+    const wrapper = document.getElementById('slideshow-image-wrapper');
+    if (!wrapper) return;
+    slideshowVideoEl = document.createElement('video');
+    slideshowVideoEl.id = 'slideshow-video';
+    slideshowVideoEl.style.position = 'absolute';
+    slideshowVideoEl.style.top = '0';
+    slideshowVideoEl.style.left = '0';
+    slideshowVideoEl.style.width = '100%';
+    slideshowVideoEl.style.height = '100%';
+    slideshowVideoEl.style.objectFit = 'cover';
+    slideshowVideoEl.style.display = 'none';
+    slideshowVideoEl.style.zIndex = '5';
+    slideshowVideoEl.style.pointerEvents = 'none';
+    slideshowVideoEl.muted = true;
+    slideshowVideoEl.playsInline = true;
+    slideshowVideoEl.preload = 'auto';
+    wrapper.appendChild(slideshowVideoEl);
+  }
+
+  // Configurar fuente y mostrar
+  try {
+    slideshowVideoEl.src = '/elixir.webm';
+    slideshowVideoEl.currentTime = 0;
+  } catch (_) {}
+  slideshowVideoEl.style.display = 'block';
+
+  // Reproducir y al terminar, reanudar slideshow por 10 vueltas más
+  const onEnded = () => {
+    slideshowVideoEl.removeEventListener('ended', onEnded);
+    // Ocultar video y limpiar src para liberar
+    slideshowVideoEl.style.display = 'none';
+    try { slideshowVideoEl.pause(); } catch (_) {}
+    try { slideshowVideoEl.src = ''; } catch (_) {}
+
+    // Reset contador de vueltas y estado video
+    slideshowCycleCount = 0;
+    inVideoPlayback = false;
+
+    // Reanudar slideshow si sigue habilitado
+    if (slideshowConfig.enabled && slideshowImages.length > 0) {
+      startSlideshow();
+    }
+  };
+  slideshowVideoEl.addEventListener('ended', onEnded);
+
+  // Intentar reproducir
+  const playPromise = slideshowVideoEl.play();
+  if (playPromise && typeof playPromise.then === 'function') {
+    playPromise.catch(() => {
+      // Si falla autoplay, intentar iniciar mostrando primer frame (muted/inline debe permitir)
+      setTimeout(() => slideshowVideoEl.play().catch(() => {}), 200);
+    });
   }
 }
