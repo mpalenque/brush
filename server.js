@@ -52,6 +52,97 @@ let currentWallpaperSequenceId = null;
 // Control del timeout de regreso a secuencia
 let sequenceReturnTimeoutId = null;
 
+// ==============================
+// PROGRAMADOR CENTRAL DE PASOS DE COLOR
+// ==============================
+const COLOR_DURATION_MS = 28000; // Debe coincidir con DURATION_MS del cliente
+let colorStepScheduler = {
+    active: false,
+    paused: false,
+    anchorStartAt: 0,
+    periodMs: 0,
+    timeoutId: null,
+    nextBoundary: 0,
+    // Nuevo orden solicitado: amarillo -> rojo -> azul -> logo1 -> logo2
+    patterns: ['amarillo.jpg','rojo.jpg','azul.jpg','logo1.jpg','logo2.jpg'],
+    currentIndex: 0,
+    lastStep: null
+};
+
+function emitNextColorStep() {
+    if (!colorStepScheduler.active || colorStepScheduler.paused) return;
+    const pattern = colorStepScheduler.patterns[colorStepScheduler.currentIndex % colorStepScheduler.patterns.length];
+    const idx = colorStepScheduler.currentIndex % colorStepScheduler.patterns.length;
+    const payload = { timestamp: Date.now(), pattern, currentIndex: idx };
+    colorStepScheduler.lastStep = payload;
+    // Emitir a todos los brush-reveal
+    connectedClients.forEach(c => {
+        if (c.type === 'brush-reveal' && c.socket.connected) {
+            c.socket.emit('nextColorStep', payload);
+        }
+        if (c.type === 'control' && c.socket.connected) {
+            c.socket.emit('colorStepUpdate', payload);
+        }
+    });
+    colorStepScheduler.currentIndex = (colorStepScheduler.currentIndex + 1) % colorStepScheduler.patterns.length;
+}
+
+function scheduleNextColorBoundary() {
+    if (!colorStepScheduler.active || colorStepScheduler.paused) return;
+    const now = Date.now();
+    if (!colorStepScheduler.nextBoundary) {
+        colorStepScheduler.nextBoundary = colorStepScheduler.anchorStartAt;
+    }
+    while (colorStepScheduler.nextBoundary <= now) {
+        // Emit inmediatamente si ya pasó la frontera (catch-up) pero evitar loop infinito
+        emitNextColorStep();
+        colorStepScheduler.nextBoundary += colorStepScheduler.periodMs;
+    }
+    const delay = Math.max(0, colorStepScheduler.nextBoundary - Date.now());
+    colorStepScheduler.timeoutId = setTimeout(() => {
+        emitNextColorStep();
+        colorStepScheduler.nextBoundary += colorStepScheduler.periodMs;
+        scheduleNextColorBoundary();
+    }, delay);
+}
+
+function startCentralColorScheduler(intervalMs) {
+    if (colorStepScheduler.active) return;
+    const baseInterval = intervalMs || (globalState.general.colorSequenceIntervalMs || 40000);
+    colorStepScheduler.periodMs = baseInterval + COLOR_DURATION_MS;
+    colorStepScheduler.anchorStartAt = Date.now() + 1500; // pequeño buffer
+    colorStepScheduler.currentIndex = 0;
+    colorStepScheduler.active = true;
+    colorStepScheduler.paused = false;
+    colorStepScheduler.nextBoundary = 0;
+    console.log(`🕒 *** SERVER *** ColorScheduler iniciado. periodMs=${colorStepScheduler.periodMs}`);
+    scheduleNextColorBoundary();
+}
+
+function stopCentralColorScheduler() {
+    if (!colorStepScheduler.active) return;
+    if (colorStepScheduler.timeoutId) clearTimeout(colorStepScheduler.timeoutId);
+    colorStepScheduler.timeoutId = null;
+    colorStepScheduler.active = false;
+    colorStepScheduler.paused = false;
+    console.log('🛑 *** SERVER *** ColorScheduler detenido');
+}
+
+function pauseCentralColorScheduler() {
+    if (!colorStepScheduler.active || colorStepScheduler.paused) return;
+    if (colorStepScheduler.timeoutId) clearTimeout(colorStepScheduler.timeoutId);
+    colorStepScheduler.timeoutId = null;
+    colorStepScheduler.paused = true;
+    console.log('⏸️ *** SERVER *** ColorScheduler en pausa');
+}
+
+function resumeCentralColorScheduler() {
+    if (!colorStepScheduler.active || !colorStepScheduler.paused) return;
+    colorStepScheduler.paused = false;
+    console.log('▶️ *** SERVER *** Reanudando ColorScheduler');
+    scheduleNextColorBoundary();
+}
+
 // Servir archivos estáticos
 app.use(express.static(__dirname));
 app.use('/patterns', express.static(path.join(__dirname, 'patterns')));
@@ -815,6 +906,7 @@ io.on('connection', (socket) => {
         const client = connectedClients.get(socket.id);
         if (client && client.type === 'control') {
             console.log('🎯 *** SERVER *** Orquestando flujo de tecla 1 con sistema UDP');
+            // Mantener la secuencia de color corriendo (no pausar) hasta que el wallpaper esté listo
             
             if (imageProcessingState.isProcessing) {
                 console.log('⚠️ *** SERVER *** Ya hay un procesamiento en curso, ignorando nueva solicitud');
@@ -822,9 +914,10 @@ io.on('connection', (socket) => {
             }
             
             // Marcar que estamos esperando el procesamiento
+            const operationId = `udp-sequence-${Date.now()}`;
             imageProcessingState.isProcessing = true;
             imageProcessingState.pendingOperation = {
-                id: `udp-sequence-${Date.now()}`,
+                id: operationId,
                 type: 'brush-reveal-sequence',
                 startedAt: Date.now()
             };
@@ -840,16 +933,46 @@ io.on('connection', (socket) => {
             // Timeout de seguridad: si no llega confirmación UDP en 30 segundos, abortar
             setTimeout(() => {
                 if (imageProcessingState.isProcessing && 
-                    imageProcessingState.pendingOperation?.id === `udp-sequence-${Date.now()}`) {
-                    
+                    imageProcessingState.pendingOperation?.id === operationId) {
                     console.warn('⏰ *** SERVER *** Timeout esperando confirmación UDP - abortando secuencia');
                     imageProcessingState.isProcessing = false;
                     imageProcessingState.pendingOperation = null;
-                    
                     io.emit('imageProcessingTimeout', {
                         message: 'Timeout esperando confirmación de cámara',
+                        operationId,
                         timestamp: Date.now()
                     });
+                    // NUEVO: Recuperación automática para no quedar en fondo vacío
+                    try {
+                        // Reanudar scheduler de colores si estaba pausado
+                        if (colorStepScheduler.active && colorStepScheduler.paused) {
+                            console.log('▶️ *** SERVER *** Reanudando scheduler tras timeout UDP');
+                            resumeCentralColorScheduler();
+                        }
+                        // Si tenemos un último paso reenviarlo; si no, generar uno nuevo
+                        if (colorStepScheduler.lastStep) {
+                            console.log('📤 *** SERVER *** Reenviando último paso de color tras timeout UDP');
+                            connectedClients.forEach(c => {
+                                if (c.type === 'brush-reveal' && c.socket.connected) {
+                                    c.socket.emit('nextColorStep', colorStepScheduler.lastStep);
+                                }
+                            });
+                        } else if (colorStepScheduler.active && !colorStepScheduler.paused) {
+                            console.log('⚡ *** SERVER *** Emitiendo paso de color inmediato tras timeout UDP');
+                            emitNextColorStep();
+                        }
+                        // Fallback: si ya existe wallpaper.jpg reciente, forzar modo wallpaper brevemente
+                        const wp = path.join(__dirname,'patterns','wallpaper.jpg');
+                        if (fs.existsSync(wp)) {
+                            const stat = fs.statSync(wp);
+                            const ageMs = Date.now() - stat.mtimeMs;
+                            if (ageMs < 5 * 60 * 1000) { // menor a 5 min
+                                const fallbackSeq = `wallpaper_timeout_${Date.now()}`;
+                                console.log(`🟡 *** SERVER *** Forzando switchToWallpaperMode con wallpaper existente (edad ${ageMs}ms)`);
+                                io.emit('switchToWallpaperMode', { sequenceId: fallbackSeq });
+                            }
+                        }
+                    } catch(e) { console.warn('⚠️ Error en recuperación post-timeout:', e.message); }
                 }
             }, 30000); // 30 segundos timeout
         }
@@ -896,7 +1019,7 @@ io.on('connection', (socket) => {
                     timestamp: nowTs,
                     startAt,
                     intervalTime: globalState.general.colorSequenceIntervalMs || 40000,
-                    patterns: ['rojo.jpg', 'amarillo.jpg', 'azul.jpg', 'logo1.jpg', 'logo2.jpg'],
+                    patterns: ['amarillo.jpg','rojo.jpg','azul.jpg','logo1.jpg','logo2.jpg'],
                     currentIndex: 0
                 };
             } else {
@@ -908,14 +1031,23 @@ io.on('connection', (socket) => {
             
             console.log(`⏰ *** SERVER *** Sync ts=${nowTs}, startAt=${startAt}`);
             
-            // Enviar comando con datos de sincronización a todos los brush-reveal
+            // Iniciar programador central (si no está activo)
+            startCentralColorScheduler(autoSeqState.intervalTime);
+            
+            // Enviar comando con datos de sincronización a todos los brush-reveal (para ancla)
             connectedClients.forEach((otherClient) => {
                 if (otherClient.type === 'brush-reveal' && otherClient.socket.connected) {
                     otherClient.socket.emit('startAutoColorSequence', autoSeqState);
+                    // Si hay último paso ya emitido (por scheduler), reenviarlo tras un pequeño delay para late joiners
+                    if (colorStepScheduler.lastStep) {
+                        setTimeout(() => {
+                            try { otherClient.socket.emit('nextColorStep', colorStepScheduler.lastStep); } catch(_) {}
+                        }, 300);
+                    }
                 }
             });
             
-            console.log('📡 *** SERVER *** Comando startAutoColorSequence con sincronización enviado a brush-reveal clients');
+            console.log('📡 *** SERVER *** Comando startAutoColorSequence + scheduler enviado a brush-reveal clients');
         }
     });
 
@@ -945,7 +1077,7 @@ io.on('connection', (socket) => {
             // Crear timestamp de sincronización
             const syncTimestamp = Date.now();
         // Determinar patrón actual del paso según el orden deseado
-        const seq = ['rojo.jpg', 'amarillo.jpg', 'azul.jpg', 'logo1.jpg', 'logo2.jpg'];
+    const seq = ['amarillo.jpg', 'rojo.jpg', 'azul.jpg', 'logo1.jpg', 'logo2.jpg'];
         // Guardar y actualizar índice en estado de servidor
         server._colorSeqIndex = (server._colorSeqIndex || 0) % seq.length;
         const pattern = seq[server._colorSeqIndex];
@@ -963,6 +1095,45 @@ io.on('connection', (socket) => {
             });
             
         console.log(`📡 *** SERVER *** Comando nextColorStep enviado con patrón=${pattern} ts=${syncTimestamp}`);
+        }
+    });
+    
+    // Solicitud manual de re-sincronización desde el panel de control
+    socket.on('requestColorResync', () => {
+        const client = connectedClients.get(socket.id);
+        if (client && client.type === 'control') {
+            console.log('🔁 *** SERVER *** Resync de color solicitado');
+            if (colorStepScheduler.lastStep) {
+                // Reenviar último paso a todos los brush-reveal
+                connectedClients.forEach(c => {
+                    if (c.type === 'brush-reveal' && c.socket.connected) {
+                        try { c.socket.emit('nextColorStep', colorStepScheduler.lastStep); } catch(_) {}
+                    }
+                });
+            } else if (colorStepScheduler.active && !colorStepScheduler.paused) {
+                emitNextColorStep();
+            } else {
+                console.log('ℹ️ Resync ignorado: scheduler inactivo');
+            }
+        }
+    });
+
+    // Reenviar último paso de color a un brush que se reincorpora tras wallpaper
+    socket.on('requestLastColorStep', () => {
+        const client = connectedClients.get(socket.id);
+        if (client && client.type === 'brush-reveal') {
+            // Si el scheduler está pausado (por wallpaper) reanudar inmediatamente para no quedarse en fondo vacío
+            if (colorStepScheduler.active && colorStepScheduler.paused) {
+                console.log('▶️ Reanudando scheduler al recibir requestLastColorStep');
+                resumeCentralColorScheduler();
+            }
+            if (colorStepScheduler.lastStep) {
+                console.log(`📤 Reenviando último paso de color a brush ${client.brushId || '?'} (${colorStepScheduler.lastStep.pattern})`);
+                try { socket.emit('nextColorStep', colorStepScheduler.lastStep); } catch(_) {}
+            } else if (colorStepScheduler.active && !colorStepScheduler.paused) {
+                console.log('⚡ No había paso previo; emitiendo uno nuevo para enganchar a todos');
+                emitNextColorStep();
+            }
         }
     });
 
@@ -1008,6 +1179,7 @@ io.on('connection', (socket) => {
         const client = connectedClients.get(socket.id);
         if (client && client.type === 'control') {
             console.log('🔀 *** SERVER *** Cambiando a modo Wallpaper (wallpaper.jpg)');
+            pauseCentralColorScheduler();
             
             // Generar ID de secuencia único
             const sequenceId = `wallpaper_manual_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
@@ -1029,6 +1201,7 @@ io.on('connection', (socket) => {
         const client = connectedClients.get(socket.id);
         if (client && client.type === 'control') {
             console.log('🔀 *** SERVER *** Cambiando a modo Secuencia (rojo→azul→amarillo)');
+            resumeCentralColorScheduler();
             
             // Enviar comando a todos los brush-reveal
             connectedClients.forEach((otherClient) => {
@@ -1243,6 +1416,7 @@ io.on('connection', (socket) => {
                     sequenceId: sequenceId
                 });
                 io.emit('switchToWallpaperMode', { sequenceId: sequenceId });
+                pauseCentralColorScheduler();
                 lastWallpaperBroadcastTs = nowTs;
                 console.log(`📡 Broadcast wallpaper (ID: ${sequenceId}) - newPatternReady + switchToWallpaperMode`);
             } else {
@@ -1255,11 +1429,12 @@ io.on('connection', (socket) => {
                 sequenceReturnTimeoutId = null;
                 console.log('🗑️ *** SERVER *** Timeout previo cancelado');
             }
-            // Programar regreso a modo secuencia tras 40 segundos
+            // Programar regreso a modo secuencia tras 5 segundos (antes 40) para evitar quedarse en fondo
             sequenceReturnTimeoutId = setTimeout(() => {
                 sequenceReturnTimeoutId = null;
                 io.emit('switchToSequenceMode');
-                console.log('🔁 *** SERVER *** Regresando a modo secuencia (40s)');
+                resumeCentralColorScheduler();
+                console.log('🔁 *** SERVER *** Regresando a modo secuencia (5s)');
                 // Kick de seguridad: (re)iniciar secuencia automática sincronizada
                 const nowTs = Date.now();
                 const startAt = nowTs + 1500; // buffer para alinear clientes
@@ -1267,13 +1442,20 @@ io.on('connection', (socket) => {
                     timestamp: nowTs,
                     startAt,
                     intervalTime: globalState.general.colorSequenceIntervalMs || 40000,
-                    patterns: ['amarillo.jpg', 'rojo.jpg', 'azul.jpg', 'logo1.jpg', 'logo2.jpg'],
+                    patterns: ['amarillo.jpg','rojo.jpg','azul.jpg','logo1.jpg','logo2.jpg'],
                     currentIndex: 0
                 };
                 autoSeqActive = true;
                 io.emit('startAutoColorSequence', autoSeqState);
                 console.log('📡 *** SERVER *** Kick: startAutoColorSequence enviado tras volver a secuencia');
-            }, globalState.general.colorSequenceIntervalMs || 40000);
+                // Si no hay lastStep aún (scheduler quizá recién reanudado) forzar emisión inmediata
+                setTimeout(() => {
+                    if (!colorStepScheduler.lastStep && colorStepScheduler.active && !colorStepScheduler.paused) {
+                        console.log('⚡ Forzando primer paso inmediato tras volver de wallpaper');
+                        emitNextColorStep();
+                    }
+                }, 300);
+            }, 5000);
             
             console.log('📢 Evento newPatternReady enviado para brush-reveal (SIN duplicar imageUpdated)');
             
@@ -1495,7 +1677,8 @@ io.on('connection', (socket) => {
                 if (otherClient.type === 'brush-reveal' && otherClient.socket.connected) {
                     otherClient.socket.emit('switchToWallpaperMode', {
                         timestamp: Date.now(),
-                        source: 'screen-sequence'
+                        source: 'screen-sequence',
+                        sequenceId: imageProcessingState.pendingOperation?.id || `seq-${Date.now()}`
                     });
                 }
             });

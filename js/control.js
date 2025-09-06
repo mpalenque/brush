@@ -1016,6 +1016,9 @@ function startBrushRevealSequence() {
     registerActivity();
 }
 
+// Exponer para scripts inline (control.html) que disparan la secuencia
+window.startBrushRevealSequence = startBrushRevealSequence;
+
 // ========================================
 // UDP MONITOR SYSTEM
 // Sistema de monitoreo UDP para mensajes de cámara
@@ -1484,9 +1487,90 @@ if (document.readyState === 'loading') {
         initializeControlPanel();
         initializeBrushRevealControls();
         udpMonitor.init(); // Inicializar monitor UDP
+        initColorSequenceMonitor(); // Inicializar monitor de secuencia de color
     });
 } else {
     initializeControlPanel();
     initializeBrushRevealControls();
     udpMonitor.init(); // Inicializar monitor UDP
+    initColorSequenceMonitor(); // Inicializar monitor de secuencia de color
 }
+
+// ==============================
+// MONITOR SECUENCIA DE COLOR + RESYNC
+// ==============================
+
+let lastColorStepInfo = null;
+let colorMonitorInitialized = false;
+
+function initColorSequenceMonitor() {
+    if (colorMonitorInitialized) return;
+    colorMonitorInitialized = true;
+    const btn = document.getElementById('btnColorResync');
+    if (btn) {
+        btn.addEventListener('click', () => {
+            if (socket && socket.connected) {
+                console.log('🔁 Solicitud manual de re-sync de color');
+                socket.emit('requestColorResync');
+                btn.disabled = true;
+                btn.textContent = '🔄 Resync enviado...';
+                setTimeout(() => {
+                    btn.disabled = false;
+                    btn.textContent = '🔄 Forzar Re-Sync';
+                }, 3000);
+            }
+        });
+    }
+    // Valores iniciales placeholder
+    const patEl = document.getElementById('currentColorPattern');
+    const idxEl = document.getElementById('currentColorIndex');
+    if (patEl) patEl.textContent = '—';
+    if (idxEl) idxEl.textContent = '—';
+
+    // Si en 6s no recibimos actualización, intentar pedir resync automático una vez
+    setTimeout(() => {
+        if (!lastColorStepInfo && socket && socket.connected) {
+            console.log('⏳ No se recibió colorStepUpdate inicial, solicitando re-sync automático');
+            socket.emit('requestColorResync');
+        }
+    }, 6000);
+}
+
+function patternBadgeColor(pattern) {
+    switch(pattern) {
+        case 'amarillo.jpg': return '#FFD400';
+        case 'rojo.jpg': return '#FF4B4B';
+        case 'azul.jpg': return '#2196F3';
+        case 'logo1.jpg': return '#8E44AD';
+        case 'logo2.jpg': return '#16A085';
+        default: return '#555';
+    }
+}
+
+function updateColorSequenceMonitor(step) {
+    lastColorStepInfo = step;
+    const patEl = document.getElementById('currentColorPattern');
+    const idxEl = document.getElementById('currentColorIndex');
+    if (!patEl || !idxEl) return;
+    patEl.textContent = step.pattern;
+    idxEl.textContent = `${(step.index ?? 0) + 1}`;
+    patEl.style.background = patternBadgeColor(step.pattern);
+    patEl.style.color = '#111';
+    patEl.style.padding = '2px 6px';
+    patEl.style.borderRadius = '4px';
+}
+
+// Hook al WebSocket existente: insertar listener sin modificar lógica previa
+(function attachColorSequenceSocketListener(){
+    // Poll hasta que el socket esté listo
+    const iv = setInterval(() => {
+        if (typeof socket !== 'undefined' && socket && socket.on) {
+            clearInterval(iv);
+            socket.on('colorStepUpdate', (data) => {
+                console.log('🎨 colorStepUpdate recibido (control):', data);
+                updateColorSequenceMonitor(data);
+            });
+        }
+    }, 300);
+})();
+

@@ -19,6 +19,15 @@
             🔌 Conectando al servidor...
         </div>
 
+        <!-- Estado Secuencia de Color -->
+        <div class="section" style="background:#fff7e6;border-left:4px solid #ff9800;display:flex;flex-wrap:wrap;align-items:center;gap:14px;padding:10px 14px;">
+            <div style="font-size:15px;font-weight:600;">🖌️ Secuencia Color:</div>
+            <div id="currentColorPattern" style="font:12px monospace;background:#222;color:#fff;padding:4px 8px;border-radius:4px;min-width:140px;text-align:center;">(sin datos)</div>
+            <div id="currentColorIndex" style="font:11px monospace;color:#555;">idx:-</div>
+            <button id="btnColorResync" style="background:#ff9800;border:none;color:#fff;padding:6px 12px;border-radius:4px;cursor:pointer;font-weight:600;">Resync Forzado</button>
+            <small style="color:#777;">Si una pantalla se atrasó, fuerza que todas adopten el patrón actual</small>
+        </div>
+
         <!-- Monitor UDP -->
         <div class="section" style="background: #f8f9fa; border-left: 4px solid #6c757d;">
             <h2>📡 Monitor UDP - Puerto 5555</h2>
@@ -672,7 +681,10 @@
                 e.preventDefault();
                 console.log('1️⃣ *** Tecla 1 recibida: iniciando captura de screen/1...');
                 if (window.socket && window.socket.connected) {
-                    executeScreenCapture();
+                        // Usar la secuencia UDP central sin alterar la secuencia de color actual
+                        if (typeof startBrushRevealSequence === 'function') {
+                            startBrushRevealSequence();
+                        }
                 } else {
                     console.error('❌ Socket no conectado - no se puede iniciar captura');
                 }

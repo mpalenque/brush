@@ -1,10 +1,10 @@
 // Ajustes generales - OPTIMIZADOS PARA COLOREADO COMPLETO Y SINCRONIZACIÓN
-const DURATION_MS = 14000; // 14s - más lento para completar toda la imagen por igual
+const DURATION_MS = 28000; // 28s - duración duplicada para coloreado más lento
 // Usar DPR dinámico (devicePixelRatio) para mantener resolución nativa en pantallas HiDPI
 // Inicializamos con el valor actual, y lo recalculamos en `resize()` para adaptarnos a cambios.
 let DPR = Math.max(1, window.devicePixelRatio || 1);
 // Máscara a resolución completa para evitar bordes/jaggies visibles (el tamaño real se forza en resize)
-const MAX_UNITS_PER_FRAME = 250; // reducido para coloreado más lento y uniforme
+const MAX_UNITS_PER_FRAME = 125; // reducido a la mitad para coloreado más lento y uniforme
 const FINAL_SEAL_START = 0.35; // iniciar sellado temprano para cobertura completa
 const FINAL_SEAL_ALPHA_MIN = 0.20; // opacidad más alta para mejor cobertura
 const FINAL_SEAL_ALPHA_MAX = 0.35; // opacidad más alta para mejor cobertura
@@ -189,6 +189,32 @@ let sequenceFallbackTimeoutId = null;
 
 // Control de secuencia única para evitar múltiples ejecuciones de wallpaper
 let wallpaperSequenceActive = false;
+let wallpaperSequenceActiveStartTs = 0; // timestamp para detectar locks colgados
+
+// Watchdog periódico para detectar estados atascados (ej: lock de wallpaper sin progreso)
+setInterval(() => {
+  try {
+    if (wallpaperSequenceActive) {
+      const now = Date.now();
+      if ((now - wallpaperSequenceActiveStartTs) > (DURATION_MS * 3)) {
+        console.warn('🛠️ Watchdog: liberando lock de wallpaperSequenceActive por timeout extendido');
+        wallpaperSequenceActive = false;
+        wallpaperSequenceId = null;
+      }
+    }
+    // Si estamos en modo sequence pero no hay autoColorSequence activo y no hay animación corriendo, asegurar reactivación
+    if (coloringMode === 'sequence' && !autoColorSequence.active && !rafId) {
+      // Intentar reactivar secuencia automática con ancla simple
+      autoColorSequence.active = true;
+      autoColorSequence.anchorStartAt = Date.now() + 500;
+      autoColorSequence.currentIndex = 0;
+      console.log('♻️ Watchdog: reactivando secuencia automática de coloreado');
+      scheduleNextAutoColorStep();
+    }
+  } catch (e) {
+    // Silencioso
+  }
+}, 10000);
 let wallpaperSequenceId = null;
 
 // Control de fade in/out suave
@@ -281,6 +307,7 @@ function startAutoColorSequenceSync(syncData) {
   }
   
   // Si hay un startAt futuro, alinear al siguiente múltiplo exacto del periodo
+  // NUEVO: Ya no ejecutamos paso local inmediato. Esperamos siempre a 'nextColorStep' del servidor
   if (syncData?.startAt) {
     const nowTs = Date.now();
     const startAt = syncData.startAt;
@@ -288,17 +315,10 @@ function startAutoColorSequenceSync(syncData) {
     let k = Math.ceil((nowTs - startAt) / period);
     if (k < 0) k = 0;
     const nextBoundary = startAt + k * period;
-    const delay = Math.max(0, nextBoundary - nowTs);
     autoColorSequence.lastBoundaryTs = nextBoundary;
-    console.log(`⏳ Arrancando en siguiente frontera de periodo: ${delay}ms (k=${k}, period=${period})`);
-    executeImmediately = false;
-    setTimeout(() => executeColorStep(), Math.max(30, delay));
-  }
-  
-  if (executeImmediately) {
-    // EJECUCIÓN INMEDIATA para perfecta sincronización entre todas las instancias
-    console.log(`🚀 Brush ${brushId}: Ejecutando paso de color INMEDIATAMENTE para sincronización perfecta`);
-    executeColorStep();
+    console.log(`⏳ Sincronizado. Esperando evento nextColorStep del servidor (k=${k}, period=${period})`);
+  } else {
+    console.log('⏳ Sincronizado sin startAt. Esperando evento nextColorStep del servidor');
   }
 }
 
@@ -410,8 +430,17 @@ async function switchToWallpaperMode(sequenceId = null) {
   
   // Control de secuencia única: evitar múltiples ejecuciones
   if (wallpaperSequenceActive) {
-    console.log(`⏸️ Secuencia wallpaper ya activa (ID actual: ${wallpaperSequenceId}) - ignorando nueva solicitud (ID: ${currentSequenceId})`);
-    return;
+    // Detectar lock colgado: si pasaron más de 2x la duración esperada sin estar realmente en modo wallpaper coloreando, liberar
+    const now = Date.now();
+    const stale = (now - wallpaperSequenceActiveStartTs) > (DURATION_MS * 2.2);
+    if (!stale) {
+      console.log(`⏸️ Secuencia wallpaper ya activa (ID actual: ${wallpaperSequenceId}) - ignorando nueva solicitud (ID: ${currentSequenceId})`);
+      return;
+    } else {
+      console.warn('🧹 Detectado lock de wallpaperSequenceActive colgado. Liberando para permitir nueva carga.');
+      wallpaperSequenceActive = false;
+      wallpaperSequenceId = null;
+    }
   }
   
   // Evitar reentradas: si ya estamos coloreando wallpaper, no interrumpir
@@ -423,6 +452,7 @@ async function switchToWallpaperMode(sequenceId = null) {
   // Marcar secuencia activa
   wallpaperSequenceActive = true;
   wallpaperSequenceId = currentSequenceId;
+  wallpaperSequenceActiveStartTs = Date.now();
   
   // Detener secuencia automática si está activa
   // Guardar estado actual para poder reanudar
@@ -490,8 +520,9 @@ async function switchToWallpaperMode(sequenceId = null) {
     }
     
     // Agregar wallpaper.jpg como patrón de coloreado
+    const cacheBust = Date.now();
     const wallpaperPattern = {
-      src: `/patterns/wallpaper.jpg`,
+      src: `/patterns/wallpaper.jpg?cb=${cacheBust}`,
       image: img,
       filename: 'wallpaper.jpg',
       type: 'wallpaper',
@@ -545,13 +576,18 @@ function switchToSequenceMode() {
   // Cambiar modo
   coloringMode = 'sequence';
   
-  // Limpiar patrones excepto el amarillo y los de secuencia base
-  // Mantener siempre amarillo como base; eliminar duplicados de wallpaper
-  patterns = patterns.filter(p => p.type !== 'wallpaper');
-  // No forzar amarillo en modo secuencia para evitar pixelación
-  
-  // Resetear a amarillo como base
-  currentPatternIndex = 0;
+  // Mantener temporalmente último wallpaper como fondo visible hasta primer paso de color
+  const hadWallpaper = patterns.some(p => p.type === 'wallpaper');
+  if (hadWallpaper) {
+    const wpIndex = patterns.findIndex(p => p.type === 'wallpaper');
+    if (wpIndex >= 0 && wpIndex !== patterns.length -1) {
+      const wp = patterns.splice(wpIndex,1)[0];
+      patterns.push(wp);
+    }
+    currentPatternIndex = patterns.length -1;
+  } else {
+    currentPatternIndex = Math.max(0, currentPatternIndex);
+  }
   
   // Importante: NO reanudar inmediatamente la secuencia previa para evitar doble inicio
   // tras volver desde wallpaper. En su lugar, reiniciar estado y esperar al
@@ -563,7 +599,7 @@ function switchToSequenceMode() {
   // Mantener el orden por defecto salvo que el servidor envíe otro
   autoColorSequence.patterns = autoColorSequence.patterns && autoColorSequence.patterns.length
     ? autoColorSequence.patterns
-  : ['rojo.jpg','azul.jpg','amarillo.jpg'];
+  : ['amarillo.jpg','rojo.jpg','azul.jpg','logo1.jpg','logo2.jpg'];
   
   console.log('✅ Modo secuencia preparado. Esperando señal de inicio sincronizada del servidor...');
   // Asegurar que el video por logos esté detenido al cambiar de modo
@@ -995,11 +1031,7 @@ function setupWebSocket() {
       // EJECUCIÓN INMEDIATA para sincronización perfecta
       if (syncData?.pattern) {
         console.log(`🎯 *** BRUSH ${brushId} *** Patrón forzado por servidor: ${syncData.pattern}`);
-        if (/amarillo\.jpg|azul\.jpg/i.test(syncData.pattern)) {
-          console.warn(`⛔ Brush ${brushId}: Bloqueando patrón forzado ${syncData.pattern} por pixelación`);
-        } else {
-          executeColorStepWithPattern(syncData.pattern);
-        }
+  executeColorStepWithPattern(syncData.pattern);
       } else {
         console.log(`🚀 Brush ${brushId}: Ejecutando paso INMEDIATAMENTE`);
         executeColorStep();
@@ -1043,6 +1075,12 @@ function setupWebSocket() {
     // NUEVO: Switch a modo secuencia
     socket.on('switchToSequenceMode', () => {
       console.log('🔀 *** BRUSH *** Cambiando a modo Secuencia');
+      switchToSequenceMode();
+    });
+
+    // NUEVO: Soportar evento returnToSequenceMode emitido desde el servidor tras timeout
+    socket.on('returnToSequenceMode', (data) => {
+      console.log('🔁 *** BRUSH *** returnToSequenceMode recibido desde servidor');
       switchToSequenceMode();
     });
     
@@ -3024,6 +3062,15 @@ function loop(ts){
       pendingSwitchToSequence = false;
       try { switchToSequenceMode(); } catch (e) { console.error('❌ Error al cambiar a modo secuencia tras completar:', e); }
     }
+
+    // NUEVO: Si acabamos de colorear wallpaper y la secuencia central existe, solicitar inmediatamente sincronización del último paso
+    if (coloringMode === 'wallpaper') {
+      // Cambiar a sequence automáticamente si no hay cambio pendiente explícito
+      coloringMode = 'sequence';
+      console.log('🔁 Volviendo automáticamente a modo sequence tras finalizar wallpaper');
+      // Pedir al servidor reenvío del último paso (si existe) para enganchar inmediatamente
+      try { if (window.socket) window.socket.emit('requestLastColorStep'); } catch(_) {}
+    }
     
     // Programar el próximo paso alineado a ancla de tiempo (si la secuencia está activa)
     // NOTA: Solo auto-programar si NO estamos esperando comandos sincronizados del servidor
@@ -3084,7 +3131,8 @@ function start(){
   cancelAnimationFrame(rafId); 
   cancelAnimationFrame(fpsMonitorRafId);
   
-  // Resetear estado de animación
+  // Resetear estado de animación (pero NO limpiar el canvas principal si venimos de wallpaper)
+  const preserveExisting = (coloringMode === 'sequence' && preserveCanvasContent) || coloringMode === 'wallpaper';
   animationFinished = false;
   hasAddedLateDrops = false; // resetear gotas tardías
   lateColorDrops = []; // limpiar gotas tardías
@@ -3093,9 +3141,8 @@ function start(){
   finalCircles = []; // limpiar círculos finales
   
   resize(); 
-  // Clear in device pixels (reset transform temporarily)
-  try { maskCtx.save(); maskCtx.setTransform(1,0,0,1,0,0); } catch(_) {}
-  maskCtx.clearRect(0,0,maskCanvas.width,maskCanvas.height);
+  // Limpiar SOLO la máscara. No limpiar canvas principal si preserveExisting para evitar fondo vacío
+  try { maskCtx.save(); maskCtx.setTransform(1,0,0,1,0,0); maskCtx.clearRect(0,0,maskCanvas.width,maskCanvas.height);} catch(_) {}
   try { maskCtx.restore(); } catch(_) {}
   
   // golpe inicial en el centro para que empiece a mostrarse de inmediato
@@ -4048,11 +4095,6 @@ function stopLogoVideoLoopIfActive() {
 
 // Aplicar un paso de color con un patrón específico enviado por el servidor (sin alterar el orden local)
 async function executeColorStepWithPattern(forcedPattern) {
-  // Bloquear coloreos pixelados de amarillo/azul según pedido
-  if (/amarillo\.jpg|azul\.jpg/i.test(forcedPattern || '')) {
-    console.warn(`⛔ Brush ${brushId}: Coloreo bloqueado para ${forcedPattern} por pixelación (saltando)`);
-    return;
-  }
   if (!forcedPattern) return executeColorStep();
   if (autoColorSequence.isRunning) return; // evitar solapado
   autoColorSequence.isRunning = true;
