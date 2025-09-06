@@ -901,7 +901,8 @@ function setupKeyboardControls() {
         // Teclas "z", "a", "q" - Selección de imagen (antes era 1, 2, 3)
         else if (e.key === 'z' || e.key === 'Z') {
             e.preventDefault();
-            selectImage('red');
+            // Invertido: antes 'z' -> red, ahora 'z' -> pink
+            selectImage('pink');
         } else if (e.key === 'a' || e.key === 'A') {
             e.preventDefault();
             selectImage('blue');
@@ -913,7 +914,8 @@ function setupKeyboardControls() {
             }
         } else if (e.key === 'q' || e.key === 'Q') {
             e.preventDefault();
-            selectImage('pink');
+            // Invertido: antes 'q' -> pink, ahora 'q' -> red
+            selectImage('red');
         }
         // Teclas "9" y "p" - Deshabilitadas (no hacen nada)
         else if (e.key === '9') {
