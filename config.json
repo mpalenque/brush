@@ -15,7 +15,7 @@
     "perfumeSpacingV": 0.3,
     "perfumeSizeFactor": 1.35,
     "backgroundColor": "#e89e54",
-    "selectedImage": "red",
+    "selectedImage": "pink",
     "patternSource": "processed",
     "overlayImages": {
       "countX": 10,
@@ -109,7 +109,7 @@
       "folder": "3",
       "width": 865,
       "height": 972,
-      "x": 105,
+      "x": 102,
       "y": 153,
       "interval": 3000,
       "zIndex": 1000,
@@ -129,14 +129,6 @@
       "shadowOpacity": 0.3
     }
   },
-  "videoMode": {
-    "enabled": true,
-    "src": "/vid.mp4",
-    "targets": [
-      1,
-      4
-    ]
-  },
   "wallpaper": {
     "isActive": true
   },
@@ -155,5 +147,13 @@
       "8": 850,
       "9": 1100
     }
+  },
+  "videoMode": {
+    "enabled": true,
+    "src": "/vid.mp4",
+    "targets": [
+      1,
+      4
+    ]
   }
 }

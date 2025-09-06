@@ -3,6 +3,7 @@ const http = require('http');
 const socketIo = require('socket.io');
 const path = require('path');
 const fs = require('fs');
+const dgram = require('dgram'); // Para UDP
 
 // Prefer prebuilt @napi-rs/canvas on Windows; fallback to node-canvas
 let createCanvas, loadImage;
@@ -39,6 +40,18 @@ const io = socketIo(server, {
     pingInterval: 25000
 });
 
+// Estado de sincronización de la secuencia de coloreado para re-emitir a clientes tardíos
+let autoSeqActive = false;
+let autoSeqState = null; // { timestamp, startAt, intervalTime, patterns, currentIndex }
+// Handshake para reload->capture de screen/1 al presionar "1"
+const pendingReloadOps = new Map(); // opId -> { screenId, timer }
+// Mutex / rate-limit para broadcasts de wallpaper
+let wallpaperSaveInProgress = false;
+let lastWallpaperBroadcastTs = 0;
+let currentWallpaperSequenceId = null;
+// Control del timeout de regreso a secuencia
+let sequenceReturnTimeoutId = null;
+
 // Servir archivos estáticos
 app.use(express.static(__dirname));
 app.use('/patterns', express.static(path.join(__dirname, 'patterns')));
@@ -62,6 +75,94 @@ function cleanWallpaperTemps() {
         console.warn('⚠️ No se pudieron limpiar temporales de wallpaper:', e.message);
     }
 }
+
+// ========================================
+// SERVIDOR UDP PARA ESCUCHAR MENSAJES DE CÁMARA
+// ========================================
+
+// Configuración UDP
+const UDP_PORT = 5555;
+const udpServer = dgram.createSocket('udp4');
+
+// Estado del procesamiento de imagen
+let imageProcessingState = {
+    isProcessing: false,
+    lastProcessed: null,
+    pendingOperation: null
+};
+
+udpServer.on('listening', () => {
+    const address = udpServer.address();
+    console.log(`📡 *** UDP SERVER *** Escuchando en puerto ${address.port} para mensajes de cámara`);
+});
+
+udpServer.on('message', (msg, rinfo) => {
+    const message = msg.toString().trim();
+    console.log(`📨 *** UDP *** Mensaje recibido: "${message}" desde ${rinfo.address}:${rinfo.port}`);
+    
+    if (message === 'save') {
+        console.log('📸 *** UDP *** Confirmación de guardado de imagen recibida!');
+        handleImageSaved();
+    } else {
+        console.log(`⚠️ *** UDP *** Mensaje no reconocido: "${message}"`);
+    }
+});
+
+udpServer.on('error', (err) => {
+    console.error('❌ *** UDP SERVER *** Error:', err);
+});
+
+// Función para manejar cuando se confirma que la imagen fue guardada
+function handleImageSaved() {
+    console.log('🎯 *** SERVER *** Procesando confirmación de imagen guardada');
+    
+    imageProcessingState.isProcessing = false;
+    imageProcessingState.lastProcessed = Date.now();
+    
+    // Notificar a todos los clientes que la imagen está lista
+    io.emit('processedImageReady', { 
+        type: 'processed', 
+        filename: 'processed.png',
+        timestamp: Date.now(),
+        source: 'camera-udp'
+    });
+    
+    // Si hay una operación pendiente, continuar con la secuencia
+    if (imageProcessingState.pendingOperation) {
+        const operation = imageProcessingState.pendingOperation;
+        imageProcessingState.pendingOperation = null;
+        
+        console.log(`🔄 *** SERVER *** Continuando operación pendiente: ${operation.id}`);
+        
+        // Continuar con la recarga y captura
+        setTimeout(() => {
+            const operationId = `udp-${Date.now()}-${Math.floor(Math.random()*1e6)}`;
+            
+            // Enviar recarga SINCRONIZADA a screen/1 con captura posterior
+            io.emit('reloadRequestSync', { 
+                screenId: 1, 
+                forceProcessed: true, 
+                operationId: operationId,
+                captureAfterReload: true
+            });
+            
+            console.log('🔄 *** SERVER *** reloadRequestSync enviado tras confirmación UDP');
+            
+            // Fallback: si no llega screenReady en tiempo, intentar capturar
+            const fallback = setTimeout(() => {
+                console.warn('⏰ *** SERVER *** Fallback UDP - forzando captura sin confirmación');
+                io.emit('requestCanvasCapture', { screenId: 1 });
+                pendingReloadOps.delete(operationId);
+            }, 12000);
+            
+            pendingReloadOps.set(operationId, { screenId: 1, timer: fallback });
+            
+        }, 1000); // Pequeña pausa para asegurar que processed.png esté disponible
+    }
+}
+
+// Iniciar servidor UDP
+udpServer.bind(UDP_PORT);
 
 // Ruta para la pantalla de 3 monitores
 app.get('/3screens', (req, res) => {
@@ -569,6 +670,15 @@ io.on('connection', (socket) => {
                 wallpaper: { isActive: true }
             });
             console.log(`${type} registered with brush ID: ${brushId}`);
+            // Si la secuencia automática está activa, reenviar estado de sincronización
+            if (autoSeqActive && autoSeqState) {
+                try {
+                    socket.emit('startAutoColorSequence', autoSeqState);
+                    console.log(`📡 Reenviado estado de secuencia a brush ${brushId}`);
+                } catch (e) {
+                    console.warn('⚠️ No se pudo reenviar estado de secuencia al nuevo cliente:', e.message);
+                }
+            }
         } else {
             // Configuración para screens normales
             socket.emit('initialState', {
@@ -700,25 +810,48 @@ io.on('connection', (socket) => {
         }
     });
 
-    // NUEVO: Orquestación al presionar "1": recarga screen/1, captura y guarda wallpaper.jpg, luego colorear con wallpaper, y tras 2m volver a secuencia
+    // MEJORADO: Orquestación al presionar "1" con sistema UDP real
     socket.on('startBrushRevealSequence', () => {
         const client = connectedClients.get(socket.id);
         if (client && client.type === 'control') {
-            console.log('🎯 *** SERVER *** Orquestando flujo de tecla 1');
+            console.log('🎯 *** SERVER *** Orquestando flujo de tecla 1 con sistema UDP');
+            
+            if (imageProcessingState.isProcessing) {
+                console.log('⚠️ *** SERVER *** Ya hay un procesamiento en curso, ignorando nueva solicitud');
+                return;
+            }
+            
+            // Marcar que estamos esperando el procesamiento
+            imageProcessingState.isProcessing = true;
+            imageProcessingState.pendingOperation = {
+                id: `udp-sequence-${Date.now()}`,
+                type: 'brush-reveal-sequence',
+                startedAt: Date.now()
+            };
+            
+            console.log('📸 *** SERVER *** Esperando confirmación UDP de cámara en puerto 5555...');
+            
+            // Notificar al control que estamos esperando
+            io.emit('waitingForImageCapture', {
+                message: 'Esperando confirmación de cámara via UDP puerto 5555',
+                timestamp: Date.now()
+            });
+            
+            // Timeout de seguridad: si no llega confirmación UDP en 30 segundos, abortar
             setTimeout(() => {
-                io.emit('reloadRequest', { screenId: 1 });
-                console.log('🔄 *** SERVER *** reloadRequest enviado a screen/1');
-                setTimeout(() => {
-                    let sent = false;
-                    connectedClients.forEach((c) => {
-                        if (c.type === 'screen' && c.screenId === 1 && c.socket.connected) {
-                            c.socket.emit('requestCanvasCapture');
-                            sent = true;
-                        }
+                if (imageProcessingState.isProcessing && 
+                    imageProcessingState.pendingOperation?.id === `udp-sequence-${Date.now()}`) {
+                    
+                    console.warn('⏰ *** SERVER *** Timeout esperando confirmación UDP - abortando secuencia');
+                    imageProcessingState.isProcessing = false;
+                    imageProcessingState.pendingOperation = null;
+                    
+                    io.emit('imageProcessingTimeout', {
+                        message: 'Timeout esperando confirmación de cámara',
+                        timestamp: Date.now()
                     });
-                    if (!sent) console.warn('⚠️ *** SERVER *** No hay screen/1 conectado para capturar');
-                }, 3800); // ⏱️ Esperar 2s más (total +2s) tras recargar antes de capturar
-            }, 4000);
+                }
+            }, 30000); // 30 segundos timeout
         }
     });
 
@@ -756,20 +889,29 @@ io.on('connection', (socket) => {
             
             // Crear timestamp de sincronización para todas las pantallas
             const nowTs = Date.now();
-            const startAt = nowTs + 1500; // pequeño buffer para que todos lleguen
-            const syncData = {
-                timestamp: nowTs,
-                startAt,
-                intervalTime: globalState.general.colorSequenceIntervalMs || 40000,
-                patterns: ['amarillo.jpg', 'rojo.jpg', 'azul.jpg', 'logo1.jpg', 'logo2.jpg']
-            };
+            // Reusar ancla si ya estaba activa para no desincronizar
+            if (!autoSeqActive || !autoSeqState) {
+                const startAt = nowTs + 1500; // pequeño buffer para que todos lleguen
+                autoSeqState = {
+                    timestamp: nowTs,
+                    startAt,
+                    intervalTime: globalState.general.colorSequenceIntervalMs || 40000,
+                    patterns: ['rojo.jpg', 'amarillo.jpg', 'azul.jpg', 'logo1.jpg', 'logo2.jpg'],
+                    currentIndex: 0
+                };
+            } else {
+                // actualizar solo el intervalo/patrones si cambiaron
+                autoSeqState.timestamp = nowTs;
+                autoSeqState.intervalTime = globalState.general.colorSequenceIntervalMs || autoSeqState.intervalTime;
+            }
+            autoSeqActive = true;
             
             console.log(`⏰ *** SERVER *** Sync ts=${nowTs}, startAt=${startAt}`);
             
             // Enviar comando con datos de sincronización a todos los brush-reveal
             connectedClients.forEach((otherClient) => {
                 if (otherClient.type === 'brush-reveal' && otherClient.socket.connected) {
-                    otherClient.socket.emit('startAutoColorSequence', syncData);
+                    otherClient.socket.emit('startAutoColorSequence', autoSeqState);
                 }
             });
             
@@ -782,6 +924,8 @@ io.on('connection', (socket) => {
         if (client && client.type === 'control') {
             console.log('⏹️ *** SERVER *** Deteniendo secuencia automática de coloreado');
             
+            autoSeqActive = false;
+            autoSeqState = null;
             // Enviar comando a todos los brush-reveal
             connectedClients.forEach((otherClient) => {
                 if (otherClient.type === 'brush-reveal' && otherClient.socket.connected) {
@@ -800,15 +944,25 @@ io.on('connection', (socket) => {
             
             // Crear timestamp de sincronización
             const syncTimestamp = Date.now();
+        // Determinar patrón actual del paso según el orden deseado
+        const seq = ['rojo.jpg', 'amarillo.jpg', 'azul.jpg', 'logo1.jpg', 'logo2.jpg'];
+        // Guardar y actualizar índice en estado de servidor
+        server._colorSeqIndex = (server._colorSeqIndex || 0) % seq.length;
+        const pattern = seq[server._colorSeqIndex];
+        server._colorSeqIndex = (server._colorSeqIndex + 1) % seq.length;
+        if (autoSeqActive && autoSeqState) {
+            autoSeqState.patterns = seq;
+            autoSeqState.currentIndex = server._colorSeqIndex;
+        }
             
             // Enviar comando con timestamp a todos los brush-reveal
             connectedClients.forEach((otherClient) => {
                 if (otherClient.type === 'brush-reveal' && otherClient.socket.connected) {
-                    otherClient.socket.emit('nextColorStep', { timestamp: syncTimestamp });
+            otherClient.socket.emit('nextColorStep', { timestamp: syncTimestamp, pattern, currentIndex: server._colorSeqIndex });
                 }
             });
             
-            console.log(`📡 *** SERVER *** Comando nextColorStep con timestamp ${syncTimestamp} enviado a brush-reveal clients`);
+        console.log(`📡 *** SERVER *** Comando nextColorStep enviado con patrón=${pattern} ts=${syncTimestamp}`);
         }
     });
 
@@ -850,19 +1004,23 @@ io.on('connection', (socket) => {
     });
 
     // NUEVO: Switch a modo wallpaper
-    socket.on('switchToWallpaperMode', () => {
+    socket.on('switchToWallpaperMode', (data) => {
         const client = connectedClients.get(socket.id);
         if (client && client.type === 'control') {
             console.log('🔀 *** SERVER *** Cambiando a modo Wallpaper (wallpaper.jpg)');
             
+            // Generar ID de secuencia único
+            const sequenceId = `wallpaper_manual_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+            currentWallpaperSequenceId = sequenceId;
+            
             // Enviar comando a todos los brush-reveal
             connectedClients.forEach((otherClient) => {
                 if (otherClient.type === 'brush-reveal' && otherClient.socket.connected) {
-                    otherClient.socket.emit('switchToWallpaperMode');
+                    otherClient.socket.emit('switchToWallpaperMode', { sequenceId: sequenceId });
                 }
             });
             
-            console.log('📡 *** SERVER *** Comando switchToWallpaperMode enviado a brush-reveal clients');
+            console.log(`📡 *** SERVER *** Comando switchToWallpaperMode enviado a brush-reveal clients (ID: ${sequenceId})`);
         }
     });
 
@@ -1019,6 +1177,12 @@ io.on('connection', (socket) => {
     socket.on('saveScreenCanvas', async (data) => {
         try {
             console.log('🖼️ Recibiendo canvas completo desde screen.html (3 pantallas)...');
+            if (wallpaperSaveInProgress) {
+                console.warn('⏳ Guardado de wallpaper ya en curso - ignorando nueva solicitud');
+                return;
+            }
+            wallpaperSaveInProgress = true;
+            suspendProcessedReloads = true;
             
             if (!data.imageData) {
                 throw new Error('No image data received');
@@ -1066,28 +1230,48 @@ io.on('connection', (socket) => {
             console.log(`📊 Archivo verificado - Size: ${stats.size} bytes, Modified: ${stats.mtime}`);
             console.log(`⏰ Timestamp de guardado: ${timestamp}`);
             
-            // SOLO enviar newPatternReady - NO imageUpdated para evitar eventos duplicados
-            io.emit('newPatternReady', {
-                patternId: 'wallpaper',
-                filename: filename,
-                timestamp: Date.now()
-            });
-            // Ordenar a todos los brush-reveal a usar wallpaper.jpg y colorear
-            io.emit('switchToWallpaperMode');
+            // Broadcast controlado con ID de secuencia para evitar múltiples cargas parciales
+            const nowTs = Date.now();
+            const sequenceId = `wallpaper_${nowTs}_${Math.random().toString(36).substr(2, 9)}`;
+            
+            if (nowTs - lastWallpaperBroadcastTs > 3000) { // Aumentar throttle a 3 segundos
+                currentWallpaperSequenceId = sequenceId;
+                io.emit('newPatternReady', { 
+                    patternId: 'wallpaper', 
+                    filename, 
+                    timestamp: nowTs,
+                    sequenceId: sequenceId
+                });
+                io.emit('switchToWallpaperMode', { sequenceId: sequenceId });
+                lastWallpaperBroadcastTs = nowTs;
+                console.log(`📡 Broadcast wallpaper (ID: ${sequenceId}) - newPatternReady + switchToWallpaperMode`);
+            } else {
+                console.log(`🛑 Broadcast wallpaper omitido (throttle activo) - última transmisión hace ${nowTs - lastWallpaperBroadcastTs}ms`);
+                return; // No continuar con timeouts si se omitió el broadcast
+            }
+            // Cancelar timeout previo si existe
+            if (sequenceReturnTimeoutId) {
+                clearTimeout(sequenceReturnTimeoutId);
+                sequenceReturnTimeoutId = null;
+                console.log('🗑️ *** SERVER *** Timeout previo cancelado');
+            }
             // Programar regreso a modo secuencia tras 40 segundos
-            setTimeout(() => {
+            sequenceReturnTimeoutId = setTimeout(() => {
+                sequenceReturnTimeoutId = null;
                 io.emit('switchToSequenceMode');
                 console.log('🔁 *** SERVER *** Regresando a modo secuencia (40s)');
-                // Kick de seguridad: (re)iniciar secuencia automática sincronizada a 30s
+                // Kick de seguridad: (re)iniciar secuencia automática sincronizada
                 const nowTs = Date.now();
                 const startAt = nowTs + 1500; // buffer para alinear clientes
-                const syncData = {
+                autoSeqState = {
                     timestamp: nowTs,
                     startAt,
                     intervalTime: globalState.general.colorSequenceIntervalMs || 40000,
-                    patterns: ['amarillo.jpg', 'rojo.jpg', 'azul.jpg', 'logo1.jpg', 'logo2.jpg']
+                    patterns: ['amarillo.jpg', 'rojo.jpg', 'azul.jpg', 'logo1.jpg', 'logo2.jpg'],
+                    currentIndex: 0
                 };
-                io.emit('startAutoColorSequence', syncData);
+                autoSeqActive = true;
+                io.emit('startAutoColorSequence', autoSeqState);
                 console.log('📡 *** SERVER *** Kick: startAutoColorSequence enviado tras volver a secuencia');
             }, globalState.general.colorSequenceIntervalMs || 40000);
             
@@ -1103,12 +1287,27 @@ io.on('connection', (socket) => {
                 filePath: finalPath
             });
             
+            // Emitir evento específico para el gestor de sincronización
+            io.emit('wallpaperSaved', {
+                success: true,
+                filename: filename,
+                timestamp: timestamp,
+                source: 'canvas-capture',
+                screenId: data?.screenId || 1
+            });
+            connectedClients.forEach(c => {
+                if (c.type === 'control' && c.socket.connected) {
+                    c.socket.emit('screenReloadProgress', { phase:'saved', screenId:1, operationId: data?.operationId || null, filename, ts: Date.now() });
+                }
+            });
+            wallpaperSaveInProgress = false;
+            suspendProcessedReloads = false;
+            
         } catch (error) {
             console.error('❌ Error guardando canvas:', error);
-            socket.emit('canvasSaved', {
-                success: false,
-                error: error.message
-            });
+            socket.emit('canvasSaved', { success: false, error: error.message });
+            wallpaperSaveInProgress = false;
+            suspendProcessedReloads = false;
         }
     });
 
@@ -1204,10 +1403,138 @@ io.on('connection', (socket) => {
     // NUEVOS EVENTOS PARA EL PROCESO DE ACTUALIZACIÓN CON TECLA 'A'
     
     socket.on('reloadScreen', (data) => {
-        console.log(`🔄 *** SERVER *** Recargando screen/${data.screenId}...`);
-        // Enviar comando a la pantalla específica para que se recargue
-        io.emit('reloadRequest', { screenId: data.screenId });
-        console.log(`✅ *** CONFIRMACIÓN *** Comando de recarga enviado a screen/${data.screenId}`);
+        try {
+            const screenId = Number(data?.screenId) || 1;
+            const forceProcessed = !!data?.forceProcessed;
+            const captureAfterReload = !!data?.captureAfterReload;
+            const delayMs = Math.max(0, Number(data?.delayMs) || 0);
+            const captureDelayMs = Math.max(0, Number(data?.captureDelayMs) || 0); // soporte opcional (no usado ahora)
+            const operationId = `reload-${Date.now()}-${Math.floor(Math.random()*1e6)}`;
+            console.log(`🔄 *** SERVER *** reloadScreen solicitado screen/${screenId} forceProcessed=${forceProcessed} captureAfterReload=${captureAfterReload} delayMs=${delayMs}`);
+            const launch = () => {
+                // Notify control clients start
+                connectedClients.forEach(c => {
+                    if (c.type === 'control' && c.socket.connected) {
+                        c.socket.emit('screenReloadProgress', { phase:'start', screenId, operationId, captureAfterReload, forceProcessed, ts: Date.now() });
+                    }
+                });
+                if (captureAfterReload) {
+                    const fallback = setTimeout(() => {
+                        console.warn(`⏰ *** SERVER *** Fallback sin screenReady para op ${operationId} – captura directa`);
+                        connectedClients.forEach((c) => {
+                            if (c.type === 'screen' && c.screenId === screenId && c.socket.connected) {
+                                c.socket.emit('requestCanvasCapture');
+                            }
+                        });
+                        pendingReloadOps.delete(operationId);
+                    }, 10000);
+                    pendingReloadOps.set(operationId, { screenId, timer: fallback, captureDelayMs });
+                }
+                io.emit('reloadRequestSync', { screenId, forceProcessed, operationId, captureAfterReload });
+                console.log(`✅ *** CONFIRMACIÓN *** reloadRequestSync enviado a screen/${screenId} op=${operationId}`);
+            };
+            delayMs > 0 ? setTimeout(launch, delayMs) : launch();
+        } catch (e) {
+            console.error('❌ Error en reloadScreen:', e.message);
+        }
+    });
+
+    // Handshake: recibir confirmación de screen listo tras recarga
+    socket.on('screenReady', (data) => {
+        try {
+            const screenId = Number(data?.screenId) || 1;
+            const op = data?.operationId || data?.op || null;
+            console.log(`✅ *** SERVER *** screenReady recibido de screen/${screenId} op=${op || 'n/a'}`);
+            connectedClients.forEach(c => {
+                if (c.type === 'control' && c.socket.connected) {
+                    c.socket.emit('screenReloadProgress', { phase:'screenReady', screenId, operationId: op, ts: Date.now() });
+                }
+            });
+            if (op && pendingReloadOps.has(op)) {
+                const entry = pendingReloadOps.get(op);
+                if (entry?.timer) clearTimeout(entry.timer);
+                pendingReloadOps.delete(op);
+                // Captura inmediata tras screenReady (requerimiento actual: recargar primero, luego guardar)
+                connectedClients.forEach((c) => {
+                    if (c.type === 'screen' && c.screenId === screenId && c.socket.connected) {
+                        c.socket.emit('requestCanvasCapture');
+                        console.log('📸 *** SERVER *** requestCanvasCapture enviado tras screenReady (sin delay)');
+                        connectedClients.forEach(cc => {
+                            if (cc.type === 'control' && cc.socket.connected) {
+                                cc.socket.emit('screenReloadProgress', { phase:'captureRequested', screenId, operationId: op, ts: Date.now() });
+                            }
+                        });
+                    }
+                });
+            } else if (!op && screenId === 1) {
+                connectedClients.forEach((c) => {
+                    if (c.type === 'screen' && c.screenId === 1 && c.socket.connected) {
+                        c.socket.emit('requestCanvasCapture');
+                        console.log('📸 *** SERVER *** requestCanvasCapture (compat)');
+                        connectedClients.forEach(cc => {
+                            if (cc.type === 'control' && cc.socket.connected) {
+                                cc.socket.emit('screenReloadProgress', { phase:'captureRequested', screenId, operationId: op, ts: Date.now() });
+                            }
+                        });
+                    }
+                });
+            }
+        } catch (e) {
+            console.warn('⚠️ Error manejando screenReady:', e.message);
+        }
+    });
+
+    // NUEVO: Eventos para el gestor robusto de sincronización de imágenes
+    socket.on('continueWithWallpaperColoring', () => {
+        const client = connectedClients.get(socket.id);
+        if (client && client.type === 'screen') {
+            console.log('🎨 *** SERVER *** Continuando secuencia de coloreado con wallpaper');
+            
+            // Emitir a todos los brush-reveal para que cambien a modo wallpaper
+            connectedClients.forEach((otherClient) => {
+                if (otherClient.type === 'brush-reveal' && otherClient.socket.connected) {
+                    otherClient.socket.emit('switchToWallpaperMode', {
+                        timestamp: Date.now(),
+                        source: 'screen-sequence'
+                    });
+                }
+            });
+            
+            // Programar regreso a secuencia después de 2 minutos
+            if (sequenceReturnTimeoutId) {
+                clearTimeout(sequenceReturnTimeoutId);
+            }
+            
+            sequenceReturnTimeoutId = setTimeout(() => {
+                console.log('⏰ *** SERVER *** Tiempo cumplido - regresando a secuencia de coloreado');
+                connectedClients.forEach((otherClient) => {
+                    if (otherClient.type === 'brush-reveal' && otherClient.socket.connected) {
+                        otherClient.socket.emit('returnToSequenceMode', {
+                            timestamp: Date.now()
+                        });
+                    }
+                });
+            }, 120000); // 2 minutos
+        }
+    });
+
+    socket.on('imageValidationRequest', (data) => {
+        const client = connectedClients.get(socket.id);
+        if (client && client.type === 'screen') {
+            console.log(`🔍 *** SERVER *** Validación de imagen solicitada para pantalla ${data.screenId}`);
+            
+            // Aquí se podría implementar validación adicional
+            // Por ahora, simplemente confirmamos que la imagen está disponible
+            const processedPath = path.join(__dirname, 'processed', 'processed.png');
+            const exists = fs.existsSync(processedPath);
+            
+            socket.emit('imageValidationResult', {
+                screenId: data.screenId,
+                valid: exists,
+                timestamp: Date.now(),
+                path: exists ? processedPath : null
+            });
+        }
     });
 
     socket.on('saveAsWallpaper', async () => {

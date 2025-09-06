@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Test Flow - Brush System</title>
+    <style>
+        body { font-family: Arial, sans-serif; padding: 20px; }
+        .section { margin: 20px 0; padding: 15px; border: 1px solid #ccc; }
+        .button { padding: 10px 20px; margin: 5px; background: #007acc; color: white; border: none; cursor: pointer; }
+        .button:hover { background: #005999; }
+        .log { background: #f5f5f5; padding: 10px; height: 200px; overflow-y: auto; font-family: monospace; font-size: 12px; }
+    </style>
+</head>
+<body>
+    <h1>🎨 Brush System Test Flow</h1>
+    
+    <div class="section">
+        <h3>1. Test Slideshow</h3>
+        <button class="button" onclick="testSlideshow()">Start Slideshow Test</button>
+        <button class="button" onclick="stopSlideshow()">Stop Slideshow</button>
+    </div>
+    
+    <div class="section">
+        <h3>2. Test Press "1" Flow (Refresh → Save)</h3>
+        <button class="button" onclick="testPressOne()">Simulate Press "1"</button>
+        <button class="button" onclick="checkWallpaper()">Check wallpaper.jpg</button>
+    </div>
+    
+    <div class="section">
+        <h3>3. Test Quality (Pattern Types)</h3>
+        <button class="button" onclick="testPatternQuality('amarillo')">Test Amarillo</button>
+        <button class="button" onclick="testPatternQuality('azul')">Test Azul</button>
+        <button class="button" onclick="testPatternQuality('rojo')">Test Rojo</button>
+        <button class="button" onclick="testPatternQuality('wallpaper')">Test Wallpaper</button>
+    </div>
+    
+    <div class="section">
+        <h3>4. Real-time Logs</h3>
+        <div id="logs" class="log"></div>
+        <button class="button" onclick="clearLogs()">Clear Logs</button>
+    </div>
+
+    <script src="/socket.io/socket.io.js"></script>
+    <script>
+        const socket = io();
+        const logsDiv = document.getElementById('logs');
+        
+        function log(message) {
+            const time = new Date().toLocaleTimeString();
+            logsDiv.innerHTML += `[${time}] ${message}\n`;
+            logsDiv.scrollTop = logsDiv.scrollHeight;
+        }
+        
+        function clearLogs() {
+            logsDiv.innerHTML = '';
+        }
+        
+        // Socket listeners
+        socket.on('connect', () => {
+            log('✅ Connected to server');
+        });
+        
+        socket.on('reloadRequestSync', (data) => {
+            log(`🔄 reloadRequestSync: op=${data.operationId} screen=${data.screenId}`);
+        });
+        
+        socket.on('screenReady', (data) => {
+            log(`✅ screenReady: op=${data.operationId} screen=${data.screenId}`);
+        });
+        
+        socket.on('requestCanvasCapture', (data) => {
+            log(`📸 requestCanvasCapture: screen=${data.screenId}`);
+        });
+        
+        socket.on('canvasSaved', (data) => {
+            log(`💾 canvasSaved: ${data.success ? 'SUCCESS' : 'FAILED'} - ${data.filename || data.error}`);
+        });
+        
+        socket.on('slideshowConfig', (data) => {
+            log(`🎬 slideshowConfig: ${data.showImages ? 'IMAGES' : 'VIDEO'} - ${data.images?.length || 0} images`);
+        });
+        
+        // Test functions
+        function testSlideshow() {
+            log('🎬 Testing slideshow...');
+            socket.emit('updateSlideshow', { showImages: true, folder: '3' });
+            socket.emit('startSlideshow');
+        }
+        
+        function stopSlideshow() {
+            log('⏹️ Stopping slideshow...');
+            socket.emit('stopSlideshow');
+        }
+        
+        function testPressOne() {
+            log('🔑 Simulating press "1" flow...');
+            socket.emit('startBrushRevealSequence', {});
+        }
+        
+        function checkWallpaper() {
+            log('🖼️ Checking wallpaper.jpg...');
+            fetch('/patterns/wallpaper.jpg?' + Date.now())
+                .then(response => {
+                    if (response.ok) {
+                        log(`✅ wallpaper.jpg exists - Size: ${response.headers.get('content-length')} bytes`);
+                    } else {
+                        log(`❌ wallpaper.jpg not found - Status: ${response.status}`);
+                    }
+                })
+                .catch(err => log(`❌ Error checking wallpaper: ${err.message}`));
+        }
+        
+        function testPatternQuality(type) {
+            log(`🎨 Testing ${type} pattern quality...`);
+            const patterns = {
+                'amarillo': '/patterns/amarillo.jpg',
+                'azul': '/patterns/azul.jpg', 
+                'rojo': '/patterns/rojo.jpg',
+                'wallpaper': '/patterns/wallpaper.jpg'
+            };
+            
+            const img = new Image();
+            img.onload = () => {
+                log(`✅ ${type}: ${img.width}x${img.height} loaded successfully`);
+            };
+            img.onerror = () => {
+                log(`❌ ${type}: Failed to load`);
+            };
+            img.src = patterns[type] + '?' + Date.now();
+        }
+        
+        log('🚀 Test interface ready');
+    </script>
+</body>
+</html>

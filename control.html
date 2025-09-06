@@ -19,14 +19,32 @@
             🔌 Conectando al servidor...
         </div>
 
+        <!-- Monitor UDP -->
+        <div class="section" style="background: #f8f9fa; border-left: 4px solid #6c757d;">
+            <h2>📡 Monitor UDP - Puerto 5555</h2>
+            <div class="udp-monitor">
+                <div class="udp-status" id="udpStatus">
+                    <span class="status-indicator" id="udpIndicator">⚪</span>
+                    <span id="udpStatusText">Esperando mensajes...</span>
+                </div>
+                <div class="udp-log" id="udpLog">
+                    <div class="log-entry">🚀 Monitor UDP iniciado</div>
+                </div>
+                <div class="udp-actions">
+                    <button id="clearUdpLog" class="btn btn-small">🗑️ Limpiar Log</button>
+                    <button id="testUdpConnection" class="btn btn-small">🔍 Test Conexión</button>
+                </div>
+            </div>
+        </div>
+
         <!-- Atajos de Teclado -->
         <div class="section" style="background: #e8f4fd; border-left: 4px solid #007bff;">
             <h2>⌨️ Atajos de Teclado</h2>
             <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 10px; font-size: 14px;">
                 <div><strong>Tecla 1:</strong> Capturar screen/1 → guardar wallpaper.jpg y mostrarlo</div>
-                <div><strong>Tecla A:</strong> Cambiar imagen a rosa (no captura wallpaper)</div>
+                <div><strong>Tecla A:</strong> Seleccionar imagen azul (no captura wallpaper)</div>
                 <div><strong>Tecla Z:</strong> Seleccionar imagen roja</div>
-                <div><strong>Tecla Q:</strong> Seleccionar imagen azul</div>
+                <div><strong>Tecla Q:</strong> Seleccionar imagen rosa</div>
                 <div><strong>Tecla 9:</strong> Procesar desde captura</div>
                 <div><strong>Tecla P:</strong> Cambiar a fuente procesada</div>
             </div>
@@ -631,11 +649,25 @@
         document.addEventListener('keydown', (e) => {
             if (e.key === 'a' || e.key === 'A') {
                 e.preventDefault();
-                // Solo cambiar imagen a rosa, sin capturar wallpaper
+                // Cambiar imagen a blue
                 if (window.socket && window.socket.connected) {
-                    window.socket.emit('selectImage', { image: 'pink' });
+                    window.socket.emit('selectImage', { image: 'blue' });
                 }
-                console.log('🅰️ Tecla A: cambiar imagen a rosa (sin capturar wallpaper)');
+                console.log('#file:blue.png');
+            } else if (e.key === 'q' || e.key === 'Q') {
+                e.preventDefault();
+                // Cambiar imagen a red
+                if (window.socket && window.socket.connected) {
+                    window.socket.emit('selectImage', { image: 'red' });
+                }
+                console.log('#file:red.png');
+            } else if (e.key === 'z' || e.key === 'Z') {
+                e.preventDefault();
+                // Cambiar imagen a red (según pedido original)
+                if (window.socket && window.socket.connected) {
+                    window.socket.emit('selectImage', { image: 'red' });
+                }
+                console.log('#file:red.png');
             } else if (e.key === '1') {
                 e.preventDefault();
                 console.log('1️⃣ *** Tecla 1 recibida: iniciando captura de screen/1...');
@@ -678,42 +710,37 @@
         async function executeScreenCapture() {
             try {
                 // Mostrar feedback visual inicial
-                const feedback = createFeedback('🔄 Paso 1/3: Iniciando captura...', '#007bff');
-                
-                // PASO 1: Esperar 4 segundos
-                console.log('⏳ *** PASO 1/3 *** Esperando 4 segundos...');
-                updateFeedback(feedback, '⏳ Paso 1/3: Esperando 4 segundos...', '#ffc107');
-                await new Promise(resolve => setTimeout(resolve, 4000));
-                
-                // PASO 2: Recargar screen/1
-                console.log('🔄 *** PASO 2/3 *** Recargando screen/1...');
-                updateFeedback(feedback, '🔄 Paso 2/3: Recargando screen/1...', '#17a2b8');
-                window.socket.emit('reloadScreen', { screenId: 1 });
-                await new Promise(resolve => setTimeout(resolve, 1000));
-                
-                // PASO 3: Capturar y guardar como wallpaper.jpg (6480x3840)
-                console.log('📸 *** PASO 3/3 *** Capturando screen/1 → wallpaper.jpg (6480x3840)...');
-                updateFeedback(feedback, '📸 Paso 3/3: Capturando como wallpaper.jpg...', '#28a745');
-                window.socket.emit('requestCanvasCaptureFromScreen', { 
-                    screenId: 1,
-                    saveAs: 'wallpaper.jpg',
-                    resolution: { width: 6480, height: 3840 }
+                const feedback = createFeedback('⏳ Paso 1/2: Esperando 6s antes de recargar...', '#007bff');
+
+                // PASO 1: Esperar 4 segundos ANTES de recargar (requisito)
+                console.log('⏳ *** PASO 1/2 *** Esperando 6 segundos antes de recargar processed.png...');
+                await new Promise(resolve => setTimeout(resolve, 6000));
+                updateFeedback(feedback, '🔄 Paso 2/2: Recargando y capturando tras actualizar...', '#17a2b8');
+
+                // PASO 2: Solicitar al servidor recarga con captura automática tras screenReady
+                // El servidor hace handshake: reloadRequestSync -> screenReady -> requestCanvasCapture
+                window.socket.emit('reloadScreen', { 
+                    screenId: 1, 
+                    forceProcessed: true, 
+                    captureAfterReload: true,
+                    delayMs: 0
                 });
-                
-                // Esperar confirmación del servidor
+
+                console.log('🔄 *** PASO 2/2 *** reloadScreen emitido (captureAfterReload=true)');
+
+                // Escuchar resultado de guardado (canvasSaved) – servidor disparará tras captura
                 await new Promise((resolve) => {
                     const timeout = setTimeout(() => {
-                        console.warn('⚠️ Timeout esperando captura; continuando');
-                        updateFeedback(feedback, '⚠️ Timeout - captura completada', '#ffc107');
+                        console.warn('⚠️ Timeout esperando canvasSaved; puede no haberse completado la captura');
+                        updateFeedback(feedback, '⚠️ Timeout - sin confirmación de guardado', '#ffc107');
                         setTimeout(() => feedback.remove(), 3000);
                         resolve();
                     }, 10000);
-                    
                     window.socket.once('canvasSaved', (data) => {
                         clearTimeout(timeout);
                         if (data?.success) {
-                            console.log('✅ *** CONFIRMACIÓN *** wallpaper.jpg guardado exitosamente:', data);
-                            updateFeedback(feedback, '✅ wallpaper.jpg guardado exitosamente!', '#28a745');
+                            console.log('✅ *** CONFIRMACIÓN *** wallpaper.jpg guardado tras recarga:', data);
+                            updateFeedback(feedback, '✅ Capturado y guardado wallpaper.jpg', '#28a745');
                         } else {
                             console.error('❌ Error al guardar wallpaper.jpg:', data);
                             updateFeedback(feedback, '❌ Error al guardar wallpaper.jpg', '#dc3545');
@@ -722,8 +749,7 @@
                         resolve();
                     });
                 });
-                
-                console.log('✅ *** PROCESO COMPLETADO *** Captura de tecla 1 finalizada');
+                console.log('✅ *** PROCESO COMPLETADO *** Flujo tecla 1 (espera 4s -> reload -> captura) finalizado');
                 
             } catch (error) {
                 console.error('❌ Error en executeScreenCapture:', error);
@@ -823,6 +849,46 @@
                 console.error('Error actualizando slideshow:', error);
             });
         }
+
+        (function initCaptureOverlay(){
+    if (document.getElementById('captureProgressOverlay')) return;
+    const el = document.createElement('div');
+    el.id = 'captureProgressOverlay';
+    el.style.cssText = 'position:fixed;bottom:20px;right:20px;width:340px;max-width:90vw;background:#101010;color:#eee;font:12px monospace;border:1px solid #444;border-radius:8px;z-index:99999;padding:10px 12px;box-shadow:0 4px 14px rgba(0,0,0,.5);display:none;';
+    el.innerHTML = `
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:6px;">
+          <strong style="font-size:13px;">📸 Progreso Captura</strong>
+          <div style="display:flex;gap:4px;">
+            <button id="capClearBtn" style="background:#555;color:#fff;border:none;padding:2px 6px;border-radius:4px;font-size:11px;cursor:pointer;">Limpiar</button>
+            <button id="capCloseBtn" style="background:#dc3545;color:#fff;border:none;padding:2px 6px;border-radius:4px;font-size:11px;cursor:pointer;">✕</button>
+          </div>
+        </div>
+        <div id="capOp" style="margin-top:4px;color:#999;font-size:10px;display:none;"></div>
+        <ul id="capLog" style="margin:6px 0 0 16px;padding:0;list-style:disc;max-height:160px;overflow:auto;"></ul>`;
+    document.body.appendChild(el);
+    const log = document.getElementById('capLog');
+    function show(){ if(el.style.display==='none') el.style.display='block'; }
+    function add(msg){ show(); const li=document.createElement('li'); li.textContent=`${new Date().toLocaleTimeString()} - ${msg}`; log.appendChild(li); while(log.children.length>50) log.removeChild(log.firstChild); log.scrollTop=log.scrollHeight; }
+    function setOp(op){ const o=document.getElementById('capOp'); if(op){ o.textContent='Op: '+op; o.style.display='block'; } else { o.style.display='none'; } }
+    document.getElementById('capCloseBtn').onclick=()=> el.style.display='none';
+    document.getElementById('capClearBtn').onclick=()=> { log.innerHTML=''; setOp(null); };
+    if(window.socket){
+        window.socket.on('screenReloadProgress', d => {
+            const {phase, operationId} = d||{}; if(operationId) setOp(operationId);
+            switch(phase){
+                case 'start': add('Inicio operación reload'); break;
+                case 'screenReady': add('screenReady recibido'); break;
+                case 'captureRequested': add('Captura solicitada a screen/1'); break;
+                case 'saved': add('wallpaper.jpg guardado ✔'); break;
+                default: add('Evento '+phase); break;
+            }
+        });
+    }
+    if (window.executeScreenCapture) {
+        const orig = window.executeScreenCapture;
+        window.executeScreenCapture = async function(){ log.innerHTML=''; setOp(null); add('Tecla 1: esperando 4s'); return orig.apply(this, arguments); };
+    }
+})();
     </script>
     <script src="js/control.js?v=3"></script>
 </body>

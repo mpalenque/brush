@@ -218,8 +218,6 @@ h1 {
 /* ====================================
    CONTROLES ADICIONALES
    ==================================== */
-    box-shadow: 0 4px 8px rgba(0,0,0,0.1);
-}
 
 /* Upload de imágenes */
 .image-upload {
@@ -1015,4 +1013,115 @@ canvas {
 .slideshow-config .range-display {
     color: #6f42c1;
     font-weight: bold;
+}
+
+/* ========================================
+   UDP MONITOR STYLES
+   ======================================== */
+
+.udp-monitor {
+    background: white;
+    border-radius: 8px;
+    padding: 16px;
+    border: 1px solid #dee2e6;
+}
+
+.udp-status {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 12px;
+    padding: 8px 12px;
+    background: #f8f9fa;
+    border-radius: 6px;
+    border: 1px solid #e9ecef;
+}
+
+.status-indicator {
+    font-size: 12px;
+    animation: pulse 2s infinite;
+}
+
+.status-indicator.waiting {
+    color: #ffc107;
+}
+
+.status-indicator.processing {
+    color: #17a2b8;
+}
+
+.status-indicator.ready {
+    color: #28a745;
+}
+
+.status-indicator.error {
+    color: #dc3545;
+}
+
+@keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.5; }
+}
+
+.udp-log {
+    background: #f8f9fa;
+    border: 1px solid #e9ecef;
+    border-radius: 6px;
+    padding: 12px;
+    max-height: 200px;
+    overflow-y: auto;
+    margin-bottom: 12px;
+    font-family: 'Courier New', monospace;
+    font-size: 12px;
+}
+
+.log-entry {
+    margin-bottom: 4px;
+    padding: 2px 0;
+    border-bottom: 1px solid #f0f0f0;
+}
+
+.log-entry:last-child {
+    border-bottom: none;
+}
+
+.log-entry.message {
+    color: #007bff;
+}
+
+.log-entry.save {
+    color: #28a745;
+    font-weight: bold;
+}
+
+.log-entry.error {
+    color: #dc3545;
+}
+
+.log-entry.timeout {
+    color: #ffc107;
+}
+
+.udp-actions {
+    display: flex;
+    gap: 8px;
+}
+
+.btn-small {
+    padding: 6px 12px;
+    font-size: 12px;
+    border-radius: 4px;
+    border: 1px solid #dee2e6;
+    background: white;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.btn-small:hover {
+    background: #f8f9fa;
+    border-color: #adb5bd;
+}
+
+.btn-small:active {
+    transform: translateY(1px);
 }

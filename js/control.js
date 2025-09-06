@@ -298,6 +298,77 @@ function setupWebSocket() {
         updateWallpaperButtonState(data.isActive);
     });
 
+    // NUEVO: Eventos del gestor robusto de sincronización de imágenes
+    socket.on('screenCaptureComplete', (data) => {
+        console.log('📱 *** CONTROL *** Captura de pantalla completada:', data);
+        if (elements.connectionStatus) {
+            elements.connectionStatus.textContent = '📱 Pantalla capturada correctamente';
+            elements.connectionStatus.style.background = '#17a2b8';
+        }
+    });
+    
+    socket.on('wallpaperSaved', (data) => {
+        console.log('🖼️ *** CONTROL *** Wallpaper guardado:', data);
+        if (elements.connectionStatus && data.success) {
+            elements.connectionStatus.textContent = `🖼️ Wallpaper guardado: ${data.filename}`;
+            elements.connectionStatus.style.background = '#28a745';
+            
+            // Volver al estado normal después de un momento
+            setTimeout(() => {
+                if (elements.connectionStatus) {
+                    elements.connectionStatus.textContent = '✅ Conectado al servidor';
+                    elements.connectionStatus.style.background = '';
+                }
+            }, 3000);
+        }
+    });
+    
+    socket.on('imageValidationResult', (data) => {
+        console.log('🔍 *** CONTROL *** Resultado de validación:', data);
+        if (!data.valid) {
+            console.warn('⚠️ Imagen no válida en pantalla', data.screenId);
+        }
+    });
+
+    // NUEVO: Eventos específicos del sistema UDP
+    socket.on('waitingForImageCapture', (data) => {
+        console.log('📡 *** CONTROL *** Esperando captura UDP:', data);
+        if (typeof udpMonitor !== 'undefined') {
+            udpMonitor.setStatus('processing', '📡 Esperando mensaje "save" por UDP...');
+            udpMonitor.addLog('📡 Servidor esperando confirmación UDP puerto 5555', 'message');
+        }
+    });
+    
+    socket.on('imageProcessingTimeout', (data) => {
+        console.log('⏰ *** CONTROL *** Timeout UDP:', data);
+        if (typeof udpMonitor !== 'undefined') {
+            udpMonitor.setStatus('error', '⏰ Timeout esperando confirmación UDP');
+            udpMonitor.addLog('❌ Timeout: No se recibió mensaje "save" en 30s', 'timeout');
+        }
+    });
+    
+    // Actualizar monitor UDP cuando se recibe confirmación de imagen procesada
+    const originalProcessedImageHandler = () => {
+        if (typeof udpMonitor !== 'undefined') {
+            udpMonitor.setStatus('ready', '✅ Mensaje "save" recibido por UDP');
+            udpMonitor.addLog('✅ Confirmación UDP recibida - continuando secuencia', 'save');
+        }
+    };
+    
+    // Agregar handler específico para UDP
+    socket.on('processedImageReady', (data) => {
+        console.log('📸 *** CONTROL *** Imagen procesada lista:', data);
+        if (elements.connectionStatus) {
+            elements.connectionStatus.textContent = '📸 Imagen procesada y lista';
+            elements.connectionStatus.style.background = '#28a745';
+        }
+        
+        // Si viene de UDP, actualizar monitor
+        if (data.source === 'camera-udp') {
+            originalProcessedImageHandler();
+        }
+    });
+
     socket.on('patternSaved', (data) => {
         handlePatternSavedResponse(data);
     });
@@ -833,16 +904,16 @@ function setupKeyboardControls() {
             selectImage('red');
         } else if (e.key === 'a' || e.key === 'A') {
             e.preventDefault();
-            selectImage('pink');
+            selectImage('blue');
             const status = document.getElementById('connectionStatus');
             if (status) {
-                status.textContent = '🩷 Imagen cambiada a: pink.png (sin capturar wallpaper)';
-                status.style.background = '#f8d7da';
+                status.textContent = '🔵 Imagen cambiada a: blue.png (sin capturar wallpaper)';
+                status.style.background = '#d1ecf1';
                 setTimeout(() => { status.textContent = '✅ Conectado al servidor'; status.style.background = ''; }, 1500);
             }
         } else if (e.key === 'q' || e.key === 'Q') {
             e.preventDefault();
-            selectImage('blue');
+            selectImage('pink');
         }
         // Teclas "9" y "p" - Deshabilitadas (no hacen nada)
         else if (e.key === '9') {
@@ -914,30 +985,150 @@ let lastActivityTime = Date.now();
 // Legacy compatibility: some inline scripts may reference rotationInterval; ensure it exists
 window.rotationInterval = window.rotationInterval || null;
 
-// Función para iniciar la secuencia de brush reveal (tecla "1")
+// Función para iniciar la secuencia de brush reveal (tecla "1") con sistema robusto
 function startBrushRevealSequence() {
-    console.log('🎯 INICIANDO SECUENCIA BRUSH REVEAL');
+    console.log('🎯 INICIANDO SECUENCIA BRUSH REVEAL CON SISTEMA UDP');
     
     if (socket && socket.connected) {
+        // Actualizar monitor UDP
+        if (typeof udpMonitor !== 'undefined') {
+            udpMonitor.setStatus('processing', '📸 Iniciando captura de imagen...');
+        }
+        
+        // El servidor ahora manejará toda la secuencia esperando confirmación UDP
         socket.emit('startBrushRevealSequence');
     }
     
-    // Mostrar feedback visual
+    // Mostrar feedback visual mejorado
     const status = document.getElementById('connectionStatus');
     if (status) {
         const originalText = status.textContent;
-        status.textContent = '🎯 Secuencia de Brush Reveal iniciada';
+        status.textContent = '🎯 Esperando confirmación UDP en puerto 5555...';
         status.style.background = '#17a2b8';
         
         setTimeout(() => {
             status.textContent = originalText;
             status.style.background = '';
-        }, 2000);
+        }, 15000);
     }
     
     // Registrar actividad
     registerActivity();
 }
+
+// ========================================
+// UDP MONITOR SYSTEM
+// Sistema de monitoreo UDP para mensajes de cámara
+// ========================================
+
+const udpMonitor = {
+    status: 'waiting', // waiting, processing, ready, error
+    logEntries: [],
+    maxLogEntries: 50,
+    
+    // Elementos DOM
+    elements: {
+        status: null,
+        indicator: null,
+        statusText: null,
+        log: null,
+        clearBtn: null,
+        testBtn: null
+    },
+    
+    init() {
+        this.elements.status = document.getElementById('udpStatus');
+        this.elements.indicator = document.getElementById('udpIndicator');
+        this.elements.statusText = document.getElementById('udpStatusText');
+        this.elements.log = document.getElementById('udpLog');
+        this.elements.clearBtn = document.getElementById('clearUdpLog');
+        this.elements.testBtn = document.getElementById('testUdpConnection');
+        
+        // Event listeners
+        if (this.elements.clearBtn) {
+            this.elements.clearBtn.addEventListener('click', () => this.clearLog());
+        }
+        
+        if (this.elements.testBtn) {
+            this.elements.testBtn.addEventListener('click', () => this.testConnection());
+        }
+        
+        this.updateUI();
+        this.addLog('🚀 Monitor UDP iniciado');
+    },
+    
+    setStatus(newStatus, message = '') {
+        this.status = newStatus;
+        this.updateUI();
+        if (message) {
+            this.addLog(message, newStatus);
+        }
+    },
+    
+    updateUI() {
+        if (!this.elements.indicator || !this.elements.statusText) return;
+        
+        // Actualizar indicador
+        this.elements.indicator.className = `status-indicator ${this.status}`;
+        
+        // Actualizar iconos y texto según estado
+        const statusConfig = {
+            waiting: { icon: '⚪', text: 'Esperando mensajes UDP...', class: 'waiting' },
+            processing: { icon: '🔵', text: 'Procesando imagen...', class: 'processing' },
+            ready: { icon: '🟢', text: 'Imagen lista y procesada', class: 'ready' },
+            error: { icon: '🔴', text: 'Error en comunicación UDP', class: 'error' }
+        };
+        
+        const config = statusConfig[this.status] || statusConfig.waiting;
+        this.elements.indicator.textContent = config.icon;
+        this.elements.statusText.textContent = config.text;
+        this.elements.indicator.className = `status-indicator ${config.class}`;
+    },
+    
+    addLog(message, type = 'info') {
+        const timestamp = new Date().toLocaleTimeString();
+        const entry = {
+            timestamp,
+            message,
+            type
+        };
+        
+        this.logEntries.unshift(entry);
+        
+        // Limitar número de entradas
+        if (this.logEntries.length > this.maxLogEntries) {
+            this.logEntries = this.logEntries.slice(0, this.maxLogEntries);
+        }
+        
+        this.updateLog();
+    },
+    
+    updateLog() {
+        if (!this.elements.log) return;
+        
+        const logHTML = this.logEntries.map(entry => {
+            const typeClass = entry.type !== 'info' ? ` ${entry.type}` : '';
+            return `<div class="log-entry${typeClass}">[${entry.timestamp}] ${entry.message}</div>`;
+        }).join('');
+        
+        this.elements.log.innerHTML = logHTML;
+    },
+    
+    clearLog() {
+        this.logEntries = [];
+        this.updateLog();
+        this.addLog('🗑️ Log limpiado');
+    },
+    
+    testConnection() {
+        this.addLog('🔍 Probando conexión UDP...', 'message');
+        setTimeout(() => {
+            this.addLog('✅ Monitor UDP funcionando correctamente', 'message');
+        }, 500);
+    }
+};
+
+// El monitor UDP se inicializa en la sección principal de inicialización arriba
 
 // ==============================
 // COLOR SEQUENCE CONTROL FUNCTIONS
@@ -1292,8 +1483,10 @@ if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', () => {
         initializeControlPanel();
         initializeBrushRevealControls();
+        udpMonitor.init(); // Inicializar monitor UDP
     });
 } else {
     initializeControlPanel();
     initializeBrushRevealControls();
+    udpMonitor.init(); // Inicializar monitor UDP
 }

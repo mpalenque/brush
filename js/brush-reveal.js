@@ -1,7 +1,9 @@
 // Ajustes generales - OPTIMIZADOS PARA COLOREADO COMPLETO Y SINCRONIZACIÓN
 const DURATION_MS = 14000; // 14s - más lento para completar toda la imagen por igual
-const DPR = 1; // cap para rendimiento
-const MASK_SCALE = 0.7; // máscara equilibrada entre calidad y rendimiento
+// Usar DPR dinámico (devicePixelRatio) para mantener resolución nativa en pantallas HiDPI
+// Inicializamos con el valor actual, y lo recalculamos en `resize()` para adaptarnos a cambios.
+let DPR = Math.max(1, window.devicePixelRatio || 1);
+// Máscara a resolución completa para evitar bordes/jaggies visibles (el tamaño real se forza en resize)
 const MAX_UNITS_PER_FRAME = 250; // reducido para coloreado más lento y uniforme
 const FINAL_SEAL_START = 0.35; // iniciar sellado temprano para cobertura completa
 const FINAL_SEAL_ALPHA_MIN = 0.20; // opacidad más alta para mejor cobertura
@@ -38,8 +40,18 @@ let brushConfig = {
 const container = document.getElementById('container');
 const canvas = document.querySelector('.js-canvas');
 const ctx = canvas.getContext('2d', { alpha: true, desynchronized: true });
+// Helper para asegurar alta calidad de suavizado en contextos 2D
+function ensureHQ(g){
+  try {
+    g.imageSmoothingEnabled = true;
+    g.imageSmoothingQuality = 'high';
+  } catch(_) {}
+}
+ensureHQ(ctx);
 const maskCanvas = document.createElement('canvas');
 const maskCtx = maskCanvas.getContext('2d', { alpha: true, desynchronized: true });
+ensureHQ(maskCtx);
+// Asegurar interpolación de alta calidad; tras cada resize se vuelve a aplicar dentro de resize()
 // Eventos de dibujo del frame actual (para depuración exacta)
 let drawEvents = [];
 
@@ -57,17 +69,20 @@ let slideshowConfig = {
   height: 972,
   x: 102,
   y: 153,
-  interval: 3000,
+  interval: 6000,
   zIndex: 1000,
   shadowWidth: 20,  // Nuevo: Ancho de sombra por defecto
-  shadowOpacity: 0.3 // Nuevo: Opacidad de sombra por defecto
+  shadowOpacity: 0.45 // Nuevo: Opacidad de sombra por defecto (50% más oscuro)
 };
-// Duración del crossfade (ms)
-const SLIDESHOW_FADE_MS = 1000;
+// Duración del crossfade (ms) - más largo para transición suave
+const SLIDESHOW_FADE_MS = 1800;
 let slideshowImages = [];
 let currentSlideshowIndex = 0;
-let slideshowInterval = null;
+let slideshowInterval = null; // Initialize slideshow interval
 let slideshowContainer = null;
+// Slideshow scheduling helpers
+let _slideshowTimeoutId = null; // timeout-based scheduler id
+let _slideshowTransitioning = false; // guard to avoid overlapping transitions
 // Control de ciclos y video
 let slideshowCycleCount = 0; // cuenta de vueltas completas (recorrer todas las imágenes)
 let inVideoPlayback = false; // bandera mientras se reproduce el video
@@ -75,14 +90,22 @@ let slideshowVideoEl = null; // referencia al elemento <video>
 // Video forzado por logos (logo1 / logo2)
 let videoForcedByLogo = false;
 
+// Flags para controlar características del slideshow/video
+// Desactivamos cualquier reproducción de video para evitar bloqueos del slideshow
+const ENABLE_SLIDESHOW_VIDEO = false;
+const ENABLE_LOGO_VIDEO = false;
+
 // Patrones para alternar secuencialmente
 let patterns = [];
 let currentPatternIndex = 0; // Índice del patrón actual
+// Flag: patrones listos para usar (evita fallback prematuro a amarillo en el arranque)
+let patternsReady = false;
 
 // Variables para rotación automática de patrones
 let automaticRotationEnabled = false;
 let rotationInterval = null;
-let rotationPatterns = ['amarillo', 'azul', 'rojo'];
+// Rotación por defecto limitada a patrones permitidos (excluye amarillo/azul)
+let rotationPatterns = ['rojo'];
 let currentRotationIndex = 0;
 let rotationIntervalTime = 120000; // 2 minutos por defecto
 let rotationAnchorTs = null; // marca de tiempo compartida desde el servidor
@@ -103,10 +126,16 @@ let maskBrushes = [];
 function getCurrentPattern() {
   // Verificar si hay patrones cargados
   if (!patterns || patterns.length === 0) {
-    console.warn('⚠️ No hay patrones cargados - cargando amarillo.jpg como fallback');
-    // Intentar cargar amarillo.jpg como fallback inmediato
-    loadDefaultPattern();
-    return null;
+    if (!patternsReady) {
+      // En arranque: esperar a que se carguen los patrones en lugar de forzar amarillo
+      console.warn('⏳ Patrones aún no listos; se omite render hasta que estén cargados');
+      return null;
+    } else {
+  console.warn('⚠️ No hay patrones tras estar listos - cargando fallback permitido (wallpaper/rojo)');
+  // Solo como recuperación post-arranque
+  loadDefaultPattern();
+      return null;
+    }
   }
   
   // Asegurar que el índice esté dentro del rango
@@ -131,7 +160,7 @@ function getCurrentPattern() {
 let autoColorSequence = {
   active: false,
   // Empezar con un color distinto al fondo para que el primer paso sea visible
-  patterns: ['amarillo.jpg', 'rojo.jpg', 'azul.jpg', 'logo1.jpg', 'logo2.jpg'],
+  patterns: ['rojo.jpg'],
   currentIndex: 0,
   interval: null, // deprecado: ya no usamos setInterval
   intervalTime: 40000, // esperar 40s DESPUÉS de terminar de colorear (default configurable)
@@ -142,15 +171,30 @@ let autoColorSequence = {
   // Flag para evitar pasos solapados
   isRunning: false,
   stepId: 0,
-  stepStartTs: 0
+  stepStartTs: 0,
+  // Sincronización por ancla de tiempo
+  anchorStartAt: 0,
+  periodMs: 0,
+  lastBoundaryTs: 0
 };
 
 // Variable para controlar el modo de coloreado
 let coloringMode = 'sequence'; // 'sequence' o 'wallpaper'
 // Orden de inicio diferida cuando aún estamos en modo wallpaper
 let pendingSequenceStart = null;
+// Nuevo: Cambio a secuencia diferido si llega mientras se colorea wallpaper
+let pendingSwitchToSequence = false;
 // Temporizador fallback local para arrancar la secuencia si no llega señal del servidor
 let sequenceFallbackTimeoutId = null;
+
+// Control de secuencia única para evitar múltiples ejecuciones de wallpaper
+let wallpaperSequenceActive = false;
+let wallpaperSequenceId = null;
+
+// Control de fade in/out suave
+let fadeInProgress = false;
+let fadeOutProgress = false;
+const FADE_DURATION = 1500; // Duración del fade en ms
 
 // Función para iniciar la secuencia automática de coloreado
 function startAutoColorSequence() {
@@ -202,42 +246,59 @@ function startAutoColorSequenceSync(syncData) {
   // Usar datos del servidor si están disponibles
   if (syncData) {
     // Mantener default de 30s si no viene del servidor
-  autoColorSequence.intervalTime = syncData.intervalTime || 40000;
+    autoColorSequence.intervalTime = syncData.intervalTime || 40000;
+    autoColorSequence.periodMs = autoColorSequence.intervalTime + (typeof DURATION_MS !== 'undefined' ? DURATION_MS : 14000);
+    if (syncData.startAt) autoColorSequence.anchorStartAt = syncData.startAt;
     if (syncData.patterns) {
-      autoColorSequence.patterns = syncData.patterns;
+      // Aceptar patrones del servidor tal cual (rojo/azul/amarillo)
+      const list = syncData.patterns.map(p => String(p));
+      autoColorSequence.patterns = list.length ? list : ['rojo.jpg','azul.jpg','amarillo.jpg'];
+    }
+    if (typeof syncData.currentIndex === 'number') {
+      autoColorSequence.currentIndex = syncData.currentIndex % autoColorSequence.patterns.length;
     }
   }
   
   console.log('🎨 *** INICIANDO SECUENCIA SINCRONIZADA DE COLOREADO ***');
   console.log(`🔄 Secuencia: ${autoColorSequence.patterns.join(' → ')} (cada ${autoColorSequence.intervalTime/1000}s)`);
   console.log(`⏰ Sincronización basada en timestamp del servidor: ${syncData?.timestamp}`);
+  console.log(`🎯 Brush ID: ${brushId} - Iniciando sincronización`);
   
-  // Calcular el retraso para sincronización
-  let initialDelay = 2000; // Retraso base de 2 segundos
+  // NUEVA LÓGICA: Sincronización perfecta para todas las instancias
+  // Todas las instancias brush/reveal/1-9 ejecutan INMEDIATAMENTE sin delays variables
+  let executeImmediately = true;
   
   if (syncData?.timestamp) {
-    // Calcular cuánto tiempo ha pasado desde el timestamp del servidor
     const now = Date.now();
     const timeSinceSync = now - syncData.timestamp;
+    console.log(`⏰ Tiempo desde comando del servidor: ${timeSinceSync}ms`);
     
-    // Ajustar el retraso para que todas las pantallas estén sincronizadas
-    if (timeSinceSync < 500) { // Si es muy reciente, agregar un pequeño buffer
-      initialDelay = 2000 - timeSinceSync + 100; // 100ms de buffer
+    // Solo si el comando es muy antiguo (>5s), ignorar para evitar desincronización
+    if (timeSinceSync > 5000) {
+      console.log(`⚠️ Comando demasiado antiguo (${timeSinceSync}ms), ignorando para mantener sincronización`);
+      return;
     }
-    
-    console.log(`⏰ Ajuste de sincronización: ${initialDelay}ms desde ahora`);
   }
   
-  // Si hay un startAt futuro, calculemos el delay exacto hasta ese anchor
+  // Si hay un startAt futuro, alinear al siguiente múltiplo exacto del periodo
   if (syncData?.startAt) {
-    const delay = Math.max(0, syncData.startAt - Date.now());
-    console.log(`⏳ Arrancando secuencia a startAt en ${delay}ms`);
-    setTimeout(() => executeColorStep(), Math.max(50, delay));
-  } else {
-    // Iniciar con el primer color con el delay calculado
-    setTimeout(() => {
-      executeColorStep();
-    }, Math.max(100, initialDelay)); // Mínimo 100ms
+    const nowTs = Date.now();
+    const startAt = syncData.startAt;
+    const period = autoColorSequence.periodMs || (autoColorSequence.intervalTime + (typeof DURATION_MS !== 'undefined' ? DURATION_MS : 14000));
+    let k = Math.ceil((nowTs - startAt) / period);
+    if (k < 0) k = 0;
+    const nextBoundary = startAt + k * period;
+    const delay = Math.max(0, nextBoundary - nowTs);
+    autoColorSequence.lastBoundaryTs = nextBoundary;
+    console.log(`⏳ Arrancando en siguiente frontera de periodo: ${delay}ms (k=${k}, period=${period})`);
+    executeImmediately = false;
+    setTimeout(() => executeColorStep(), Math.max(30, delay));
+  }
+  
+  if (executeImmediately) {
+    // EJECUCIÓN INMEDIATA para perfecta sincronización entre todas las instancias
+    console.log(`🚀 Brush ${brushId}: Ejecutando paso de color INMEDIATAMENTE para sincronización perfecta`);
+    executeColorStep();
   }
 }
 
@@ -253,18 +314,73 @@ function stopAutoColorSequence() {
   console.log('⏹️ Secuencia automática de coloreado detenida');
 }
 
+// Función para hacer fade out suave al color de fondo antes de resetear
+async function performSmoothFadeToBackground() {
+  if (fadeOutProgress) {
+    console.log('⏸️ Fade out ya en progreso');
+    return;
+  }
+  
+  fadeOutProgress = true;
+  console.log('🌅 Iniciando fade out suave al color de fondo...');
+  
+  return new Promise((resolve) => {
+    const startTime = performance.now();
+    const originalAlpha = ctx.globalAlpha;
+    
+    function fadeStep(currentTime) {
+      const elapsed = currentTime - startTime;
+      const progress = Math.min(elapsed / FADE_DURATION, 1);
+      
+      // Crear overlay de fondo con opacidad creciente
+      const alpha = progress;
+      
+      // Limpiar y dibujar fondo con fade
+      ctx.save();
+      ctx.globalAlpha = alpha;
+      ctx.fillStyle = '#E89E54'; // Color de fondo
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      ctx.restore();
+      
+      if (progress < 1) {
+        requestAnimationFrame(fadeStep);
+      } else {
+        // Fade completado - limpiar completamente el canvas
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        ctx.fillStyle = '#E89E54';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        
+        fadeOutProgress = false;
+        console.log('✅ Fade out completado');
+        resolve();
+      }
+    }
+    
+    requestAnimationFrame(fadeStep);
+  });
+}
+
 // Función para resetear la secuencia de coloreado a amarillo
 async function resetColorSequenceToYellow() {
-  console.log('🔄 *** RESET *** Reseteando a fondo amarillo y reiniciando secuencia');
+  console.log('🔄 *** RESET *** Reiniciando a patrón por defecto y secuencia');
+  
+  // Si estamos coloreando wallpaper, no interrumpir: ignorar reset durante wallpaper
+  if (coloringMode === 'wallpaper' && !animationFinished) {
+    console.log('⛔ RESET ignorado: coloreado de wallpaper en curso. Se preserva hasta completar.');
+    return;
+  }
   
   // Detener secuencia automática si está activa
   stopAutoColorSequence();
   
-  // Limpiar patrones excepto el amarillo (índice 0)
+  // Hacer fade suave antes de resetear
+  await performSmoothFadeToBackground();
+  
+  // Limpiar patrones y volver a patrón por defecto
   if (patterns.length > 1) {
-    patterns.splice(1); // Mantener solo el primer patrón (amarillo.jpg)
-    currentPatternIndex = 0;
-    console.log('🗑️ Patrones de coloreado limpiados, manteniendo solo amarillo.jpg');
+    patterns.splice(0);
+    await loadDefaultPattern();
+    console.log('🗑️ Patrones de coloreado limpiados, restablecido patrón por defecto');
   }
   
   // Resetear flags de animación
@@ -278,18 +394,35 @@ async function resetColorSequenceToYellow() {
     rafId = 0;
   }
   
-  // Recalcular layout y redibujar fondo amarillo
+  // Recalcular layout y redibujar fondo por defecto
   resize();
   
   // Resetear índice de secuencia automática
   autoColorSequence.currentIndex = 0;
   
-  console.log('✅ Reset completado - Fondo amarillo restaurado, listo para nueva secuencia');
+  console.log('✅ Reset completado - Patrón por defecto restaurado, listo para nueva secuencia');
 }
 
 // Función para cambiar a modo wallpaper
-async function switchToWallpaperMode() {
-  console.log('🔀 *** SWITCH *** Cambiando a modo Wallpaper (wallpaper.jpg)');
+async function switchToWallpaperMode(sequenceId = null) {
+  const currentSequenceId = sequenceId || `manual_${Date.now()}_${Math.random()}`;
+  console.log(`🔀 *** SWITCH *** Cambiando a modo Wallpaper (wallpaper.jpg) - Seq ID: ${currentSequenceId}`);
+  
+  // Control de secuencia única: evitar múltiples ejecuciones
+  if (wallpaperSequenceActive) {
+    console.log(`⏸️ Secuencia wallpaper ya activa (ID actual: ${wallpaperSequenceId}) - ignorando nueva solicitud (ID: ${currentSequenceId})`);
+    return;
+  }
+  
+  // Evitar reentradas: si ya estamos coloreando wallpaper, no interrumpir
+  if (coloringMode === 'wallpaper' && !animationFinished) {
+    console.log(`⏸️ Ignorado: ya en modo wallpaper y coloreando (ID: ${currentSequenceId})`);
+    return;
+  }
+  
+  // Marcar secuencia activa
+  wallpaperSequenceActive = true;
+  wallpaperSequenceId = currentSequenceId;
   
   // Detener secuencia automática si está activa
   // Guardar estado actual para poder reanudar
@@ -310,55 +443,112 @@ async function switchToWallpaperMode() {
   coloringMode = 'wallpaper';
   
   try {
+    // Verificar si aún somos la secuencia activa
+    if (wallpaperSequenceId !== currentSequenceId) {
+      console.log(`⏹️ Secuencia cancelada - otra secuencia tomó control (actual: ${wallpaperSequenceId}, esperado: ${currentSequenceId})`);
+      return;
+    }
+    
+    // Primero hacer fade out suave al color de fondo
+    await performSmoothFadeToBackground();
+    
+    // Verificar nuevamente después del fade
+    if (wallpaperSequenceId !== currentSequenceId) {
+      console.log(`⏹️ Secuencia cancelada durante fade out (actual: ${wallpaperSequenceId}, esperado: ${currentSequenceId})`);
+      return;
+    }
+    
     // Cargar wallpaper.jpg
     const img = new Image();
-    await new Promise((resolve, reject) => {
-      img.onload = resolve;
-      img.onerror = reject;
-      img.src = `/patterns/wallpaper.jpg?t=${Date.now()}`;
-    });
+    let attempts = 0;
+    const MAX_ATTEMPTS = 4;
+    while (attempts < MAX_ATTEMPTS) {
+      attempts++;
+      try {
+        await new Promise((resolve, reject) => {
+          img.onload = () => {
+            if (!img.naturalWidth || !img.naturalHeight || img.naturalWidth < 500 || img.naturalHeight < 500) {
+              return reject(new Error('Dimensiones incompletas'));
+            }
+            resolve();
+          };
+          img.onerror = reject;
+          img.src = `/patterns/wallpaper.jpg?t=${Date.now()}&try=${attempts}`;
+        });
+        break; // éxito
+      } catch (e) {
+        console.warn(`⚠️ Intento ${attempts}/${MAX_ATTEMPTS} cargando wallpaper.jpg falló: ${e.message}`);
+        if (attempts >= MAX_ATTEMPTS) throw e;
+        await new Promise(r=>setTimeout(r, 600 * attempts));
+      }
+    }
+    
+    // Verificar una vez más antes de continuar
+    if (wallpaperSequenceId !== currentSequenceId) {
+      console.log(`⏹️ Secuencia cancelada durante carga de imagen (actual: ${wallpaperSequenceId}, esperado: ${currentSequenceId})`);
+      return;
+    }
     
     // Agregar wallpaper.jpg como patrón de coloreado
     const wallpaperPattern = {
       src: `/patterns/wallpaper.jpg`,
       image: img,
       filename: 'wallpaper.jpg',
-      type: 'wallpaper'
+      type: 'wallpaper',
+      sequenceId: currentSequenceId
     };
     
-    // Agregar al final de la lista y usarlo para colorear
-    patterns.push(wallpaperPattern);
-    currentPatternIndex = patterns.length - 1;
+    // Reemplazar o agregar wallpaper como patrón activo único para evitar duplicados
+    const existingIdx = patterns.findIndex(p => p.filename === 'wallpaper.jpg' || p.type === 'wallpaper');
+    if (existingIdx >= 0) {
+      patterns[existingIdx] = wallpaperPattern;
+      currentPatternIndex = existingIdx;
+    } else {
+      patterns.push(wallpaperPattern);
+      currentPatternIndex = patterns.length - 1;
+    }
+    patternsReady = true;
     
-    console.log('✅ Wallpaper.jpg cargado, iniciando coloreado...');
+    console.log(`✅ Wallpaper.jpg cargado (Seq ID: ${currentSequenceId}), iniciando coloreado...`);
     
     // Recalcular layout
     resize();
     
     // Iniciar coloreado con wallpaper
     colorOnTop();
-  // Al entrar a wallpaper, asegurar que el video por logos esté detenido
-  stopLogoVideoLoopIfActive();
+    // Al entrar a wallpaper, asegurar que el video por logos esté detenido
+    stopLogoVideoLoopIfActive();
+    stopFullscreenLogoVideo();
     
   } catch (error) {
-    console.error('❌ Error cargando wallpaper.jpg:', error);
+    console.error(`❌ Error cargando wallpaper.jpg (Seq ID: ${currentSequenceId}):`, error);
+    wallpaperSequenceActive = false;
+    wallpaperSequenceId = null;
   }
 }
 
 // Función para cambiar a modo secuencia
 function switchToSequenceMode() {
-  console.log('🔀 *** SWITCH *** Cambiando a modo Secuencia (rojo→azul→amarillo)');
+  console.log('🔀 *** SWITCH *** Cambiando a modo Secuencia (rojo/azul/amarillo)');
+  
+  // Marcar que la secuencia de wallpaper ha terminado
+  wallpaperSequenceActive = false;
+  wallpaperSequenceId = null;
+  
+  // Si estamos en modo wallpaper y la animación aún no termina, diferir el cambio
+  if (coloringMode === 'wallpaper' && !animationFinished) {
+    pendingSwitchToSequence = true;
+    console.log('⏳ Cambio a modo secuencia DIFERIDO hasta completar coloreado de wallpaper');
+    return;
+  }
   
   // Cambiar modo
   coloringMode = 'sequence';
   
   // Limpiar patrones excepto el amarillo y los de secuencia base
   // Mantener siempre amarillo como base; eliminar duplicados de wallpaper
-  patterns = patterns.filter((p, idx, arr) => p.type === 'amarillo' || p.type === 'azul' || p.type === 'rojo');
-  if (!patterns.find(p => p.type === 'amarillo')) {
-    // Si por alguna razón amarillo no está, recargarlo
-    loadDefaultPattern();
-  }
+  patterns = patterns.filter(p => p.type !== 'wallpaper');
+  // No forzar amarillo en modo secuencia para evitar pixelación
   
   // Resetear a amarillo como base
   currentPatternIndex = 0;
@@ -368,16 +558,20 @@ function switchToSequenceMode() {
   // startAutoColorSequence(startAutoColorSequenceSync) que envía el servidor.
   // Esto evita la "pasada rápida" de los 3 colores.
   stopAutoColorSequence();
-  autoColorSequence.currentIndex = 0; // empezar desde el comienzo: rojo → azul → amarillo
+  autoColorSequence.currentIndex = 0; // empezar desde el comienzo
   autoColorSequence.nextStepScheduled = false;
   // Mantener el orden por defecto salvo que el servidor envíe otro
   autoColorSequence.patterns = autoColorSequence.patterns && autoColorSequence.patterns.length
     ? autoColorSequence.patterns
-  : ['amarillo.jpg', 'rojo.jpg', 'azul.jpg', 'logo1.jpg', 'logo2.jpg'];
+  : ['rojo.jpg','azul.jpg','amarillo.jpg'];
   
   console.log('✅ Modo secuencia preparado. Esperando señal de inicio sincronizada del servidor...');
   // Asegurar que el video por logos esté detenido al cambiar de modo
   stopLogoVideoLoopIfActive();
+  stopFullscreenLogoVideo();
+
+  // Recalcular layout inmediatamente para el patrón actual (evitar que quede el recorte del wallpaper)
+  try { resize(); render(); } catch (_) {}
   
   // Si hay una orden diferida del server, aplicarla ahora y cancelar fallbacks
   if (pendingSequenceStart) {
@@ -387,16 +581,9 @@ function switchToSequenceMode() {
     console.log('▶️ Iniciando secuencia con datos diferidos del servidor');
     startAutoColorSequenceSync(data);
   } else {
-    // Fallback suave: si en ~2s no llega la orden del servidor, iniciar localmente
-    if (sequenceFallbackTimeoutId) { clearTimeout(sequenceFallbackTimeoutId); sequenceFallbackTimeoutId = null; }
-    sequenceFallbackTimeoutId = setTimeout(() => {
-      sequenceFallbackTimeoutId = null;
-      if (coloringMode !== 'sequence') return;
-      if (!autoColorSequence.active) {
-        console.log('⏱️ Fallback: iniciando secuencia automática local (no llegó señal del servidor)');
-        startAutoColorSequence();
-      }
-    }, 2000);
+  // Sin fallback local: esperar órdenes explícitas del servidor para iniciar la secuencia
+  if (sequenceFallbackTimeoutId) { clearTimeout(sequenceFallbackTimeoutId); sequenceFallbackTimeoutId = null; }
+  console.log('⏳ Modo secuencia preparado. Esperando startAutoColorSequence desde el servidor...');
   }
   
   // Limpiar estado guardado: no reanudamos desde mitad de ciclo
@@ -406,16 +593,16 @@ function switchToSequenceMode() {
 // Función para ejecutar un paso de la secuencia de coloreado
 async function executeColorStep() {
   if (!autoColorSequence.active) {
-    console.log('⚠️ executeColorStep llamado pero autoColorSequence.active = false');
+    console.log(`⚠️ Brush ${brushId}: executeColorStep llamado pero autoColorSequence.active = false`);
     return;
   }
   // Evitar pasos solapados o en modo incorrecto
   if (coloringMode !== 'sequence') {
-    console.log('⛔ Paso de color ignorado: modo actual no es "sequence"');
+    console.log(`⛔ Brush ${brushId}: Paso de color ignorado: modo actual no es "sequence"`);
     return;
   }
   if (autoColorSequence.isRunning) {
-    console.log('⛔ Paso de color ignorado: ya hay un coloreado en curso');
+    console.log(`⛔ Brush ${brushId}: Paso de color ignorado: ya hay un coloreado en curso`);
     return;
   }
   autoColorSequence.isRunning = true;
@@ -430,14 +617,15 @@ async function executeColorStep() {
     if (!autoColorSequence.active || coloringMode !== 'sequence') return;
     if (autoColorSequence.stepId !== myStepId) return; // ya avanzó
     if (autoColorSequence.timeoutId) return; // ya hay programación activa
-    console.warn('⏰ Watchdog: no se programó el siguiente paso; forzando avance');
-    try { executeColorStep(); } catch (e) { console.error('❌ Error en watchdog executeColorStep:', e); }
+    console.warn(`⏰ Brush ${brushId}: Watchdog: no se programó el siguiente paso; forzando avance`);
+    try { executeColorStep(); } catch (e) { console.error(`❌ Brush ${brushId}: Error en watchdog executeColorStep:`, e); }
   }, DURATION_MS + autoColorSequence.intervalTime + 2000);
 
   const currentPattern = autoColorSequence.patterns[autoColorSequence.currentIndex];
   const currentTime = new Date().toLocaleTimeString();
   
-  console.log(`🎨 *** COLOREANDO *** [${currentTime}] Aplicando: ${currentPattern}`);
+  console.log(`🎨 *** BRUSH ${brushId} COLOREANDO *** [${currentTime}] Aplicando: ${currentPattern} (índice ${autoColorSequence.currentIndex})`);
+  // Permitimos amarillo/azul/rojo: el cropeo es full-res 2160x3840 sin reescalar la fuente
   
   try {
     // Cargar el patrón de color
@@ -447,6 +635,16 @@ async function executeColorStep() {
       img.onerror = reject;
       img.src = `/patterns/${currentPattern}?t=${Date.now()}`;
     });
+
+    // LOGO SPECIAL: mostrar logo1/ logo2 a altura completa con fade-in en lugar de coloreo
+    if (/logo1\.jpg|logo2\.jpg/i.test(currentPattern)) {
+      console.log('🆕 LOGO MODE: mostrando', currentPattern, 'con fade-in full-height (sin efecto de coloreo)');
+      await showLogoFullFade(img, currentPattern);
+      // Avanzar índice y scheduling como si hubiera terminado animación normal
+      autoColorSequence.currentIndex = (autoColorSequence.currentIndex + 1) % autoColorSequence.patterns.length;
+      finalizeLogoStep();
+      return; // saltar coloreo estándar
+    }
     
     // Agregar el patrón a la lista sin reemplazar el fondo
     const newPattern = {
@@ -472,13 +670,8 @@ async function executeColorStep() {
   try { resize(); } catch(_) {}
   colorOnTop();
 
-    // LOGO VIDEO: si el patrón actual es logo1 o logo2, activar loop de video; si no, detener
-    const isLogoPattern = /logo1\.jpg|logo2\.jpg/i.test(currentPattern);
-    if (isLogoPattern) {
-      startLogoVideoLoop();
-    } else {
-      stopLogoVideoLoopIfActive();
-    }
+  // LOGO VIDEO: en brush 1 y 4 mostrar video fullscreen; en otros, detener si estuviera activo
+  playFullscreenLogoVideoIfNeeded(currentPattern);
     
     // Avanzar al siguiente patrón en la secuencia
     autoColorSequence.currentIndex = (autoColorSequence.currentIndex + 1) % autoColorSequence.patterns.length;
@@ -497,34 +690,47 @@ async function executeColorStep() {
   }
 }
 
-// Función para cargar patrón por defecto (amarillo.jpg)
+// Función para cargar patrón por defecto: preferir wallpaper, luego rojo (amarillo/azul bloqueados)
 async function loadDefaultPattern() {
   try {
-    console.log('🎨 Cargando amarillo.jpg como patrón por defecto...');
-    const img = new Image();
-    await new Promise((resolve, reject) => {
-      img.onload = resolve;
-      img.onerror = reject;
-      img.src = `/patterns/amarillo.jpg?t=${Date.now()}`;
-    });
-    
-    // Establecer como único patrón para evitar confusión
-    patterns = [{
-      src: `/patterns/amarillo.jpg`,
-      image: img,
-      filename: 'amarillo.jpg',
-      type: 'amarillo'
-    }];
-    currentPatternIndex = 0;
-    
-    console.log('✅ Patrón por defecto (amarillo.jpg) cargado exitosamente');
-    
-    // Recalcular layout
-    if (size.w > 0 && size.h > 0) {
-      resize();
+    console.log('🎨 Cargando patrón por defecto (wallpaper → rojo)...');
+    // Si ya existe wallpaper cargado, no sobrescribir el inicial en arranque
+    const wallpaperIdx = patterns.findIndex(p => p.filename === 'wallpaper.jpg' || p.type === 'wallpaper');
+    if (wallpaperIdx >= 0 && !patternsReady) {
+      console.log('🛑 Hay wallpaper cargado durante arranque; se mantiene como inicial');
+      currentPatternIndex = wallpaperIdx;
+      patternsReady = true;
+      return true;
     }
-    
-    return true;
+
+    // 1) Intentar wallpaper.jpg
+    const hasWallpaper = await checkIfFileExists('/patterns/wallpaper.jpg');
+    if (hasWallpaper) {
+      const img = new Image();
+      await new Promise((resolve, reject) => { img.onload = resolve; img.onerror = reject; img.src = `/patterns/wallpaper.jpg?t=${Date.now()}`; });
+      patterns = [{ src: `/patterns/wallpaper.jpg`, image: img, filename: 'wallpaper.jpg', type: 'wallpaper' }];
+      currentPatternIndex = 0;
+      console.log('✅ Patrón por defecto establecido: wallpaper.jpg');
+      patternsReady = true;
+      if (size.w > 0 && size.h > 0) { resize(); }
+      return true;
+    }
+
+    // 2) Fallback a rojo.jpg
+    const hasRed = await checkIfFileExists('/patterns/rojo.jpg');
+    if (hasRed) {
+      const img = new Image();
+      await new Promise((resolve, reject) => { img.onload = resolve; img.onerror = reject; img.src = `/patterns/rojo.jpg?t=${Date.now()}`; });
+      patterns = [{ src: `/patterns/rojo.jpg`, image: img, filename: 'rojo.jpg', type: 'rojo' }];
+      currentPatternIndex = 0;
+      console.log('✅ Patrón por defecto establecido: rojo.jpg');
+      patternsReady = true;
+      if (size.w > 0 && size.h > 0) { resize(); }
+      return true;
+    }
+
+    console.warn('⚠️ No se encontró wallpaper.jpg ni rojo.jpg para patrón por defecto');
+    return false;
   } catch (error) {
     console.error('❌ Error cargando patrón por defecto:', error);
     return false;
@@ -547,15 +753,18 @@ async function checkIfFileExists(url) {
 async function loadLatestPatterns() {
   try {
     console.log('🔍 Cargando patrones disponibles...');
+  // Marcamos como no listos mientras cargamos
+  patternsReady = false;
     
-    // Lista de patrones a cargar en orden de prioridad
-  const patternFiles = ['amarillo.jpg', 'wallpaper.jpg', 'azul.jpg', 'rojo.jpg', 'logo1.jpg', 'logo2.jpg'];
+  // Lista de patrones a cargar en orden de prioridad
+  // Preferir siempre lo que establece el servidor (wallpaper si existe) y luego colores base
+  const patternFiles = ['wallpaper.jpg', 'rojo.jpg', 'logo1.jpg', 'logo2.jpg'];
     let loadedAny = false;
     
     // Limpiar patrones existentes
     patterns.length = 0;
     
-    // Intentar cargar cada patrón
+  // Intentar cargar cada patrón
     for (const filename of patternFiles) {
       try {
         const exists = await checkIfFileExists(`/patterns/${filename}`);
@@ -577,9 +786,8 @@ async function loadLatestPatterns() {
           
           // Determinar tipo de patrón
           let type = 'pattern';
-          if (filename.includes('amarillo')) type = 'amarillo';
-          else if (filename.includes('azul')) type = 'azul';
-          else if (filename.includes('rojo')) type = 'rojo';
+          // Amarillo/Azul no se usan para coloreo, pero si llegaran a estar, se mantendrán como 'pattern'
+          if (filename.includes('rojo')) type = 'rojo';
           else if (filename.includes('logo1')) type = 'logo1';
           else if (filename.includes('logo2')) type = 'logo2';
           
@@ -592,10 +800,10 @@ async function loadLatestPatterns() {
           
           loadedAny = true;
           
-          // Si es el primer patrón (amarillo.jpg), establecerlo como actual
+          // Establecer el primer patrón cargado como actual (típicamente wallpaper si existe)
           if (patterns.length === 1) {
             currentPatternIndex = 0;
-            console.log(`🎨 Patrón inicial establecido: ${filename}`);
+            console.log(`🎨 Patrón inicial establecido (provisional): ${filename}`);
           }
         }
       } catch (error) {
@@ -604,6 +812,13 @@ async function loadLatestPatterns() {
     }
     
     if (loadedAny) {
+      // Si hay wallpaper en la lista, forzar usarlo como inicial
+      const idxWallpaper = patterns.findIndex(p => p.filename === 'wallpaper.jpg' || p.type === 'wallpaper');
+      if (idxWallpaper >= 0) {
+        currentPatternIndex = idxWallpaper;
+        console.log('🖼️ Forzando wallpaper.jpg como patrón inicial');
+      }
+      patternsReady = true;
       console.log(`📊 Total de patrones cargados: ${patterns.length}`);
       return true;
     } else {
@@ -623,49 +838,81 @@ async function loadLatestPatterns() {
 function setupWebSocket() {
   try {
     // Conectar al servidor WebSocket con reconexión automática
-    socket = io({
+  socket = io({
       autoConnect: true,
       reconnection: true,
       reconnectionDelay: 1000,
       reconnectionAttempts: 10,
       timeout: 5000
     });
+  // Exponer el socket globalmente para el verificador de conexión de brush-reveal.html
+  try { window.socket = socket; } catch (_) {}
     
     socket.on('connect', () => {
-      console.log('🔌 Conectado al servidor WebSocket');
+      console.log(`🔌 Brush ${brushId}: Conectado al servidor WebSocket`);
       // Registrarse como brush-reveal con brushId
       socket.emit('registerScreen', { type: 'brush-reveal', brushId: brushId });
+      console.log(`📋 Brush ${brushId}: Registrado como brush-reveal-${brushId}`);
     });
     
     socket.on('disconnect', () => {
-      console.log('🔌 Desconectado del servidor WebSocket - intentando reconectar...');
+      console.log(`🔌 Brush ${brushId}: Desconectado del servidor WebSocket - intentando reconectar...`);
     });
     
     socket.on('reconnect', () => {
-      console.log('🔌 Reconectado al servidor WebSocket');
+      console.log(`🔌 Brush ${brushId}: Reconectado al servidor WebSocket`);
       socket.emit('registerScreen', { type: 'brush-reveal', brushId: brushId });
+      console.log(`📋 Brush ${brushId}: Re-registrado como brush-reveal-${brushId}`);
     });
     
     // Escuchar estado inicial del servidor
+    // Helper: apply latest brush config (recalc layout and redraw)
+    function applyBrushConfigUpdate() {
+      try {
+        resize();
+        // If it's the first draw or animation already finished, render clean background;
+        // otherwise preserve current content and just re-render with new layout
+        if (isFirstAnimation || animationFinished) {
+          renderStaticBackground();
+        } else {
+          render();
+        }
+      } catch (_) {}
+    }
+
     socket.on('initialState', (data) => {
       console.log('📥 Estado inicial recibido:', data);
       if (data.brushReveal) {
         brushConfig = data.brushReveal;
         console.log(`🎯 Configuración de brush recibida - offsetX: ${brushConfig.offsetX}, offsetY: ${brushConfig.offsetY}`);
+        // Apply immediately so each /brush-reveal/:id shows its proper section
+        applyBrushConfigUpdate();
       }
     });
 
     // Escuchar actualizaciones de configuración de brush-reveal
-    socket.on('brushRevealConfigUpdate', (data) => {
+  socket.on('brushRevealConfigUpdate', (data) => {
       if (data.brushId === brushId) {
         brushConfig = data.config;
         console.log(`🔄 Configuración de brush ${brushId} actualizada - offsetX: ${brushConfig.offsetX}, offsetY: ${brushConfig.offsetY}`);
+    // Recalculate layout and redraw with the new offsets
+    applyBrushConfigUpdate();
       }
     });
 
     // Escuchar cuando hay un nuevo patrón listo
     socket.on('newPatternReady', (data) => {
       console.log(`🎨 *** BRUSH *** Nuevo patrón recibido:`, data);
+      // No interrumpir coloreado de wallpaper en curso
+      if (coloringMode === 'wallpaper' && !animationFinished) {
+        console.log('⏸️ newPatternReady ignorado: coloreado de wallpaper en curso');
+        return;
+      }
+      // Bloquear patrones pixelados
+      if (/amarillo\.jpg|azul\.jpg/i.test(data?.filename || '')) {
+        console.warn(`⛔ Brush ${brushId}: newPatternReady bloqueado para ${data.filename} por pixelación`);
+        return;
+      }
       latestPatternId = data.patternId;
       
       // Cargar el nuevo patrón y iniciar animación ENCIMA
@@ -684,6 +931,10 @@ function setupWebSocket() {
     // NUEVO: Escuchar orden desde /control para iniciar animación con último patrón
     socket.on('requestAnimationStart', (data) => {
       console.log('🎬 Orden recibida desde /control - coloreando encima con último patrón');
+      if (coloringMode === 'wallpaper' && !animationFinished) {
+        console.log('⏸️ requestAnimationStart ignorado: coloreado de wallpaper en curso');
+        return;
+      }
       loadLatestPatternAndAnimate();
     });
     
@@ -721,32 +972,72 @@ function setupWebSocket() {
     
     // NUEVO: Siguiente paso manual de coloreado con sincronización
     socket.on('nextColorStep', (syncData) => {
-      console.log('⏭️ *** BRUSH *** Ejecutando siguiente paso de color desde control');
+      console.log(`⏭️ *** BRUSH ${brushId} *** Ejecutando siguiente paso de color desde control`);
+      
+      // Verificar si el comando es reciente para mantener sincronización
       if (syncData?.timestamp) {
-        console.log(`⏰ *** BRUSH *** Sincronizando con timestamp: ${syncData.timestamp}`);
+        const now = Date.now();
+        const timeSinceSync = now - syncData.timestamp;
+        console.log(`⏰ *** BRUSH ${brushId} *** Timestamp del servidor: ${syncData.timestamp} (hace ${timeSinceSync}ms)`);
+        
+        // Si el comando es muy antiguo (>3s), ignorar para evitar desincronización
+        if (timeSinceSync > 3000) {
+          console.log(`⚠️ Brush ${brushId}: Comando demasiado antiguo (${timeSinceSync}ms), ignorando`);
+          return;
+        }
       }
-      executeColorStep();
+      
+      if (typeof syncData?.currentIndex === 'number') {
+        autoColorSequence.currentIndex = syncData.currentIndex % autoColorSequence.patterns.length;
+        console.log(`🎯 Brush ${brushId}: Índice actualizado a ${autoColorSequence.currentIndex}`);
+      }
+      
+      // EJECUCIÓN INMEDIATA para sincronización perfecta
+      if (syncData?.pattern) {
+        console.log(`🎯 *** BRUSH ${brushId} *** Patrón forzado por servidor: ${syncData.pattern}`);
+        if (/amarillo\.jpg|azul\.jpg/i.test(syncData.pattern)) {
+          console.warn(`⛔ Brush ${brushId}: Bloqueando patrón forzado ${syncData.pattern} por pixelación`);
+        } else {
+          executeColorStepWithPattern(syncData.pattern);
+        }
+      } else {
+        console.log(`🚀 Brush ${brushId}: Ejecutando paso INMEDIATAMENTE`);
+        executeColorStep();
+      }
     });
 
     // NUEVO: Actualización en caliente del intervalo de secuencia
     socket.on('colorSequenceIntervalUpdated', (data) => {
       const newInterval = Number(data?.intervalMs);
       if (Number.isFinite(newInterval) && newInterval > 0) {
-        console.log(`⏱️ *** BRUSH *** Intervalo de secuencia actualizado a ${newInterval}ms`);
+        console.log(`⏱️ *** BRUSH ${brushId} *** Intervalo de secuencia actualizado a ${newInterval}ms`);
         autoColorSequence.intervalTime = newInterval;
       }
     });
     
+    // NUEVO: Activar modo sincronización por servidor (cancelar auto-programación)
+    socket.on('enableServerSync', () => {
+      console.log(`🔗 *** BRUSH ${brushId} *** Activando sincronización por servidor - cancelando auto-programación`);
+      // Cancelar cualquier timeout automático
+      if (autoColorSequence.timeoutId) {
+        clearTimeout(autoColorSequence.timeoutId);
+        autoColorSequence.timeoutId = null;
+      }
+      autoColorSequence.nextStepScheduled = false;
+      console.log(`✅ Brush ${brushId}: Listo para sincronización completa por servidor`);
+    });
+    
     // NUEVO: Reset de secuencia de coloreado
     socket.on('resetColorSequence', () => {
-      console.log('🔄 *** BRUSH *** Reseteando secuencia de coloreado desde control');
+      console.log(`🔄 *** BRUSH ${brushId} *** Reseteando secuencia de coloreado desde control`);
       resetColorSequenceToYellow();
     });
     
     // NUEVO: Switch a modo wallpaper
-    socket.on('switchToWallpaperMode', () => {
-      console.log('🔀 *** BRUSH *** Cambiando a modo Wallpaper');
-      switchToWallpaperMode();
+    socket.on('switchToWallpaperMode', (data) => {
+      const sequenceId = data?.sequenceId || `fallback_${Date.now()}`;
+      console.log(`🔀 *** BRUSH ${brushId} *** Cambiando a modo Wallpaper (Seq ID: ${sequenceId})`);
+      switchToWallpaperMode(sequenceId);
     });
     
     // NUEVO: Switch a modo secuencia
@@ -803,7 +1094,7 @@ async function loadLatestPatternAndAnimate() {
   // Reemplazar último patrón con wallpaper.jpg actualizado (evitar duplicados)
   const srcKey = `/patterns/wallpaper.jpg`;
   const filtered = patterns.filter(p => p.src !== srcKey);
-  filtered.push({ src: srcKey, image: newImg, filename: 'wallpaper.jpg' });
+  filtered.push({ src: srcKey, image: newImg, filename: 'wallpaper.jpg', type: 'wallpaper' });
   patterns = filtered.slice(-3); // cap a 3 para evitar acumulación
       currentPatternIndex = patterns.length - 1;
       
@@ -820,6 +1111,11 @@ async function loadLatestPatternAndAnimate() {
 async function loadNewPatternAndAnimate(filename) {
   try {
     console.log(`🖼️ Cargando nuevo patrón DESDE EVENTO: ${filename}`);
+    // Bloquear patrones pixelados si se intenta cargar directamente
+    if (/amarillo\.jpg|azul\.jpg/i.test(filename || '')) {
+      console.warn(`⛔ Brush ${brushId}: loadNewPatternAndAnimate bloqueado para ${filename} por pixelación`);
+      return;
+    }
     
     // Crear nueva imagen para el patrón
     const newPatternImage = new Image();
@@ -834,7 +1130,7 @@ async function loadNewPatternAndAnimate(filename) {
   // Agregar el nuevo patrón al array (evitar duplicados y cap a 3)
   const newSrc = `/patterns/${filename}`;
   const withoutDup = patterns.filter(p => p.src !== newSrc);
-  withoutDup.push({ src: newSrc, image: newPatternImage, filename });
+  withoutDup.push({ src: newSrc, image: newPatternImage, filename, type: filenameToType(filename) });
   patterns = withoutDup.slice(-3);
     
     // Cambiar al nuevo patrón (último agregado)
@@ -847,6 +1143,29 @@ async function loadNewPatternAndAnimate(filename) {
     
   } catch (error) {
     console.error('❌ Error cargando nuevo patrón:', error);
+  }
+}
+
+// Helper: asegurar que wallpaper esté cargado y seleccionado
+async function ensureWallpaperAsCurrent() {
+  // Ver si ya existe
+  let idx = patterns.findIndex(p => p.filename === 'wallpaper.jpg' || p.type === 'wallpaper');
+  if (idx >= 0) {
+    currentPatternIndex = idx;
+    return true;
+  }
+  // Cargarlo
+  try {
+    const exists = await checkIfFileExists('/patterns/wallpaper.jpg');
+    if (!exists) return false;
+    const img = new Image();
+    await new Promise((resolve, reject) => { img.onload = resolve; img.onerror = reject; img.src = `/patterns/wallpaper.jpg?t=${Date.now()}`; });
+    patterns.push({ src: '/patterns/wallpaper.jpg', image: img, filename: 'wallpaper.jpg', type: 'wallpaper' });
+    currentPatternIndex = patterns.length - 1;
+    patternsReady = true;
+    return true;
+  } catch (_) {
+    return false;
   }
 }
 
@@ -863,6 +1182,60 @@ let animationFinished = false; // Flag para indicar que la animación terminó
 let isFirstAnimation = true; // Flag para controlar si es la primera animación
 let preserveCanvasContent = false; // Iniciar en false para permitir primer dibujo de fondo
 let latestPatternId = null; // ID del patrón más reciente
+// Video fullscreen para logos en brush 1 y 4
+let fullscreenVideoEl = null;
+
+// Helper: inferir tipo de patrón desde el nombre
+function filenameToType(filename) {
+  const n = (filename || '').toLowerCase();
+  if (n.includes('amarillo')) return 'amarillo';
+  if (n.includes('azul')) return 'azul';
+  if (n.includes('rojo')) return 'rojo';
+  if (n.includes('wallpaper')) return 'wallpaper';
+  if (n.includes('logo1')) return 'logo1';
+  if (n.includes('logo2')) return 'logo2';
+  return 'pattern';
+}
+
+function ensureFullscreenVideoEl() {
+  if (fullscreenVideoEl) return fullscreenVideoEl;
+  const v = document.createElement('video');
+  v.id = 'fullscreen-logo-video';
+  v.style.position = 'fixed';
+  v.style.inset = '0';
+  v.style.width = '100vw';
+  v.style.height = '100vh';
+  v.style.objectFit = 'cover';
+  v.style.zIndex = '999999';
+  v.style.display = 'none';
+  v.style.pointerEvents = 'none';
+  v.muted = true;
+  v.playsInline = true;
+  v.loop = true;
+  v.preload = 'auto';
+  document.body.appendChild(v);
+  fullscreenVideoEl = v;
+  return v;
+}
+
+function playFullscreenLogoVideoIfNeeded(patternFilename) {
+  const isLogo = /logo1\.jpg|logo2\.jpg/i.test(patternFilename || '');
+  if (!isLogo || ![1, 4, 5, 9].includes(brushId)) {
+    stopFullscreenLogoVideo();
+    return;
+  }
+  const v = ensureFullscreenVideoEl();
+  try { v.src = '/vid.mp4'; } catch (_) {}
+  v.style.display = 'block';
+  v.play().catch(() => {});
+}
+
+function stopFullscreenLogoVideo() {
+  if (!fullscreenVideoEl) return;
+  try { fullscreenVideoEl.pause(); } catch (_) {}
+  try { fullscreenVideoEl.removeAttribute('src'); fullscreenVideoEl.load?.(); } catch (_) {}
+  fullscreenVideoEl.style.display = 'none';
+}
 
 // NUEVA FUNCIÓN: Iniciar secuencia de animación (tecla "1")
 function startAnimationSequence() {
@@ -908,8 +1281,11 @@ function startAutomaticPatternRotation(patternList, interval, anchorTs) {
   // Detener rotación existente si hay una
   stopAutomaticPatternRotation();
   
-  // Configurar parámetros
-  rotationPatterns = patternList || ['amarillo', 'azul', 'rojo'];
+  // Configurar parámetros (filtrar amarillo/azul por pixelación)
+  const incoming = (patternList && Array.isArray(patternList) ? patternList : ['rojo'])
+    .map(p => String(p).toLowerCase())
+    .filter(p => p !== 'amarillo' && p !== 'azul');
+  rotationPatterns = incoming.length ? incoming : ['rojo'];
   rotationIntervalTime = interval || 120000; // 2 minutos por defecto
   rotationAnchorTs = typeof anchorTs === 'number' ? anchorTs : Date.now();
   currentRotationIndex = 0;
@@ -958,6 +1334,12 @@ async function rotateToNextPattern() {
   const currentTime = new Date().toLocaleTimeString();
   
   console.log(`🔄 *** ROTACIÓN AUTOMÁTICA *** [${currentTime}] Cambiando a: ${currentPattern}.jpg - Brush ${brushId}`);
+  // Bloquear rotación hacia amarillo/azul si llegara a colarse
+  if (/^(amarillo|azul)$/i.test(currentPattern || '')) {
+    console.warn(`⛔ *** ROTACIÓN AUTOMÁTICA *** Patrón bloqueado: ${currentPattern}.jpg (saltando)`);
+    currentRotationIndex = (currentRotationIndex + 1) % rotationPatterns.length;
+    return;
+  }
   
   try {
     // HACER EXACTAMENTE LO MISMO QUE loadLatestPatternAndAnimate() pero con la imagen específica
@@ -1026,7 +1408,9 @@ const canvasPool = {
     // Crear canvas reutilizables para optimización
     for (let i = 0; i < 4; i++) {
       const canvas = document.createElement('canvas');
-      const ctx = canvas.getContext('2d');
+      const ctx = canvas.getContext('2d', { alpha: true, desynchronized: true });
+      // Alta calidad para evitar pixelación al componer con máscara
+      ensureHQ(ctx);
       this.tempCanvases.push(canvas);
       this.tempContexts.push(ctx);
     }
@@ -1036,6 +1420,8 @@ const canvasPool = {
     for (let i = 0; i < this.tempCanvases.length; i++) {
       this.tempCanvases[i].width = width;
       this.tempCanvases[i].height = height;
+      // Reaplicar suavizado de alta calidad tras cada resize (los flags se resetean)
+  try { ensureHQ(this.tempContexts[i]); } catch (_) {}
     }
   },
   
@@ -1044,6 +1430,8 @@ const canvasPool = {
     const ctx = this.tempContexts[index];
     // Limpiar canvas para reutilización
     ctx.clearRect(0, 0, canvas.width, canvas.height);
+    // Asegurar suavizado alto en cada adquisición por si algún cambio lo deshabilitó
+  try { ensureHQ(ctx); } catch (_) {}
     return { canvas, ctx };
   }
 };
@@ -1133,6 +1521,16 @@ function ensureFpsOverlay() {
 
 // Toggle por teclado: tecla 'f' para mostrar/ocultar FPS
 document.addEventListener('keydown', (e) => {
+  if (e.key === '1') {
+    console.log('🔢 Tecla 1: Forzando pipeline de wallpaper para coloreo de alta calidad');
+    ensureWallpaperAsCurrent().then(ok => {
+      if (!ok) {
+        console.warn('⚠️ No se pudo asegurar wallpaper, usando patrón actual');
+      }
+      startAnimationSequence();
+    });
+    return;
+  }
   if (e.key === 'f' || e.key === 'F') {
     fpsOverlayEnabled = !fpsOverlayEnabled;
     if (fpsOverlayEnabled) {
@@ -1204,33 +1602,54 @@ function fillIrregularBlob(cx, cy, R, terms, alpha=1, steps=42, ampScale=1, jitt
 }
 
 function resize(){
+  // Recompute DPR on resize so canvases always match device pixel density
+  DPR = Math.max(1, window.devicePixelRatio || 1);
   const r = container.getBoundingClientRect();
   size.wCSS = Math.floor(r.width); size.hCSS = Math.floor(r.height);
   size.w = Math.floor(size.wCSS*DPR); size.h = Math.floor(size.hCSS*DPR);
   canvas.width=size.w; canvas.height=size.h; canvas.style.width=size.wCSS+'px'; canvas.style.height=size.hCSS+'px';
-  maskCanvas.width=Math.max(1, Math.floor(size.w*MASK_SCALE));
-  maskCanvas.height=Math.max(1, Math.floor(size.h*MASK_SCALE));
+  // Tras redimensionar, los contextos pierden flags: reforzar suavizado de alta calidad
+  try { ensureHQ(ctx); } catch(_){}
+  // Limpiar cualquier recorte previo por seguridad; se volverá a establecer si es wallpaper
+  layout.sourceX = null;
+  layout.sourceY = null;
+  layout.sourceWidth = null;
+  layout.sourceHeight = null;
+  // Determinar tipo de patrón actual
+  const currentPatternData = patterns[currentPatternIndex];
+  const isWallpaper = !!(currentPatternData && (
+    (currentPatternData.type && currentPatternData.type === 'wallpaper') ||
+    (currentPatternData.filename && /wallpaper\.jpg$/i.test(currentPatternData.filename))
+  ));
+  // Generalización: cualquier patrón que NO sea wallpaper se considera de color y se dibuja completo sin recorte
+  const isColorPattern = !!(currentPatternData && currentPatternData.type !== 'wallpaper');
+  const isWideColor = !!(currentPatternData && (
+    (currentPatternData.type && ['amarillo','azul','rojo'].includes(String(currentPatternData.type).toLowerCase())) ||
+    (currentPatternData.filename && /(amarillo|azul|rojo)\.jpg$/i.test(currentPatternData.filename))
+  ));
+  // SIEMPRE usar escala 1.0 para máxima resolución
+  const effectiveMaskScale = 1.0; // FORZAR alta resolución para todos los patrones
+  maskCanvas.width=Math.max(1, Math.floor(size.w*effectiveMaskScale));
+  maskCanvas.height=Math.max(1, Math.floor(size.h*effectiveMaskScale));
+  // Reforzar suavizado en el contexto de máscara también
+  try { ensureHQ(maskCtx); } catch(_){}
   
   // Redimensionar canvas temporales del pool
   canvasPool.resizeAll(size.w, size.h);
   
-  // Dibujo en coordenadas full-res, pero el contexto de máscara se escala
-  maskCtx.setTransform(MASK_SCALE,0,0,MASK_SCALE,0,0);
+  // RESETEAR transformación de máscara para evitar escalados incorrectos
+  try { maskCtx.setTransform(1,0,0,1,0,0); } catch(_) {}
+  try { ctx.setTransform(1,0,0,1,0,0); } catch(_) {}
   
   const currentBG = getCurrentPattern();
   if (currentBG && currentBG.naturalWidth && currentBG.naturalHeight){
-    // Verificar si es una imagen de rotación automática
-    const currentPatternData = patterns[currentPatternIndex];
-    const isRotationImage = currentPatternData && currentPatternData.type && 
-                           ['amarillo', 'rojo', 'azul'].includes(currentPatternData.type);
-    
-    if (isRotationImage && currentBG.naturalWidth >= WALLPAPER_SECTION_WIDTH * 3) {
-      // Solo usar secciones si la imagen es lo suficientemente grande (tipo wallpaper dividido)
-      const sectionWidth = WALLPAPER_SECTION_WIDTH; // 2160
-      const sectionHeight = WALLPAPER_SECTION_HEIGHT; // 3840
-      let sectionIndex = Math.floor((brushId - 1) / 3); // 0,1,2
-      const sourceX = sectionIndex * WALLPAPER_SECTION_WIDTH;
-      const sourceY = 0;
+    if (isWallpaper) {
+      // Para wallpaper.jpg, usar sección según offsets del servidor
+      const sectionWidth = WALLPAPER_SECTION_WIDTH;
+      const sectionHeight = WALLPAPER_SECTION_HEIGHT;
+      const sourceX = brushConfig.offsetX;
+      const sourceY = brushConfig.offsetY;
+      console.log(`🎯 Usando sección del wallpaper - sourceX: ${sourceX}, sourceY: ${sourceY}, width: ${sectionWidth}, height: ${sectionHeight}`);
       const s = Math.min(size.w/sectionWidth, size.h/sectionHeight);
       const dw = Math.ceil(sectionWidth*s), dh = Math.ceil(sectionHeight*s);
       layout.dx = Math.floor((size.w-dw)/2);
@@ -1241,33 +1660,46 @@ function resize(){
       layout.sourceY = sourceY;
       layout.sourceWidth = sectionWidth;
       layout.sourceHeight = sectionHeight;
-      console.log(`🖌️ Layout color (secciones) - ${currentPatternData.filename} | dx:${layout.dx}, dy:${layout.dy}, dw:${layout.dw}, dh:${layout.dh}, sx:${layout.sourceX}`);
-    } else if (!isRotationImage) {
-      // Para wallpaper.jpg, usar secciones (lógica original)
-      const sectionWidth = WALLPAPER_SECTION_WIDTH;
-      const sectionHeight = WALLPAPER_SECTION_HEIGHT;
-      
-      // Usar la configuración de offset del servidor
-      const sourceX = brushConfig.offsetX;
-      const sourceY = brushConfig.offsetY;
-      
-      console.log(`🎯 Usando sección del wallpaper - sourceX: ${sourceX}, sourceY: ${sourceY}, width: ${sectionWidth}, height: ${sectionHeight}`);
-      
-      // Calcular escala para ajustar la sección al canvas
+    } else if (isWideColor) {
+      // Amarillo/Azul/Rojo: usar mapeo virtual 6480x3840 como wallpaper, sin escalar la imagen fuente si tiene 3840px de alto
+      const imgW = currentBG.naturalWidth;
+      const imgH = currentBG.naturalHeight;
+      const scaleToVirtual = WALLPAPER_SECTION_HEIGHT / imgH; // escalar la altura a 3840
+      const placedW = imgW * scaleToVirtual;
+      const placedH = WALLPAPER_SECTION_HEIGHT; // 3840
+      const virtualWidth = WALLPAPER_TOTAL_WIDTH; // 6480
+      const placeX = Math.floor((virtualWidth - placedW) / 2);
+      const placeY = 0;
+      const sectionWidth = WALLPAPER_SECTION_WIDTH; // 2160
+      const sectionHeight = WALLPAPER_SECTION_HEIGHT; // 3840
+      const sourceXVirtual = brushConfig.offsetX || 0;
+      const sourceYVirtual = brushConfig.offsetY || 0;
+      // Convertir coords virtuales a coords de la imagen de origen
+      let sx = (sourceXVirtual - placeX) / scaleToVirtual;
+      let sy = (sourceYVirtual - placeY) / scaleToVirtual;
+      let sw = sectionWidth / scaleToVirtual;
+      let sh = sectionHeight / scaleToVirtual;
+      // Clamp a los límites de la imagen
+      if (!Number.isFinite(sx)) sx = 0; if (!Number.isFinite(sy)) sy = 0;
+      if (!Number.isFinite(sw) || sw <= 0) sw = imgW; if (!Number.isFinite(sh) || sh <= 0) sh = imgH;
+      sx = Math.max(0, Math.min(imgW - 1, sx));
+      sy = Math.max(0, Math.min(imgH - 1, sy));
+      if (sx + sw > imgW) sw = imgW - sx;
+      if (sy + sh > imgH) sh = imgH - sy;
+      // Destino igual que wallpaper (encajar la sección al canvas)
       const s = Math.min(size.w/sectionWidth, size.h/sectionHeight);
       const dw = Math.ceil(sectionWidth*s), dh = Math.ceil(sectionHeight*s);
-      layout.dx = Math.floor((size.w-dw)/2); 
-      layout.dy = Math.floor((size.h-dh)/2); 
-      layout.dw = dw; 
+      layout.dx = Math.floor((size.w-dw)/2);
+      layout.dy = Math.floor((size.h-dh)/2);
+      layout.dw = dw;
       layout.dh = dh;
-      
-      // Guardar información de la sección para usar en drawImage
-      layout.sourceX = sourceX;
-      layout.sourceY = sourceY;
-      layout.sourceWidth = sectionWidth;
-      layout.sourceHeight = sectionHeight;
-    } else {
-      // Imágenes de color pequeñas (rojo/azul/amarillo normales): NO usar secciones
+      layout.sourceX = Math.round(sx);
+      layout.sourceY = Math.round(sy);
+      layout.sourceWidth = Math.max(1, Math.round(sw));
+      layout.sourceHeight = Math.max(1, Math.round(sh));
+      console.log(`🖌️ Layout wide-color virtual - ${currentPatternData?.filename} | sx:${layout.sourceX}, sy:${layout.sourceY}, sw:${layout.sourceWidth}, sh:${layout.sourceHeight}, dx:${layout.dx}, dy:${layout.dy}, dw:${layout.dw}, dh:${layout.dh}`);
+    } else if (isColorPattern) {
+      // Para imágenes de color normales: usar imagen completa, sin recorte por secciones
       const imgW = currentBG.naturalWidth;
       const imgH = currentBG.naturalHeight;
       const s = Math.min(size.w/imgW, size.h/imgH);
@@ -1276,12 +1708,11 @@ function resize(){
       layout.dy = Math.floor((size.h-dh)/2);
       layout.dw = dw;
       layout.dh = dh;
-      // Limpiar cualquier sección previa para que render use la imagen completa
       layout.sourceX = null;
       layout.sourceY = null;
       layout.sourceWidth = null;
       layout.sourceHeight = null;
-      console.log(`🖌️ Layout color (completo) - ${currentPatternData?.filename} | ${imgW}x${imgH} -> ${dw}x${dh}`);
+      console.log(`🖌️ Layout patrón completo - ${currentPatternData?.filename} | ${imgW}x${imgH} → ${dw}x${dh}`);
     }
   }
 }
@@ -1328,7 +1759,7 @@ function makeStrokes(){
     let y = clamp(s.y+gauss(0,.07), .01,.99)*size.h;
     const baseW = clamp(gauss(18,6), 12,32)*(size.w/1280+size.h/720)*.5;
     const alpha = clamp(gauss(.8,.08), .65, .9);
-    const steps = Math.round(clamp(gauss(200,50), 150,320)*area);
+    const steps = Math.round(clamp(200,50), 150,320)*area;
     const stepLen = rand(0.9,1.8) * (size.w/1280+size.h/720)*.5;
     let angle = rand(0,Math.PI*2);
     const drift = rand(.020,.045);
@@ -1353,7 +1784,7 @@ function makeStrokes(){
     
     const baseW = clamp(gauss(15,5), 10,25)*(size.w/1280+size.h/720)*.5;
     const alpha = clamp(gauss(.75,.06), .6, .85);
-    const steps = Math.round(clamp(gauss(160,30), 120,250)*area);
+    const steps = Math.round(clamp(160,30), 120,250)*area;
     const stepLen = rand(0.8,1.4) * (size.w/1280+size.h/720)*.5;
     const angle = rand(0,Math.PI*2);
     const drift = rand(.025,.040);
@@ -1888,19 +2319,25 @@ function stepWave(wv, n, sizeMultiplier=1){
       continue; 
     }
     const w = clamp(gauss(wv.baseW, wv.baseW*.12), wv.baseW*.75, wv.baseW*1.25) * sizeMultiplier;
+    const a0 = wv.alpha;
     if (hasBrush){
       const brush = maskBrushes[wv.b];
-      const scale = w / Math.max(brush.width, brush.height) * 2.35;
-      const rot = Math.atan2(ny-wv.y, nx-wv.x) + gauss(0, .08);
+      const scale = w / Math.max(brush.width, brush.height) * 2.6;
+      const rot = Math.atan2(ny-wv.y, nx-wv.x) + gauss(0, .07);
       // varias pasadas leves a lo largo del segmento para evitar aspecto disjunto
       for (let pass=0; pass<3; pass++){
         const t = pass/3; const ts = t*t*(3-2*t);
         const px = wv.x + (nx-wv.x)*ts;
         const py = wv.y + (ny-wv.y)*ts;
-        const pAlpha = wv.alpha * (0.12 + 0.08*Math.sin(ts*Math.PI));
+        const pAlpha = a0 * (0.12 + 0.08*Math.sin(ts*Math.PI));
         const pScale = scale * (0.9 + ts*0.18);
-        stamp(brush, px, py, pScale, pAlpha, rot + gauss(0,.05));
+        const pRot = rot + gauss(0,.05);
+        stamp(brush, px, py, pScale, pAlpha, pRot);
       }
+      // Pasada perpendicular muy sutil para cerrar huecos finos
+      const perpX = nx + Math.cos(rot + Math.PI/2) * w * 0.12;
+      const perpY = ny + Math.sin(rot + Math.PI/2) * w * 0.12;
+      stamp(brush, perpX, perpY, scale*0.88, a0*0.1, rot + Math.PI/4);
       spent += 3;
     } else {
       // fallback muy sutil
@@ -2395,7 +2832,7 @@ function renderStaticBackground() {
   const currentBG = getCurrentPattern();
   
   if (!currentBG) {
-    console.warn('⚠️ No hay patrón para renderizar como fondo');
+  console.warn('⚠️ No hay patrón para renderizar como fondo');
     return;
   }
   
@@ -2405,20 +2842,27 @@ function renderStaticBackground() {
   }
   
   try {
+    // RESETEAR transformación del contexto para evitar escalados incorrectos
+    try { ctx.setTransform(1,0,0,1,0,0); } catch(_){}
     // Limpiar canvas
     ctx.clearRect(0, 0, size.w, size.h);
     
     // Dibujar fondo completo
     if (layout.sourceWidth && layout.sourceHeight) {
       // Con secciones (para wallpaper u otros patrones divididos)
+      try { ctx.imageSmoothingEnabled = true; ctx.imageSmoothingQuality = 'high'; } catch(_){}
       ctx.drawImage(
-        currentBG, 
+        currentBG,
         layout.sourceX, layout.sourceY, layout.sourceWidth, layout.sourceHeight,
         layout.dx, layout.dy, layout.dw, layout.dh
       );
     } else {
       // Imagen completa (para patrones simples como amarillo.jpg)
-      ctx.drawImage(currentBG, layout.dx, layout.dy, layout.dw, layout.dh);
+      // asegurar calidad y usar mapeo explícito
+      try { ctx.imageSmoothingEnabled = true; ctx.imageSmoothingQuality = 'high'; } catch(_){}
+      const sw = currentBG.naturalWidth || currentBG.width || layout.dw;
+      const sh = currentBG.naturalHeight || currentBG.height || layout.dh;
+      ctx.drawImage(currentBG, 0, 0, sw, sh, layout.dx, layout.dy, layout.dw, layout.dh);
     }
     
     console.log('✅ Fondo estático renderizado');
@@ -2431,19 +2875,26 @@ function render(){
   const currentBG = getCurrentPattern();
   
   if (!currentBG) {
-    console.warn('⚠️ No hay patrón disponible para renderizar');
+  console.warn('⚠️ No hay patrón disponible para renderizar');
     return;
   }
+  const currentPatternData = patterns[currentPatternIndex];
+  console.log(`🔍 DEBUG RENDER - patrón: ${currentPatternData?.filename}, tipo: ${currentPatternData?.type}, preserveCanvasContent: ${preserveCanvasContent}, isFirstAnimation: ${isFirstAnimation}`);
   
-  // LÓGICA DE PRESERVACIÓN: Dibujar fondo en primera animación o cuando no hay nada
+  // Unificar pipeline: siempre dibujar como wallpaper (directo + máscara), sin rama offscreen
   if (isFirstAnimation || !preserveCanvasContent) {
+  // Rama directa para primer render o cuando no preservamos contenido
+  console.log(`✅ USANDO RAMA DIRECTA - isFirstAnimation: ${isFirstAnimation}, !preserveCanvasContent: ${!preserveCanvasContent}`);
     // Primera animación o reset: limpiar y dibujar fondo completo
+    // RESETEAR transformación del contexto principal para evitar escalados incorrectos
+    try { ctx.setTransform(1,0,0,1,0,0); } catch(_){}
     ctx.clearRect(0, 0, size.w, size.h);
     
     // Dibujar imagen de fondo optimizada
     if (layout.dw && layout.dh) {
       if (layout.sourceWidth && layout.sourceHeight) {
         // Con secciones
+  try { ctx.imageSmoothingEnabled = true; ctx.imageSmoothingQuality = 'high'; } catch(_){}
         ctx.drawImage(
           currentBG, 
           layout.sourceX, layout.sourceY, layout.sourceWidth, layout.sourceHeight,
@@ -2451,7 +2902,10 @@ function render(){
         );
       } else {
         // Imagen completa
-        ctx.drawImage(currentBG, layout.dx, layout.dy, layout.dw, layout.dh);
+  try { ctx.imageSmoothingEnabled = true; ctx.imageSmoothingQuality = 'high'; } catch(_){}
+        const sw = currentBG.naturalWidth || currentBG.width || layout.dw;
+        const sh = currentBG.naturalHeight || currentBG.height || layout.dh;
+        ctx.drawImage(currentBG, 0, 0, sw, sh, layout.dx, layout.dy, layout.dw, layout.dh);
       }
     }
     
@@ -2462,46 +2916,37 @@ function render(){
       console.log('🎨 *** FONDO INICIAL DIBUJADO *** Preservación activada para próximos coloreados');
     }
     
-    // Aplicar máscara
-    ctx.globalCompositeOperation = 'destination-in';
-    ctx.drawImage(maskCanvas, 0, 0, maskCanvas.width, maskCanvas.height, 0, 0, size.w, size.h);
+  // Aplicar máscara
+  ctx.globalCompositeOperation = 'destination-in';
+  try { ctx.imageSmoothingEnabled = true; ctx.imageSmoothingQuality = 'high'; } catch(_){}
+  ctx.drawImage(maskCanvas, 0, 0, maskCanvas.width, maskCanvas.height, 0, 0, size.w, size.h);
   ctx.globalCompositeOperation = 'destination-over'; 
   ctx.fillStyle = '#E89E54'; 
     ctx.fillRect(0, 0, size.w, size.h);
   } else {
-    // Animaciones posteriores: colorear ENCIMA del contenido existente
-    // Usar canvas temporal para el nuevo color con máscara
-    const pooled = canvasPool.getCanvas(0);
-    const tempCanvas = pooled.canvas;
-    const tempCtx = pooled.ctx;
-    
-    // Verificar dimensiones antes de dibujar
+    // Misma ruta de wallpaper también para coloreados posteriores
+    try { ctx.setTransform(1,0,0,1,0,0); } catch(_){}
+    // No limpiar el canvas principal si preservamos contenido
     if (layout.dw && layout.dh) {
-      tempCtx.clearRect(0, 0, tempCanvas.width, tempCanvas.height);
-      // Asegurar modo normal antes de dibujar la imagen base
-      tempCtx.globalCompositeOperation = 'source-over';
       if (layout.sourceWidth && layout.sourceHeight) {
-        // Con secciones
-        tempCtx.drawImage(
-          currentBG, 
+        try { ctx.imageSmoothingEnabled = true; ctx.imageSmoothingQuality = 'high'; } catch(_){ }
+        ctx.drawImage(
+          currentBG,
           layout.sourceX, layout.sourceY, layout.sourceWidth, layout.sourceHeight,
           layout.dx, layout.dy, layout.dw, layout.dh
         );
       } else {
-        // Imagen completa
-        tempCtx.drawImage(currentBG, layout.dx, layout.dy, layout.dw, layout.dh);
+        try { ctx.imageSmoothingEnabled = true; ctx.imageSmoothingQuality = 'high'; } catch(_){ }
+        const sw = currentBG.naturalWidth || currentBG.width || layout.dw;
+        const sh = currentBG.naturalHeight || currentBG.height || layout.dh;
+        ctx.drawImage(currentBG, 0, 0, sw, sh, layout.dx, layout.dy, layout.dw, layout.dh);
       }
+      // Aplicar máscara por encima de lo existente
+      ctx.globalCompositeOperation = 'destination-in';
+      try { ctx.imageSmoothingEnabled = true; ctx.imageSmoothingQuality = 'high'; } catch(_){ }
+      ctx.drawImage(maskCanvas, 0, 0, maskCanvas.width, maskCanvas.height, 0, 0, size.w, size.h);
+      ctx.globalCompositeOperation = 'source-over';
     }
-    
-    // Aplicar máscara al canvas temporal
-    tempCtx.globalCompositeOperation = 'destination-in';
-    tempCtx.drawImage(maskCanvas, 0, 0, maskCanvas.width, maskCanvas.height, 0, 0, size.w, size.h);
-    // Restaurar modo normal para futuras pasadas
-    tempCtx.globalCompositeOperation = 'source-over';
-    
-    // Dibujar resultado SOBRE el canvas principal (modo normal, no multiply)
-    ctx.globalCompositeOperation = 'source-over'; // Modo normal para mantener colores vivos
-    ctx.drawImage(tempCanvas, 0, 0);
   }
   
   // Mantener modo de composición normal
@@ -2546,8 +2991,16 @@ function loop(ts){
     // Animación REALMENTE completada - render final
     console.log('✅ COLOREADO COMPLETO AL 100% - Imagen totalmente coloreada');
     animationFinished = true;
-  // Liberar lock de paso en curso
-  if (autoColorSequence) autoColorSequence.isRunning = false;
+    
+    // Liberar secuencia de wallpaper si estaba activa
+    if (coloringMode === 'wallpaper' && wallpaperSequenceActive) {
+      console.log(`🔓 Liberando secuencia wallpaper completada (ID: ${wallpaperSequenceId})`);
+      wallpaperSequenceActive = false;
+      wallpaperSequenceId = null;
+    }
+    
+    // Liberar lock de paso en curso
+    if (autoColorSequence) autoColorSequence.isRunning = false;
     
     // Render final optimizado
     render();
@@ -2564,21 +3017,41 @@ function loop(ts){
     // ACTIVAR preservación del canvas
     preserveCanvasContent = true;
     console.log('🎨 *** COLOREADO COMPLETADO *** - Listo para recibir siguiente imagen');
+
+    // Si había un cambio a secuencia pendiente, ejecutarlo ahora
+    if (pendingSwitchToSequence) {
+      console.log('▶️ Ejecutando cambio a modo secuencia que estaba pendiente');
+      pendingSwitchToSequence = false;
+      try { switchToSequenceMode(); } catch (e) { console.error('❌ Error al cambiar a modo secuencia tras completar:', e); }
+    }
     
-    // Programar el próximo paso 30s DESPUÉS de terminar (si la secuencia está activa)
-  if (autoColorSequence && autoColorSequence.active && !autoColorSequence.nextStepScheduled) {
+    // Programar el próximo paso alineado a ancla de tiempo (si la secuencia está activa)
+    // NOTA: Solo auto-programar si NO estamos esperando comandos sincronizados del servidor
+    if (autoColorSequence && autoColorSequence.active && !autoColorSequence.nextStepScheduled) {
       autoColorSequence.nextStepScheduled = true;
       if (autoColorSequence.timeoutId) { clearTimeout(autoColorSequence.timeoutId); }
+      
+      // MEJORA DE SINCRONIZACIÓN: Solo usar auto-programación como fallback
+      // En modo sincronizado, esperamos comandos del servidor
+      const period = autoColorSequence.periodMs || (autoColorSequence.intervalTime + (typeof DURATION_MS !== 'undefined' ? DURATION_MS : 14000));
+      const nowTs2 = Date.now();
+      // Calcular la siguiente frontera a partir del último boundary (o anchorStartAt)
+      let base = autoColorSequence.lastBoundaryTs || autoColorSequence.anchorStartAt || nowTs2;
+      while (base <= nowTs2) base += period;
+      const delayMs = Math.max(0, base - nowTs2);
+      autoColorSequence.lastBoundaryTs = base;
+      
+      console.log(`⏱️ Brush ${brushId}: Próximo paso programado en ${delayMs}ms (period=${period}) - FALLBACK AUTO`);
+      
       autoColorSequence.timeoutId = setTimeout(() => {
-    if (autoColorSequence.active && coloringMode === 'sequence') {
-          console.log('⏱️ 30s transcurridos después de completar - ejecutando siguiente paso');
+        if (autoColorSequence.active && coloringMode === 'sequence') {
+          console.log(`🔄 Brush ${brushId}: Ejecutando paso automático (fallback) - se recomienda sincronización por servidor`);
           executeColorStep();
         }
         autoColorSequence.nextStepScheduled = false;
         autoColorSequence.timeoutId = null;
-    // este paso avanzó correctamente; cancelar watchdog pendiente si aún corresponde
-    if (autoColorSequence.watchdogId) { clearTimeout(autoColorSequence.watchdogId); autoColorSequence.watchdogId = null; }
-      }, autoColorSequence.intervalTime);
+        if (autoColorSequence.watchdogId) { clearTimeout(autoColorSequence.watchdogId); autoColorSequence.watchdogId = null; }
+      }, delayMs);
     }
     
     // Notificar de forma asíncrona
@@ -2588,7 +3061,7 @@ function loop(ts){
           brushId: brushId,
           timestamp: Date.now()
         });
-        console.log('📡 *** NOTIFICACIÓN *** Enviada animationCompleted al control');
+        console.log(`📡 *** BRUSH ${brushId} *** Enviada animationCompleted al control (timestamp: ${Date.now()})`);
       }
     }, 0);
   }
@@ -2620,7 +3093,10 @@ function start(){
   finalCircles = []; // limpiar círculos finales
   
   resize(); 
-  maskCtx.clearRect(0,0,size.w,size.h); 
+  // Clear in device pixels (reset transform temporarily)
+  try { maskCtx.save(); maskCtx.setTransform(1,0,0,1,0,0); } catch(_) {}
+  maskCtx.clearRect(0,0,maskCanvas.width,maskCanvas.height);
+  try { maskCtx.restore(); } catch(_) {}
   
   // golpe inicial en el centro para que empiece a mostrarse de inmediato
   kickstartMask();
@@ -2668,8 +3144,10 @@ function colorOnTop(){
   try { resize(); } catch(_) {}
 
   // Solo limpiar la máscara para nueva animación encima (NO tocar el canvas principal)
-  if (maskCtx && size.w > 0 && size.h > 0) {
-    maskCtx.clearRect(0, 0, size.w, size.h);
+  if (maskCtx && maskCanvas.width > 0 && maskCanvas.height > 0) {
+  try { maskCtx.save(); maskCtx.setTransform(1,0,0,1,0,0); } catch(_) {}
+  maskCtx.clearRect(0, 0, maskCanvas.width, maskCanvas.height);
+  try { maskCtx.restore(); } catch(_) {}
   }
   
   console.log('🎨 COLOREANDO SOBRE IMAGEN EXISTENTE - PRESERVANDO FONDO...');
@@ -2689,7 +3167,14 @@ function colorOnTop(){
   makeFinalSealing();
   
   // CRÍTICO: render inmediato para aplicar el nuevo color sobre el fondo preservado
+  // Fuerza la rama directa para evitar pixelación en el primer frame de la nueva capa
+  const prevFirst = isFirstAnimation;
+  const prevPreserve = preserveCanvasContent;
+  isFirstAnimation = true;
+  preserveCanvasContent = false;
   render();
+  isFirstAnimation = prevFirst;
+  preserveCanvasContent = prevPreserve;
   
   startedAt = 0; 
   if (!rafId) rafId = requestAnimationFrame(loop);
@@ -2705,35 +3190,92 @@ function startNewAnimation(){
   
   // Recalcular layout para el nuevo patrón
   const currentBG = getCurrentPattern();
-  if (currentBG.naturalWidth && currentBG.naturalHeight){
-    // Calcular la sección del wallpaper que corresponde a este brush
-    const sectionWidth = WALLPAPER_SECTION_WIDTH;
-    const sectionHeight = WALLPAPER_SECTION_HEIGHT;
-    
-    // Usar la configuración de offset del servidor
-    const sourceX = brushConfig.offsetX;
-    const sourceY = brushConfig.offsetY;
-    
-    // Calcular escala para ajustar la sección al canvas
-    const s = Math.min(size.w/sectionWidth, size.h/sectionHeight);
-    const dw = Math.ceil(sectionWidth*s), dh = Math.ceil(sectionHeight*s);
-    layout.dx = Math.floor((size.w-dw)/2); 
-    layout.dy = Math.floor((size.h-dh)/2); 
-    layout.dw = dw; 
-    layout.dh = dh;
-    
-    // Guardar información de la sección para usar en drawImage
-    layout.sourceX = sourceX;
-    layout.sourceY = sourceY;
-    layout.sourceWidth = sectionWidth;
-    layout.sourceHeight = sectionHeight;
+  if (currentBG && currentBG.naturalWidth && currentBG.naturalHeight){
+    const currentPatternData = patterns[currentPatternIndex];
+    const isWallpaper = !!(currentPatternData && (
+      (currentPatternData.type && currentPatternData.type === 'wallpaper') ||
+      (currentPatternData.filename && /wallpaper\.jpg$/i.test(currentPatternData.filename))
+    ));
+    const isWideColor = !!(currentPatternData && (
+      (currentPatternData.type && ['amarillo','azul','rojo'].includes(String(currentPatternData.type).toLowerCase())) ||
+      (currentPatternData.filename && /(amarillo|azul|rojo)\.jpg$/i.test(currentPatternData.filename))
+    ));
+    if (isWallpaper) {
+      // Calcular la sección del wallpaper que corresponde a este brush
+      const sectionWidth = WALLPAPER_SECTION_WIDTH;
+      const sectionHeight = WALLPAPER_SECTION_HEIGHT;
+      // Usar la configuración de offset del servidor
+      const sourceX = brushConfig.offsetX;
+      const sourceY = brushConfig.offsetY;
+      // Calcular escala para ajustar la sección al canvas
+      const s = Math.min(size.w/sectionWidth, size.h/sectionHeight);
+      const dw = Math.ceil(sectionWidth*s), dh = Math.ceil(sectionHeight*s);
+      layout.dx = Math.floor((size.w-dw)/2); 
+      layout.dy = Math.floor((size.h-dh)/2); 
+      layout.dw = dw; 
+      layout.dh = dh;
+      // Guardar información de la sección para usar en drawImage
+      layout.sourceX = sourceX;
+      layout.sourceY = sourceY;
+      layout.sourceWidth = sectionWidth;
+      layout.sourceHeight = sectionHeight;
+    } else if (isWideColor) {
+  // Amarillo/Azul/Rojo: mapeo virtual 6480x3840 como wallpaper
+  const imgW = currentBG.naturalWidth;
+  const imgH = currentBG.naturalHeight;
+  const scaleToVirtual = WALLPAPER_SECTION_HEIGHT / imgH;
+  const placedW = imgW * scaleToVirtual;
+  const virtualWidth = WALLPAPER_TOTAL_WIDTH; // 6480
+  const placeX = Math.floor((virtualWidth - placedW) / 2);
+  const placeY = 0;
+  const sectionWidth = WALLPAPER_SECTION_WIDTH;
+  const sectionHeight = WALLPAPER_SECTION_HEIGHT;
+  const sourceXVirtual = brushConfig.offsetX || 0;
+  const sourceYVirtual = brushConfig.offsetY || 0;
+  let sx = (sourceXVirtual - placeX) / scaleToVirtual;
+  let sy = (sourceYVirtual - placeY) / scaleToVirtual;
+  let sw = sectionWidth / scaleToVirtual;
+  let sh = sectionHeight / scaleToVirtual;
+  if (!Number.isFinite(sx)) sx = 0; if (!Number.isFinite(sy)) sy = 0;
+  if (!Number.isFinite(sw) || sw <= 0) sw = imgW; if (!Number.isFinite(sh) || sh <= 0) sh = imgH;
+  sx = Math.max(0, Math.min(imgW - 1, sx));
+  sy = Math.max(0, Math.min(imgH - 1, sy));
+  if (sx + sw > imgW) sw = imgW - sx;
+  if (sy + sh > imgH) sh = imgH - sy;
+  const s = Math.min(size.w/sectionWidth, size.h/sectionHeight);
+  const dw = Math.ceil(sectionWidth*s), dh = Math.ceil(sectionHeight*s);
+  layout.dx = Math.floor((size.w-dw)/2); 
+  layout.dy = Math.floor((size.h-dh)/2); 
+  layout.dw = dw; 
+  layout.dh = dh;
+  layout.sourceX = Math.round(sx);
+  layout.sourceY = Math.round(sy);
+  layout.sourceWidth = Math.max(1, Math.round(sw));
+  layout.sourceHeight = Math.max(1, Math.round(sh));
+    } else {
+      // Para imágenes de color: usar imagen completa, sin recorte
+      const imgW = currentBG.naturalWidth;
+      const imgH = currentBG.naturalHeight;
+      const s = Math.min(size.w/imgW, size.h/imgH);
+      const dw = Math.ceil(imgW*s), dh = Math.ceil(imgH*s);
+      layout.dx = Math.floor((size.w-dw)/2);
+      layout.dy = Math.floor((size.h-dh)/2);
+      layout.dw = dw;
+      layout.dh = dh;
+      layout.sourceX = null;
+      layout.sourceY = null;
+      layout.sourceWidth = null;
+      layout.sourceHeight = null;
+    }
   }
   
   // Resetear estado de animación
   animationFinished = false;
   
   // NO hacer resize() ni limpiar el canvas principal - solo limpiar la máscara
-  maskCtx.clearRect(0,0,size.w,size.h); 
+  try { maskCtx.save(); maskCtx.setTransform(1,0,0,1,0,0); } catch(_) {}
+  maskCtx.clearRect(0,0,maskCanvas.width,maskCanvas.height);
+  try { maskCtx.restore(); } catch(_) {}
   
   // golpe inicial en el centro para que empiece a mostrarse de inmediato
   kickstartMask();
@@ -2765,7 +3307,9 @@ window.addEventListener('resize',()=>{
   const now=performance.now(); 
   const p=startedAt?clamp((now-startedAt)/DURATION_MS,0,1):0; 
   resize(); 
-  maskCtx.clearRect(0,0,size.w,size.h); 
+  try { maskCtx.save(); maskCtx.setTransform(1,0,0,1,0,0); } catch(_) {}
+  maskCtx.clearRect(0,0,maskCanvas.width,maskCanvas.height);
+  try { maskCtx.restore(); } catch(_) {}
   makeSeeds(12); 
   makeStrokes(); 
   makeSpirals();
@@ -2822,25 +3366,24 @@ async function updateFallbackPattern() {
   setupWebSocket();
   
   try {
-    // PASO 1: Cargar amarillo.jpg como fondo por defecto SIEMPRE
-    console.log('🎨 Cargando amarillo.jpg como fondo por defecto...');
-    const defaultLoaded = await loadDefaultPattern();
-    
-    if (!defaultLoaded) {
-      console.error('❌ No se pudo cargar el patrón por defecto');
-      return;
-    }
-    
-    // PASO 2: Intentar cargar otros patrones disponibles
-    console.log('🔍 Cargando patrones adicionales...');
+    // PASO 1: Cargar patrones disponibles, priorizando lo que defina el server (wallpaper si existe)
+    console.log('🔍 Cargando patrones iniciales (prioridad wallpaper del servidor)...');
     try {
-      await loadLatestPatterns();
+      const loaded = await loadLatestPatterns();
+      if (!loaded) {
+        // Fallback único a amarillo si no hay nada disponible
+        console.log('⚠️ No hay patrones disponibles; cargando amarillo como fallback único');
+        await loadDefaultPattern();
+      }
     } catch (error) {
-      console.warn('⚠️ Error cargando patrones adicionales:', error);
+      console.warn('⚠️ Error cargando patrones iniciales; usando fallback amarillo:', error);
+      await loadDefaultPattern();
     }
     
-    console.log(`🎨 Sistema inicializado con ${patterns.length} patrón(es)`);
-    console.log(`� Patrón actual: ${patterns[currentPatternIndex]?.filename || 'ninguno'}`);
+  // Asegurar que los patrones estén listos antes de mostrar
+  patternsReady = true;
+  console.log(`🎨 Sistema inicializado con ${patterns.length} patrón(es)`);
+  console.log(`🖼️ Patrón actual: ${patterns[currentPatternIndex]?.filename || 'ninguno'}`);
     
     // PASO 3: Cargar brochas en paralelo
     await Promise.all(brushSrcs.map(async (src)=>{
@@ -2856,24 +3399,22 @@ async function updateFallbackPattern() {
     
     console.log(`✅ ${maskBrushes.length} brochas cargadas.`);
     
-    // PASO 4: Inicializar canvas y comenzar con fondo pre-coloreado
+  // PASO 4: Inicializar canvas y mostrar el patrón actual (normalmente el que decida el server)
     resize(); // Asegurar que el canvas tenga el tamaño correcto
     
-    // Mostrar amarillo.jpg como fondo inicial
-    console.log('🎨 Mostrando fondo por defecto (amarillo.jpg)...');
+  // Mostrar el patrón actual como fondo inicial SOLO si hay patrones listos
+  if (patternsReady && patterns.length > 0) {
+    console.log(`🎨 Mostrando patrón inicial establecido: ${patterns[currentPatternIndex]?.filename || 'desconocido'}`);
     renderStaticBackground();
+  } else {
+    console.log('⏳ Patrones no listos aún; se diferirá el render inicial');
+  }
     
-  // PASO 5: Iniciar rotación automática por defecto (amarillo→rojo→azul cada 2m)
-  console.log('🔄 Iniciando rotación por defecto (amarillo→rojo→azul cada 30s)');
-  startAutoColorSequence();
+  // PASO 5: Iniciar animación automáticamente para coloreo inmediato
+  console.log('🎨 Iniciando animación automática de coloreo...');
+  start();
   
-  // Watchdog: verificar cada minuto que la secuencia siga activa
-  setInterval(() => {
-    if (coloringMode === 'sequence' && !autoColorSequence.active) {
-      console.log('🚨 WATCHDOG: Secuencia automática desactivada, reactivando...');
-      startAutoColorSequence();
-    }
-  }, 60000); // Cada minuto
+  // También esperar órdenes del servidor para sincronización adicional
     
     // PASO 6: Inicializar sistema de slideshow
     initializeSlideshow();
@@ -2937,11 +3478,7 @@ document.addEventListener('visibilitychange', () => {
     }
     console.log('▶️ Pestaña visible: reanudado monitor y slideshow');
     
-    // IMPORTANTE: Asegurar que la secuencia automática siga activa
-    if (!autoColorSequence.active && coloringMode === 'sequence') {
-      console.log('🔄 Reanudando secuencia automática después de visibilidad');
-      startAutoColorSequence();
-    }
+  // No reactivar secuencias locales automáticamente; seguir órdenes del servidor
   }
 });
 
@@ -2968,6 +3505,7 @@ async function initializeSlideshow() {
     slideshowConfig.height = 1912;
     slideshowConfig.x = 256;
     slideshowConfig.y = 300;
+  slideshowConfig.interval = 6000;
   }
   
   // Obtener configuración inicial del servidor
@@ -2999,7 +3537,8 @@ async function loadSlideshowImages() {
     const data = await response.json();
     
     if (data.success && data.images.length > 0) {
-  slideshowImages = data.images;
+  // Tomar solo las primeras 3 imágenes para asegurar ciclo estable
+  slideshowImages = data.images.slice(0, 3);
   currentSlideshowIndex = 0; // reset index to avoid OOB
       
       // PRECARGAR IMÁGENES PARA MEJOR PERFORMANCE
@@ -3213,83 +3752,142 @@ function startSlideshow() {
   }
   inVideoPlayback = false;
 
-  // Iniciar intervalo para cambio automático
+  // Programar cambios con timeout robusto (evita desincronización del setInterval)
   if (slideshowImages.length > 1) {
-    slideshowInterval = setInterval(() => {
-      const prevIndex = currentSlideshowIndex;
-      currentSlideshowIndex = (currentSlideshowIndex + 1) % slideshowImages.length;
-
-      // Si dimos la vuelta completa, reproducir el video una vez por vuelta
-      if (currentSlideshowIndex === 0 && slideshowImages.length > 0 && !inVideoPlayback) {
-        // Opcional: mantener contador informativo
-        slideshowCycleCount++;
-        triggerVideoPlayback();
-        return; // no agregar imagen en este tick
-      }
-
-      addNextSlideshowImage();
-    }, slideshowConfig.interval);
+    scheduleNextSlide();
   }
   
+  // Programación por timeout para evitar bloqueos si la transición se retrasa
   // console.log(`📺 Slideshow iniciado con fade simple - ${slideshowImages.length} imágenes, intervalo: ${slideshowConfig.interval}ms`);
 }
 
-// FUNCIÓN SIMPLE: Crear elemento de imagen para slideshow
-function createSlideshowImage(src, opacity = 0) {
+// Crea un elemento <img> para el slideshow con estilos y opacidad inicial
+function createSlideshowImage(src, initialOpacity = 0) {
   const img = document.createElement('img');
+  img.src = src;
   img.style.position = 'absolute';
   img.style.top = '0';
   img.style.left = '0';
   img.style.width = '100%';
   img.style.height = '100%';
   img.style.objectFit = 'cover';
-  img.style.opacity = opacity;
-  img.style.transition = `opacity ${SLIDESHOW_FADE_MS}ms ease-in-out`;
-  img.style.backfaceVisibility = 'hidden';
-  img.style.transform = 'translateZ(0)';
-  img.src = src;
+  img.style.opacity = String(initialOpacity);
+  img.style.transition = `opacity ${SLIDESHOW_FADE_MS}ms ease`;
+  img.style.willChange = 'opacity';
+  // Hints for better load
+  try { img.decoding = 'async'; } catch (_) {}
+  try { img.loading = 'eager'; } catch (_) {}
   return img;
 }
 
-// FUNCIÓN SIMPLE: Agregar siguiente imagen con fade
-function addNextSlideshowImage() {
+// Añade la siguiente imagen del slideshow con crossfade y limpia las anteriores
+function addNextSlideshowImage(onDone) {
   const imagesLayer = document.getElementById('slideshow-images-layer');
-  if (!imagesLayer || !slideshowImages[currentSlideshowIndex]) {
+  if (!imagesLayer || !slideshowImages || slideshowImages.length === 0) {
+    if (typeof onDone === 'function') onDone();
     return;
   }
-
-  // Crear nueva imagen encima de las existentes, pero iniciar fade cuando esté decodificada
-  const src = slideshowImages[currentSlideshowIndex];
-  const newImg = createSlideshowImage(src, 0);
-  imagesLayer.appendChild(newImg);
-
-  // Asegurar que la imagen esté lista para un crossfade suave
-  const startFadeIn = () => requestAnimationFrame(() => { newImg.style.opacity = '1'; });
-  if (newImg.decode) {
-    newImg.decode().then(startFadeIn).catch(startFadeIn);
-  } else if (newImg.complete) {
-    startFadeIn();
-  } else {
-    newImg.onload = startFadeIn;
-    newImg.onerror = startFadeIn;
+  if (_slideshowTransitioning) {
+    // Evitar solapado; reintentar luego
+    setTimeout(() => addNextSlideshowImage(onDone), 100);
+    return;
   }
+  _slideshowTransitioning = true;
 
-  // Limpiar imágenes viejas después del fade para evitar acumulación
-  setTimeout(() => {
-    const images = imagesLayer.children;
-    while (images.length > 2) {
-      imagesLayer.removeChild(images[0]);
+  const nextSrc = slideshowImages[currentSlideshowIndex];
+  const prevImgs = Array.from(imagesLayer.querySelectorAll('img'));
+  const prevTop = prevImgs.length ? prevImgs[prevImgs.length - 1] : null;
+
+  // Crear nueva imagen con opacidad 0 y añadirla encima
+  const nextImg = createSlideshowImage(nextSrc, 0);
+  imagesLayer.appendChild(nextImg);
+
+  // Cuando esté lista, iniciar el fade
+  const startFade = () => {
+    // Asegurar reflow antes de cambiar opacidad
+    void nextImg.offsetHeight;
+    // Fade-in de la nueva
+    nextImg.style.opacity = '1';
+    // Fade-out de la anterior
+    if (prevTop) prevTop.style.opacity = '0';
+
+    const cleanup = () => {
+      // Mantener solo las dos últimas imágenes para evitar fugas de memoria
+      const imgs = Array.from(imagesLayer.querySelectorAll('img'));
+      // Dejar como máximo 2 (prevTop + nextImg). Quitar las más antiguas
+      while (imgs.length > 2) {
+        const toRemove = imgs.shift();
+        if (toRemove && toRemove !== prevTop && toRemove !== nextImg) toRemove.remove();
+      }
+      // Si hay más de 2 por cualquier motivo, asegurar limpieza extra
+      const latest = Array.from(imagesLayer.querySelectorAll('img'));
+      if (latest.length > 2) {
+        for (let i = 0; i < latest.length - 2; i++) latest[i].remove();
+      }
+      _slideshowTransitioning = false;
+      if (typeof onDone === 'function') onDone();
+    };
+
+    // Usar transitionend con timeout de respaldo
+    let finished = false;
+    const onEnd = () => {
+      if (finished) return;
+      finished = true;
+      nextImg.removeEventListener('transitionend', onEnd);
+      if (prevTop) prevTop.removeEventListener('transitionend', onEnd);
+      cleanup();
+    };
+    nextImg.addEventListener('transitionend', onEnd);
+    if (prevTop) prevTop.addEventListener('transitionend', onEnd);
+    setTimeoua11zt(onEnd, SLIDESHOW_FADE_MS + 80);
+  };
+
+  // Intentar decode() para evitar parpadeos; fallback por tiempo
+  let decoded = false;
+  try {
+    if (nextImg.decode) {
+      nextImg.decode().then(() => { decoded = true; startFade(); }).catch(() => { startFade(); });
+      // Fallback si decode tarda demasiado
+      setTimeout(() => { if (!decoded) startFade(); }, 1200);
+    } else {
+      // Fallback usando onload
+      nextImg.addEventListener('load', () => startFade());
+      // Fallback por tiempo en caso de cache instantánea sin disparar load
+      setTimeout(() => startFade(), 500);
     }
-  }, SLIDESHOW_FADE_MS + 200);
+  } catch (_) {
+    // En navegadores sin decode, iniciar de inmediato con pequeñísimo retraso
+    setTimeout(() => startFade(), 30);
+  }
+}
 
-  // Remove slideshow console spam - imagen añadida con fade
+// Programación por timeout para evitar bloqueos si la transición se retrasa
+function scheduleNextSlide() {
+  if (_slideshowTimeoutId) clearTimeout(_slideshowTimeoutId);
+  const delay = Math.max(500, Number(slideshowConfig.interval) || 3000);
+  _slideshowTimeoutId = setTimeout(() => {
+    if (!slideshowImages || slideshowImages.length <= 1) return;
+    if (_slideshowTransitioning) {
+      // Si seguimos en transición, reintentar un poco después
+      return scheduleNextSlide();
+    }
+    const prevIndex = currentSlideshowIndex;
+    currentSlideshowIndex = (currentSlideshowIndex + 1) % slideshowImages.length;
+
+    if (currentSlideshowIndex === 0 && slideshowImages.length > 0 && !inVideoPlayback) {
+      slideshowCycleCount++;
+    }
+    addNextSlideshowImage(() => {
+      // Reprogramar cuando termina el fade
+      scheduleNextSlide();
+    });
+  }, delay);
 }
 
 function stopSlideshow() {
-  if (slideshowInterval) {
-    clearInterval(slideshowInterval);
-    slideshowInterval = null;
-  }
+  if (slideshowInterval) { clearInterval(slideshowInterval); slideshowInterval = null; }
+  if (_slideshowTimeoutId) { clearTimeout(_slideshowTimeoutId); _slideshowTimeoutId = null; }
+  _slideshowTransitioning = false; // Reset transitioning flag
 }
 
 function showSlideshowImage(index) {
@@ -3311,6 +3909,10 @@ function showSlideshowImage(index) {
 // ==============================
 
 function triggerVideoPlayback() {
+  if (!ENABLE_SLIDESHOW_VIDEO) {
+    // Feature deshabilitada: no interrumpir slideshow
+    return;
+  }
   // Proteger de reentradas
   if (inVideoPlayback) return;
   inVideoPlayback = true;
@@ -3402,6 +4004,10 @@ function ensureVideoElement() {
 }
 
 function startLogoVideoLoop() {
+  if (!ENABLE_LOGO_VIDEO) {
+    // No reproducir video especial para logos; mantener slideshow normal
+    return;
+  }
   // Si ya está forzado por logo, nada que hacer
   if (videoForcedByLogo) return;
   const video = ensureVideoElement();
@@ -3437,5 +4043,135 @@ function stopLogoVideoLoopIfActive() {
   videoForcedByLogo = false;
   if (slideshowConfig.enabled && slideshowImages.length > 0) {
     startSlideshow();
+  }
+}
+
+// Aplicar un paso de color con un patrón específico enviado por el servidor (sin alterar el orden local)
+async function executeColorStepWithPattern(forcedPattern) {
+  // Bloquear coloreos pixelados de amarillo/azul según pedido
+  if (/amarillo\.jpg|azul\.jpg/i.test(forcedPattern || '')) {
+    console.warn(`⛔ Brush ${brushId}: Coloreo bloqueado para ${forcedPattern} por pixelación (saltando)`);
+    return;
+  }
+  if (!forcedPattern) return executeColorStep();
+  if (autoColorSequence.isRunning) return; // evitar solapado
+  autoColorSequence.isRunning = true;
+  console.log(`🎨 *** COLOREANDO (forzado) *** Aplicando: ${forcedPattern}`);
+  try {
+    const img = new Image();
+    await new Promise((resolve, reject) => {
+      img.onload = resolve;
+      img.onerror = reject;
+      img.src = `/patterns/${forcedPattern}?t=${Date.now()}`;
+    });
+    if (/logo1\.jpg|logo2\.jpg/i.test(forcedPattern)) {
+      console.log('🆕 LOGO MODE (forzado):', forcedPattern, 'fade-in directo sin coloreo');
+      await showLogoFullFade(img, forcedPattern);
+      finalizeLogoStep();
+    } else {
+      const newPattern = {
+        src: `/patterns/${forcedPattern}`,
+        image: img,
+        filename: forcedPattern,
+        type: forcedPattern.replace('.jpg', '')
+      };
+      if (patterns.length > 5) patterns = patterns.slice(-5);
+      patterns.push(newPattern);
+      currentPatternIndex = patterns.length - 1;
+      try { resize(); } catch (_) {}
+      colorOnTop();
+      playFullscreenLogoVideoIfNeeded(forcedPattern);
+    }
+  } catch (e) {
+    console.error('❌ Error aplicando patrón forzado:', forcedPattern, e);
+  } finally {
+    autoColorSequence.isRunning = false;
+  }
+}
+
+// Helper: mostrar logo usando mismo mapeo que amarillo/azul/rojo (virtual 6480x3840 seccion 2160x3840) con fade-in
+async function showLogoFullFade(image, filename){
+  // Cancelar animaciones activas
+  try { if (rafId) cancelAnimationFrame(rafId); } catch(_) {}
+  try { if (fpsMonitorRafId) cancelAnimationFrame(fpsMonitorRafId); } catch(_) {}
+  animationFinished = false;
+  preserveCanvasContent = true;
+  isFirstAnimation = false;
+  // Asegurar video fullscreen si corresponde (algunos casos de llamada directa no pasan por playFullscreenLogoVideoIfNeeded)
+  try { playFullscreenLogoVideoIfNeeded(filename); } catch(_) {}
+  // Replicar lógica de layout wide-color (amarillo) SIN modificar layout global
+  const imgW = image.naturalWidth;
+  const imgH = image.naturalHeight;
+  const virtualHeight = WALLPAPER_SECTION_HEIGHT; //3840
+  const virtualWidthTotal = WALLPAPER_TOTAL_WIDTH; //6480
+  const scaleToVirtual = virtualHeight / imgH;
+  const placedW = imgW * scaleToVirtual; // ancho dentro del espacio virtual
+  const placeX = Math.floor((virtualWidthTotal - placedW)/2);
+  const placeY = 0;
+  const sectionWidth = WALLPAPER_SECTION_WIDTH; //2160
+  const sectionHeight = WALLPAPER_SECTION_HEIGHT; //3840
+  const sourceXVirtual = brushConfig.offsetX || 0;
+  const sourceYVirtual = brushConfig.offsetY || 0;
+  // Convertir a coords de la imagen
+  let sx = (sourceXVirtual - placeX) / scaleToVirtual;
+  let sy = (sourceYVirtual - placeY) / scaleToVirtual;
+  let sw = sectionWidth / scaleToVirtual;
+  let sh = sectionHeight / scaleToVirtual;
+  if (!Number.isFinite(sx)) sx = 0; if (!Number.isFinite(sy)) sy = 0;
+  if (!Number.isFinite(sw) || sw <= 0) sw = imgW; if (!Number.isFinite(sh) || sh <= 0) sh = imgH;
+  sx = Math.max(0, Math.min(imgW - 1, sx));
+  sy = Math.max(0, Math.min(imgH - 1, sy));
+  if (sx + sw > imgW) sw = imgW - sx;
+  if (sy + sh > imgH) sh = imgH - sy;
+  const s = Math.min(size.w/sectionWidth, size.h/sectionHeight);
+  const dw = Math.ceil(sectionWidth*s), dh = Math.ceil(sectionHeight*s);
+  const dx = Math.floor((size.w-dw)/2);
+  const dy = Math.floor((size.h-dh)/2);
+  // Limpiar mask, no limpiar canvas para layering continuo
+  try { maskCtx.save(); maskCtx.setTransform(1,0,0,1,0,0);} catch(_){ }
+  maskCtx.clearRect(0,0,maskCanvas.width,maskCanvas.height);
+  try { maskCtx.restore(); } catch(_) {}
+  // Dibujar fade sobre canvas principal (sin máscara)
+  const fadeMs = 1200;
+  const startTs = performance.now();
+  function fadeFrame(ts){
+    const p = Math.min(1, (ts - startTs)/fadeMs);
+    // redibujar fondo existente (preservado) + logo encima con alpha p
+    // Solo dibujar logo: preservación ya mantiene fondo
+    ctx.save();
+    ensureHQ(ctx);
+    ctx.globalAlpha = p;
+  ctx.drawImage(image, sx, sy, sw, sh, dx, dy, dw, dh);
+    ctx.restore();
+    if (p < 1) requestAnimationFrame(fadeFrame); else {
+      animationFinished = true;
+      console.log('✅ LOGO fade-in completado para', filename);
+    }
+  }
+  requestAnimationFrame(fadeFrame);
+}
+
+// Programar siguiente paso tras mostrar logo (reutiliza lógica de finalize animación)
+function finalizeLogoStep(){
+  // Liberar lock
+  if (autoColorSequence) autoColorSequence.isRunning = false;
+  animationFinished = true;
+  // Programar siguiente como en finalize de coloreo (simplificado)
+  if (autoColorSequence && autoColorSequence.active && !autoColorSequence.nextStepScheduled){
+    autoColorSequence.nextStepScheduled = true;
+    const period = autoColorSequence.periodMs || (autoColorSequence.intervalTime + DURATION_MS);
+    const nowTs = Date.now();
+    let base = autoColorSequence.lastBoundaryTs || autoColorSequence.anchorStartAt || nowTs;
+    while (base <= nowTs) base += period;
+    const delayMs = Math.max(0, base - nowTs);
+    console.log(`⏱️ (LOGO) Próximo paso en ${delayMs}ms`);
+    if (autoColorSequence.timeoutId) clearTimeout(autoColorSequence.timeoutId);
+    autoColorSequence.timeoutId = setTimeout(()=>{
+      if (autoColorSequence.active && coloringMode === 'sequence') {
+        executeColorStep();
+      }
+      autoColorSequence.nextStepScheduled = false;
+      autoColorSequence.timeoutId = null;
+    }, delayMs);
   }
 }

@@ -68,7 +68,8 @@
         <div class="screen-info" id="screenInfo">
             <div><strong>Canvas de 3 Pantallas:</strong> 6480x3840px</div>
             <div><em>Presiona 'i' para ocultar/mostrar esta información</em></div>
-            <div><em>Presiona 'a' para guardar wallpaper</em></div>
+            <div><em>Presiona 'Ctrl+A' para guardar wallpaper</em></div>
+            <div><em>Atajos de overlay: Q=red.png, A=blue.png, Z=pink.png</em></div>
         </div>
     </div>
 
@@ -77,6 +78,7 @@
     </div>
 
     <script src="/socket.io/socket.io.js"></script>
+    <script src="/js/modules/image-sync-manager.js"></script>
     <script>
         // Detectar screenId desde la URL: /screen/:id
         function getScreenIdFromURL() {
@@ -139,6 +141,19 @@
         let overlayImg = new Image(); // Imagen superpuesta (blue, red, pink)
         let overlayLoaded = false;
         let selectedImage = 'red';
+    // Auto-refresh control for processed.png
+    let _processedAutoRefreshId = null;
+    let _loadingProcessed = false;
+    let _handshakeInProgress = false; // NUEVO: evita interferencias durante recarga forzada
+    let _pendingCaptureOp = null;     // Operación actual de recarga/captura
+
+    function stopProcessedAutoRefresh() {
+        if (_processedAutoRefreshId) {
+            clearInterval(_processedAutoRefreshId);
+            _processedAutoRefreshId = null;
+            console.log('⏹️ [AutoRefresh] detenido (handshake)');
+        }
+    }
 
         // Configuración de canvas para 3 pantallas horizontales de 2160x3840
         function setupCanvas() {
@@ -149,15 +164,138 @@
             patternCanvas.height = totalHeight;
             patternCanvas.style.width = totalWidth + 'px';
             patternCanvas.style.height = totalHeight + 'px';
+            
+            // CALIDAD: Configurar smoothing de alta calidad
+            try {
+                ctx.imageSmoothingEnabled = true;
+                ctx.imageSmoothingQuality = 'high';
+            } catch(_) {}
         }
 
         function resolvePatternSrc() {
             const src = (wallpaperState.general?.patternSource) || 'processed';
             if (src === 'processed') return '/processed/processed.png';
-            if (src === 'rojo') return '/patterns/rojo.png';
-            if (src === 'azul') return '/patterns/azul.png';
-            if (src === 'amarillo') return '/patterns/amarillo.png';
+            if (src === 'rojo') return '/patterns/rojo.jpg';
+            if (src === 'azul') return '/patterns/azul.jpg';
+            if (src === 'amarillo') return '/patterns/amarillo.jpg';
             return '/processed/processed.png';
+        }
+
+        // MEJORADO: Sistema robusto de carga de imágenes inspirado en brush-reveal
+        function loadImageRobust(src, onSuccess, onError, maxAttempts = 3) {
+            let attempts = 0;
+            
+            function attemptLoad() {
+                attempts++;
+                const img = new Image();
+                const startTime = Date.now();
+                
+                // Configurar para carga de alta calidad
+                img.decoding = 'async';
+                img.loading = 'eager';
+                img.crossOrigin = 'anonymous';
+                
+                img.onload = () => {
+                    const loadTime = Date.now() - startTime;
+                    console.log(`✅ [ImageLoad] Éxito en intento ${attempts}: ${src} (${img.width}x${img.height}) en ${loadTime}ms`);
+                    if (onSuccess) onSuccess(img);
+                };
+                
+                img.onerror = () => {
+                    const loadTime = Date.now() - startTime;
+                    console.error(`❌ [ImageLoad] Error en intento ${attempts}: ${src} después de ${loadTime}ms`);
+                    
+                    if (attempts < maxAttempts) {
+                        const delay = 500 * attempts; // Incrementar delay con cada intento
+                        console.log(`🔄 [ImageLoad] Reintentando en ${delay}ms...`);
+                        setTimeout(attemptLoad, delay);
+                    } else {
+                        console.error(`💥 [ImageLoad] Falló después de ${maxAttempts} intentos: ${src}`);
+                        if (onError) onError(new Error(`Failed to load after ${maxAttempts} attempts`));
+                    }
+                };
+                
+                // Agregar cache-busting para asegurar que se obtenga la versión más reciente
+                const cacheBuster = src.includes('?') ? `&t=${Date.now()}` : `?t=${Date.now()}`;
+                img.src = src + cacheBuster;
+            }
+            
+            attemptLoad();
+        }
+
+        // MEJORADO: Carga robusta de imagen base
+        function loadBaseImageRobust() {
+            const src = resolvePatternSrc();
+            console.log(`🔄 [BaseImage] Iniciando carga robusta: ${src}`);
+            
+            loadImageRobust(src, 
+                (loadedImg) => {
+                    img = loadedImg;
+                    imgLoaded = true;
+                    _loadingProcessed = false;
+                    setupCanvas();
+                    generateStaticPattern();
+                    
+                    // Notificar al gestor de sincronización si está disponible
+                    if (window.imageSyncManager && src.includes('processed.png')) {
+                        window.imageSyncManager.handleProcessedImageReady({
+                            type: 'processed',
+                            screenId: SCREEN_ID,
+                            timestamp: Date.now()
+                        });
+                    }
+                },
+                (error) => {
+                    console.error('❌ Error cargando imagen base:', error);
+                    elements.connectionStatus.textContent = '❌ Error cargando imagen de patrón';
+                    elements.connectionStatus.style.background = '#dc3545';
+                    _loadingProcessed = false;
+                }
+            );
+        }
+
+        // MEJORADO: Carga robusta de imagen superpuesta
+        function loadOverlayImageRobust(imageName) {
+            const src = `/${imageName}.png`;
+            console.log(`🔄 [OverlayImage] Iniciando carga robusta: ${src}`);
+            
+            loadImageRobust(src,
+                (loadedImg) => {
+                    overlayImg = loadedImg;
+                    overlayLoaded = true;
+                    console.log(`✅ Overlay image loaded: ${src} (${loadedImg.width}x${loadedImg.height})`);
+                    if (imgLoaded) generateStaticPattern();
+                },
+                (error) => {
+                    console.error(`❌ Error loading overlay image: ${src}`, error);
+                }
+            );
+        }
+
+        // Refresca processed.png cada 2s (con cache-busting) cuando la fuente activa es 'processed'
+        function startProcessedAutoRefresh() {
+            if (_processedAutoRefreshId) return;
+            _processedAutoRefreshId = setInterval(() => {
+                if (_handshakeInProgress) return; // pausar durante handshake
+                const src = (wallpaperState.general?.patternSource) || 'processed';
+                if (src !== 'processed') {
+                    // console.debug('⏭️ [AutoRefresh] Saltando: patternSource != processed');
+                    return; // sólo refrescar cuando corresponde
+                }
+                if (document.hidden) {
+                    // console.debug('⏸️ [AutoRefresh] Saltando: pestaña oculta');
+                    return; // evitar trabajo si la pestaña está oculta
+                }
+                if (_loadingProcessed) {
+                    // console.debug('⏳ [AutoRefresh] Saltando: carga en curso');
+                    return; // no solapar cargas
+                }
+                _loadingProcessed = true;
+                imgLoaded = false;
+                const url = `/processed/processed.png?t=${Date.now()}`;
+                console.log(`🔄 [AutoRefresh] solicitando ${url}`);
+                img.src = url;
+            }, 2000);
         }
 
         // Generar patrón para canvas de 3 pantallas (6480x3840)
@@ -193,6 +331,12 @@
             // Limpiar canvas
             ctx.save();
             ctx.clearRect(0, 0, totalWidth, totalHeight);
+            
+            // CALIDAD: Asegurar smoothing de alta calidad
+            try {
+                ctx.imageSmoothingEnabled = true;
+                ctx.imageSmoothingQuality = 'high';
+            } catch(_) {}
             
             // Color de fondo
             ctx.fillStyle = config.backgroundColor || '#ffffff';
@@ -322,6 +466,13 @@
                         ctx.translate(x + baseWidth / 2, y + baseHeight / 2);
                         ctx.rotate((instRotation * Math.PI) / 180);
                         ctx.scale(scaleMod, scaleMod);
+                        
+                        // CALIDAD: Asegurar smoothing antes de drawImage
+                        try {
+                            ctx.imageSmoothingEnabled = true;
+                            ctx.imageSmoothingQuality = 'high';
+                        } catch(_) {}
+                        
                         ctx.drawImage(img, -baseWidth / 2, -baseHeight / 2, baseWidth, baseHeight);
                         ctx.restore();
 
@@ -389,6 +540,13 @@
                             
                             // Dibujar imagen superpuesta
                             ctx.save();
+                            
+                            // CALIDAD: Asegurar smoothing antes de drawImage
+                            try {
+                                ctx.imageSmoothingEnabled = true;
+                                ctx.imageSmoothingQuality = 'high';
+                            } catch(_) {}
+                            
                             ctx.drawImage(overlayImg, finalX, finalY, finalWidth, finalHeight);
                             ctx.restore();
                             overlaysDrawn++;
@@ -409,6 +567,15 @@
             elements.connectionStatus.textContent = '✅ Conectado';
             elements.connectionStatus.style.background = '#28a745';
             socket.emit('registerScreen', { screenId: SCREEN_ID, type: 'screen' });
+            
+            // Inicializar el gestor de sincronización de imágenes
+            if (window.imageSyncManager) {
+                window.imageSyncManager.init(socket, {
+                    patternCanvas: patternCanvas,
+                    screenInfo: elements.screenInfo,
+                    connectionStatus: elements.connectionStatus
+                });
+            }
         });
 
         socket.on('disconnect', () => {
@@ -435,22 +602,16 @@
 
         socket.on('generalConfigUpdate', (config) => {
             wallpaperState.general = { ...wallpaperState.general, ...config };
-            // Si cambia la fuente del patrón, recargar imagen base
-            imgLoaded = false;
-            img.src = `${resolvePatternSrc()}?t=${Date.now()}`;
-            // Regenerar patrón inmediatamente si ambas imágenes están cargadas
-            if (imgLoaded && overlayLoaded) {
-                generateStaticPattern();
-            }
+            // Si cambia la fuente del patrón, recargar imagen base usando sistema robusto
+            loadBaseImageRobust();
         });
 
         // Actualización de selección de imagen desde el control (1/2/3)
         socket.on('imageSelected', (data) => {
             if (data && data.image) {
                 selectedImage = data.image;
-                // Recargar imagen superpuesta con la seleccionada
-                overlayLoaded = false;
-                overlayImg.src = `/${selectedImage}.png?t=${Date.now()}`;
+                // Recargar imagen superpuesta con la seleccionada usando sistema robusto
+                loadOverlayImageRobust(selectedImage);
             }
         });
 
@@ -458,8 +619,8 @@
         socket.on('imageUpdated', () => {
             // Sólo recargar cuando la fuente actual es 'processed'
             if ((wallpaperState.general?.patternSource) === 'processed') {
-                imgLoaded = false;
-                img.src = `/processed/processed.png?t=${Date.now()}`;
+                console.log('🔔 Recibida notificación de imagen actualizada');
+                loadBaseImageRobust();
             }
         });
 
@@ -475,7 +636,7 @@
                         img.onload = () => {
                             imgLoaded = true;
                             generateStaticPattern();
-                            setTimeout(resolve, 200); // esperar render completo
+                setTimeout(resolve, 2000); // esperar render completo (+1s extra)
                         };
                         img.src = `${resolvePatternSrc()}?t=${Date.now()}`;
                     });
@@ -483,8 +644,8 @@
                     // Regenerar patrón para asegurar estado actual
                     console.log('🔄 Regenerando patrón antes de captura...');
                     generateStaticPattern();
-                    // Esperar que el render se complete
-                    await new Promise(resolve => setTimeout(resolve, 200));
+            // Esperar que el render se complete (+1s extra)
+            await new Promise(resolve => setTimeout(resolve, 2000));
                 }
                 
                 // Capturar canvas como imagen base64
@@ -511,41 +672,81 @@
             } else {
                 console.error(`❌ Error guardando canvas: ${data.error}`);
             }
+            // Fallback: asegurar liberación de handshake y reanudar auto-refresh
+            if (_handshakeInProgress) {
+                _handshakeInProgress = false;
+                _pendingCaptureOp = null;
+                startProcessedAutoRefresh();
+                console.log('🛡️ [Fallback] Handshake liberado en canvasSaved');
+            }
         });
 
-        // MEJORADO: Manejar comando de recarga sincronizada
+        // MEJORADO: Manejar comando de recarga sincronizada con sistema robusto
         socket.on('reloadRequestSync', (data) => {
             if (data.screenId === SCREEN_ID) {
                 console.log(`🔄 *** SCREEN *** Recibido comando de recarga SINCRONIZADA - Op:${data.operationId}`);
                 
-                // Recargar imagen base para obtener processed.png actualizado
-                imgLoaded = false;
-                img.onload = () => {
-                    imgLoaded = true;
-                    generateStaticPattern();
-                    
-                    // Confirmar que estamos listos
-                    socket.emit('clientReady', {
-                        operationId: data.operationId,
-                        screenId: SCREEN_ID,
-                        timestamp: Date.now()
-                    });
-                    
-                    console.log(`✅ *** SCREEN *** clientReady enviado para operación ${data.operationId}`);
-                };
-                const srcForced = (data.forceProcessed) ? '/processed/processed.png' : resolvePatternSrc();
-                img.src = `${srcForced}?t=${Date.now()}`;
+                // NUEVO: si requiere captura posterior, detener auto-refresh para no interferir
+                if (data.captureAfterReload) {
+                    _handshakeInProgress = true;
+                    _pendingCaptureOp = data.operationId || null;
+                    stopProcessedAutoRefresh();
+                    console.log('🛑 Auto-refresh pausado por recarga forzada con captura');
+                }
+
+                // Usar sistema robusto de carga
+                const opId = data.operationId || null;
+                const baseSrc = (data.forceProcessed) ? '/processed/processed.png' : resolvePatternSrc();
                 
-                console.log('✅ *** CONFIRMACIÓN *** Screen/1 actualizando con processed.png más reciente SINCRONIZADO');
+                console.log(`🔄 Iniciando carga robusta: ${baseSrc}`);
+                
+                // Carga robusta con múltiples intentos y validación
+                loadImageRobust(baseSrc,
+                    (loadedImg) => {
+                        // Éxito en la carga
+                        img = loadedImg;
+                        imgLoaded = true;
+                        _loadingProcessed = false;
+                        
+                        setupCanvas();
+                        generateStaticPattern();
+                        
+                        // Pequeña pausa para asegurar que el render esté completo
+                        setTimeout(() => {
+                            // Notificar al servidor que esta pantalla ya está lista
+                            socket.emit('screenReady', { 
+                                screenId: SCREEN_ID, 
+                                operationId: opId,
+                                timestamp: Date.now(),
+                                captureAfterReload: !!data.captureAfterReload,
+                                imageSize: { width: loadedImg.width, height: loadedImg.height }
+                            });
+                            console.log('✅ *** SCREEN *** screenReady enviado tras recarga robusta');
+                        }, 1000);
+                    },
+                    (error) => {
+                        // Error en la carga
+                        console.error(`❌ Error en recarga sincronizada: ${error.message}`);
+                        
+                        // Intentar notificar igualmente para no bloquear el flujo
+                        socket.emit('screenReady', { 
+                            screenId: SCREEN_ID, 
+                            operationId: opId,
+                            timestamp: Date.now(),
+                            captureAfterReload: !!data.captureAfterReload,
+                            error: error.message
+                        });
+                    }
+                );
             }
         });
 
         // COMPATIBILIDAD: Mantener evento original
-        socket.on('reloadRequest', (data) => {
+    socket.on('reloadRequest', (data) => {
             if (data.screenId === SCREEN_ID) {
                 console.log('🔄 *** SCREEN *** Recibido comando de recarga - actualizando... (LEGACY)');
                 
-                // Recargar imagen base para obtener processed.png actualizado
+                // Recargar imagen base para obtenerz1 processed.png actualizado
                 imgLoaded = false;
                 img.onload = () => {
                     imgLoaded = true;
@@ -554,7 +755,8 @@
                     socket.emit('screenReady', { screenId: SCREEN_ID, ts: Date.now() });
                     console.log('✅ *** SCREEN *** screenReady enviado tras recarga');
                 };
-                img.src = `${resolvePatternSrc()}?t=${Date.now()}`;
+        const srcForcedLegacy = (data && data.forceProcessed) ? '/processed/processed.png' : resolvePatternSrc();
+        img.src = `${srcForcedLegacy}?t=${Date.now()}`;
                 
                 console.log('✅ *** CONFIRMACIÓN *** Screen/1 actualizado con processed.png más reciente');
             }
@@ -576,7 +778,7 @@
             }
 
             // Guardar exactamente lo que se ve en esta pantalla (6480x3840)
-            if (e.key === 'a' || e.key === 'A') {
+            if ((e.key === 'a' || e.key === 'A') && e.ctrlKey) {
                 (async () => {
                     try {
                         console.log('📸 Tecla A: guardando canvas actual como wallpaper.jpg...');
@@ -595,7 +797,7 @@
                             // Regenerar patrón para asegurar estado actual
                             console.log('🔄 Regenerando patrón antes de captura...');
                             generateStaticPattern();
-                            await new Promise(resolve => setTimeout(resolve, 200));
+                            await new Promise(resolve => setTimeout(resolve, 2000));
                         }
                         
                         const imageData = patternCanvas.toDataURL('image/png', 1.0);
@@ -610,41 +812,46 @@
                     }
                 })();
             }
+
+            // Cambiar overlay por teclas: Q=red.png, A=blue.png, Z=pink.png
+            if (!e.ctrlKey) {
+                if (e.key === 'q' || e.key === 'Q') {
+                    selectedImage = 'red';
+                    overlayLoaded = false;
+                    overlayImg.src = `/red.png?t=${Date.now()}`;
+                    console.log('#file:red.png');
+                } else if (e.key === 'a' || e.key === 'A') {
+                    selectedImage = 'blue';
+                    overlayLoaded = false;
+                    overlayImg.src = `/blue.png?t=${Date.now()}`;
+                    console.log('#file:blue.png');
+                } else if (e.key === 'z' || e.key === 'Z') {
+                    selectedImage = 'pink';
+                    overlayLoaded = false;
+                    overlayImg.src = `/pink.png?t=${Date.now()}`;
+                    console.log('#file:pink.png');
+                }
+            }
         });
 
-        // Cargar imagen base y inicializar
-        img.onload = () => {
-            imgLoaded = true;
-            setupCanvas();
-            generateStaticPattern();
-        };
+        // Los manejadores de carga de imagen ahora están integrados en el sistema robusto
+        // Ver funciones loadBaseImageRobust() y loadOverlayImageRobust() arriba
 
-    img.onerror = () => {
-            console.error('Error loading pattern image');
-            elements.connectionStatus.textContent = '❌ Error cargando imagen de patrón';
-            elements.connectionStatus.style.background = '#dc3545';
-        };
+        // Inicialización
+        function initializeImages() {
+            console.log('🎬 Inicializando sistema de imágenes robusto');
+            
+            // Cargar imagen base
+            loadBaseImageRobust();
+            
+            // Cargar imagen superpuesta inicial
+            loadOverlayImageRobust(selectedImage);
+        }
 
-        // Cargar imagen superpuesta (blue, red, pink)
-        overlayImg.onload = () => { 
-            overlayLoaded = true; 
-            console.log(`✅ Overlay image loaded: ${overlayImg.src}`);
-            console.log(`📐 Overlay dimensions: ${overlayImg.width}x${overlayImg.height}`);
-            if (imgLoaded) generateStaticPattern(); 
-        };
-        
-        overlayImg.onerror = () => { 
-            console.error(`❌ Error loading overlay image: ${overlayImg.src}`); 
-        };
-
-        // Cargar imagen base para el patrón según fuente seleccionada
-        img.src = resolvePatternSrc();
-        
-        // Cargar imagen superpuesta inicial
-        overlayImg.src = `/${selectedImage}.png`;
-
-    // Inicialización
+        // Inicialización
         setupCanvas();
+        startProcessedAutoRefresh();
+        initializeImages();
 
     </script>
 </body>
