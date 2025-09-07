@@ -1,0 +1,192 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Comparación Brush Reveal - Original vs Minimal</title>
+    <style>
+        body { 
+            font-family: Arial, sans-serif; 
+            margin: 20px; 
+            background: #f0f0f0; 
+        }
+        .container { 
+            max-width: 1200px; 
+            margin: 0 auto; 
+        }
+        .comparison-grid { 
+            display: grid; 
+            grid-template-columns: 1fr 1fr; 
+            gap: 20px; 
+            margin-top: 20px; 
+        }
+        .version-section { 
+            background: white; 
+            padding: 20px; 
+            border-radius: 8px; 
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1); 
+        }
+        h1 { 
+            text-align: center; 
+            color: #333; 
+        }
+        h2 { 
+            color: #555; 
+            border-bottom: 2px solid #ddd; 
+            padding-bottom: 10px; 
+        }
+        .brush-links { 
+            display: grid; 
+            grid-template-columns: repeat(3, 1fr); 
+            gap: 10px; 
+            margin-top: 15px; 
+        }
+        .brush-link { 
+            display: block; 
+            padding: 10px; 
+            background: #007bff; 
+            color: white; 
+            text-decoration: none; 
+            text-align: center; 
+            border-radius: 4px; 
+            transition: background-color 0.2s; 
+        }
+        .brush-link:hover { 
+            background: #0056b3; 
+        }
+        .minimal-link { 
+            background: #28a745; 
+        }
+        .minimal-link:hover { 
+            background: #1e7e34; 
+        }
+        .features { 
+            margin-top: 15px; 
+        }
+        .features ul { 
+            margin: 10px 0; 
+            padding-left: 20px; 
+        }
+        .features li { 
+            margin: 5px 0; 
+        }
+        .performance-note { 
+            background: #fff3cd; 
+            border: 1px solid #ffeaa7; 
+            padding: 15px; 
+            border-radius: 4px; 
+            margin-top: 20px; 
+        }
+        .performance-note h3 { 
+            margin-top: 0; 
+            color: #856404; 
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🎨 Comparación Brush Reveal</h1>
+        <p style="text-align: center; color: #666; font-size: 18px;">
+            Compara el rendimiento entre la versión original y la versión minimalista
+        </p>
+
+        <div class="comparison-grid">
+            <!-- Versión Original -->
+            <div class="version-section">
+                <h2>📊 Versión Original (Completa)</h2>
+                
+                <div class="features">
+                    <h4>Características:</h4>
+                    <ul>
+                        <li>Sistema completo de coloreado con efectos</li>
+                        <li>Múltiples tipos de trazos (strokes, spirals, droplets)</li>
+                        <li>Sistema de wash y final sealing</li>
+                        <li>Monitor de FPS integrado</li>
+                        <li>Sistema de fade transitions</li>
+                        <li>Múltiples watchdogs y timeouts</li>
+                        <li>Pool de canvas temporales</li>
+                        <li>Sistema completo de slideshow</li>
+                    </ul>
+                    
+                    <h4>⚠️ Problemas conocidos:</h4>
+                    <ul style="color: #d73527;">
+                        <li>Procesos continúan después del coloreado</li>
+                        <li>FPS se degradan con el tiempo</li>
+                        <li>Múltiples RAF concurrentes</li>
+                        <li>Alto uso de memoria</li>
+                    </ul>
+                </div>
+
+                <div class="brush-links">
+                    <a href="/brush-reveal/1" class="brush-link" target="_blank">Brush 1</a>
+                    <a href="/brush-reveal/2" class="brush-link" target="_blank">Brush 2</a>
+                    <a href="/brush-reveal/3" class="brush-link" target="_blank">Brush 3</a>
+                    <a href="/brush-reveal/4" class="brush-link" target="_blank">Brush 4</a>
+                    <a href="/brush-reveal/5" class="brush-link" target="_blank">Brush 5</a>
+                    <a href="/brush-reveal/6" class="brush-link" target="_blank">Brush 6</a>
+                    <a href="/brush-reveal/7" class="brush-link" target="_blank">Brush 7</a>
+                    <a href="/brush-reveal/8" class="brush-link" target="_blank">Brush 8</a>
+                    <a href="/brush-reveal/9" class="brush-link" target="_blank">Brush 9</a>
+                </div>
+            </div>
+
+            <!-- Versión Minimal -->
+            <div class="version-section">
+                <h2>⚡ Versión Minimal (Optimizada)</h2>
+                
+                <div class="features">
+                    <h4>Características:</h4>
+                    <ul>
+                        <li>✅ Gestor de coloreado simplificado</li>
+                        <li>✅ Gestor de selección de imágenes por brushId</li>
+                        <li>✅ Gestor de slideshow (brush 3 y 7)</li>
+                        <li>✅ Gestor de video fullscreen (brush 3 y 7)</li>
+                        <li>✅ WebSocket para recibir comandos</li>
+                        <li>✅ Layout responsivo por secciones</li>
+                    </ul>
+                    
+                    <h4>✨ Optimizaciones:</h4>
+                    <ul style="color: #28a745;">
+                        <li>Sin bucles infinitos</li>
+                        <li>RAF controlados y limitados</li>
+                        <li>Limpieza automática de recursos</li>
+                        <li>Código minimalista (~300 líneas)</li>
+                        <li>Bajo uso de memoria</li>
+                        <li>Performance estable</li>
+                    </ul>
+                </div>
+
+                <div class="brush-links">
+                    <a href="/brush-minimal/1" class="brush-link minimal-link" target="_blank">Brush 1</a>
+                    <a href="/brush-minimal/2" class="brush-link minimal-link" target="_blank">Brush 2</a>
+                    <a href="/brush-minimal/3" class="brush-link minimal-link" target="_blank">Brush 3</a>
+                    <a href="/brush-minimal/4" class="brush-link minimal-link" target="_blank">Brush 4</a>
+                    <a href="/brush-minimal/5" class="brush-link minimal-link" target="_blank">Brush 5</a>
+                    <a href="/brush-minimal/6" class="brush-link minimal-link" target="_blank">Brush 6</a>
+                    <a href="/brush-minimal/7" class="brush-link minimal-link" target="_blank">Brush 7</a>
+                    <a href="/brush-minimal/8" class="brush-link minimal-link" target="_blank">Brush 8</a>
+                    <a href="/brush-minimal/9" class="brush-link minimal-link" target="_blank">Brush 9</a>
+                </div>
+            </div>
+        </div>
+
+        <div class="performance-note">
+            <h3>🎯 Prueba de Performance</h3>
+            <p><strong>Instrucciones:</strong></p>
+            <ol>
+                <li>Abre una versión original y una minimal en pestañas separadas</li>
+                <li>Observa el comportamiento durante y después del coloreado</li>
+                <li>Usa las herramientas de desarrollo del navegador para monitorear:
+                    <ul>
+                        <li><strong>Performance tab:</strong> Para ver CPU usage y frame drops</li>
+                        <li><strong>Memory tab:</strong> Para ver uso de memoria</li>
+                        <li><strong>Console:</strong> Para ver logs de actividad</li>
+                    </ul>
+                </li>
+                <li>Compara los FPS y uso de recursos después de que termine la animación</li>
+            </ol>
+            <p><strong>Esperado:</strong> La versión minimal debería mantener FPS estables y bajo uso de CPU después del coloreado, mientras que la original puede continuar procesando innecesariamente.</p>
+        </div>
+    </div>
+</body>
+</html>

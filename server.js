@@ -143,6 +143,21 @@ function resumeCentralColorScheduler() {
     scheduleNextColorBoundary();
 }
 
+// AUTO-INICIO de la secuencia de color al levantar el servidor
+// Se programa un pequeño delay para permitir que globalState se cargue primero
+setTimeout(() => {
+    if (!colorStepScheduler.active) {
+        console.log('🚀 Auto-start ColorScheduler al iniciar servidor');
+        startCentralColorScheduler();
+        // Emitir un paso inicial rápido si aún no hay ninguno
+        setTimeout(() => {
+            if (!colorStepScheduler.lastStep) {
+                emitNextColorStep();
+            }
+        }, 800);
+    }
+}, 1200);
+
 // Servir archivos estáticos
 app.use(express.static(__dirname));
 app.use('/patterns', express.static(path.join(__dirname, 'patterns')));
@@ -608,9 +623,28 @@ app.get('/brush-reveal/:id', (req, res) => {
     }
 });
 
+// NUEVA RUTA: Versión minimal de brush-reveal
+app.get('/brush-minimal', (req, res) => {
+    res.sendFile(path.join(__dirname, 'brush-minimal.html'));
+});
+
+app.get('/brush-minimal/:id', (req, res) => {
+    const brushId = parseInt(req.params.id);
+    if (brushId >= 1 && brushId <= 9) {
+        res.sendFile(path.join(__dirname, 'brush-minimal.html'));
+    } else {
+        res.status(404).send('Brush minimal ID must be between 1 and 9');
+    }
+});
+
 // Página de prueba para todos los brush-reveals
 app.get('/test-brush', (req, res) => {
     res.sendFile(path.join(__dirname, 'test-brush-reveals.html'));
+});
+
+// NUEVA RUTA: Página de comparación Original vs Minimal
+app.get('/comparison', (req, res) => {
+    res.sendFile(path.join(__dirname, 'test-comparison.html'));
 });
 
 // Página de test para rotación automática
@@ -770,6 +804,14 @@ io.on('connection', (socket) => {
                     console.warn('⚠️ No se pudo reenviar estado de secuencia al nuevo cliente:', e.message);
                 }
             }
+            // Forzar que el cliente pase a modo secuencia (en caso de venir mostrando wallpaper inicial)
+            try { socket.emit('switchToSequenceMode'); } catch(_) {}
+            // Si ya existe un último paso del scheduler central, reenviarlo para aplicar color inmediato
+            if (colorStepScheduler.lastStep) {
+                setTimeout(() => {
+                    try { socket.emit('nextColorStep', colorStepScheduler.lastStep); } catch(_) {}
+                }, 400); // pequeño delay para que el cliente procese switchToSequenceMode primero
+            }
         } else {
             // Configuración para screens normales
             socket.emit('initialState', {
@@ -880,6 +922,37 @@ io.on('connection', (socket) => {
                 io.emit('imageSelected', { image });
             }
         }
+    });
+
+    // NUEVO: salto manual a un patrón específico en la secuencia de color
+    socket.on('jumpToColorPattern', ({ pattern }) => {
+        const client = connectedClients.get(socket.id);
+        if (!client || client.type !== 'control') return;
+        if (!pattern) return;
+        const idx = colorStepScheduler.patterns.indexOf(pattern);
+        if (idx === -1) {
+            console.warn('⚠️ jumpToColorPattern: patrón no encontrado', pattern);
+            return;
+        }
+        if (!colorStepScheduler.active) {
+            console.log('▶️ Arrancando scheduler antes de salto manual');
+            startCentralColorScheduler();
+        }
+        colorStepScheduler.currentIndex = idx;
+        console.log(`⏭️ Salto manual solicitado -> ${pattern} (idx ${idx})`);
+        emitNextColorStep();
+    });
+
+    // NUEVO: Forzar mostrar wallpaper.jpg en todos los brush-reveal
+    socket.on('forceWallpaperPattern', () => {
+        const client = connectedClients.get(socket.id);
+        if (!client || client.type !== 'control') return;
+        console.log('🖼️ *** SERVER *** Forzando wallpaper.jpg en todos los brush-reveal');
+        connectedClients.forEach(c => {
+            if (c.type === 'brush-reveal' && c.socket.connected) {
+                c.socket.emit('forceWallpaperPattern');
+            }
+        });
     });
 
     // NUEVO: Manejar rotación automática de imágenes para brush-reveal
@@ -1014,10 +1087,9 @@ io.on('connection', (socket) => {
             const nowTs = Date.now();
             // Reusar ancla si ya estaba activa para no desincronizar
             if (!autoSeqActive || !autoSeqState) {
-                const startAt = nowTs + 1500; // pequeño buffer para que todos lleguen
                 autoSeqState = {
                     timestamp: nowTs,
-                    startAt,
+                    startAt: nowTs + 1500, // pequeño buffer para que todos lleguen
                     intervalTime: globalState.general.colorSequenceIntervalMs || 40000,
                     patterns: ['amarillo.jpg','rojo.jpg','azul.jpg','logo1.jpg','logo2.jpg'],
                     currentIndex: 0
@@ -1029,7 +1101,7 @@ io.on('connection', (socket) => {
             }
             autoSeqActive = true;
             
-            console.log(`⏰ *** SERVER *** Sync ts=${nowTs}, startAt=${startAt}`);
+            console.log(`⏰ *** SERVER *** Sync ts=${nowTs}, startAt=${autoSeqState.startAt}`);
             
             // Iniciar programador central (si no está activo)
             startCentralColorScheduler(autoSeqState.intervalTime);
