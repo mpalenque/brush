@@ -143,6 +143,9 @@ function initializeControlPanel() {
     // Generar UI
     generateScreenControls();
     updateUI();
+
+    // Configurar botones de salto manual de secuencia de color
+    setupManualColorJumpButtons();
     
     console.log('Panel de control inicializado correctamente');
 }
@@ -1305,6 +1308,46 @@ function setupPatternSourceButtons() {
     });
     // Inicial según estado global si existe
     updatePatternSourceUI(window.initialPatternSource || 'processed');
+}
+
+// ==============================
+// SALTO MANUAL DE SECUENCIA DE COLOR
+// ==============================
+function setupManualColorJumpButtons() {
+    const btns = document.querySelectorAll('.jump-color-btn');
+    if (!btns.length) return;
+    btns.forEach(btn => {
+        btn.addEventListener('click', () => {
+            const pattern = btn.dataset.pattern;
+            if (socket && socket.connected) {
+                socket.emit('jumpToColorPattern', { pattern });
+                const status = document.getElementById('connectionStatus');
+                if (status) {
+                    const original = status.textContent;
+                    status.textContent = `⏭️ Salto manual a ${pattern}`;
+                    status.style.background = '#ffc107';
+                    setTimeout(() => { status.textContent = original; status.style.background=''; }, 1500);
+                }
+            }
+        });
+    });
+
+    // Botón especial para disparar wallpaper.jpg
+    const wallpaperBtn = document.getElementById('jumpWallpaperBtn');
+    if (wallpaperBtn) {
+        wallpaperBtn.addEventListener('click', () => {
+            if (socket && socket.connected) {
+                socket.emit('forceWallpaperPattern');
+                const status = document.getElementById('connectionStatus');
+                if (status) {
+                    const original = status.textContent;
+                    status.textContent = `🖼️ Mostrando wallpaper.jpg en todas las pantallas`;
+                    status.style.background = '#222';
+                    setTimeout(() => { status.textContent = original; status.style.background=''; }, 1500);
+                }
+            }
+        });
+    }
 }
 
 function setPatternSource(source) {

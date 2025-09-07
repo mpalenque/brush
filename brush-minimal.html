@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Brush Reveal Minimal</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { 
+            background: #E89E54; 
+            overflow: hidden; 
+            font-family: Arial, sans-serif;
+        }
+        #container { 
+            position: fixed; 
+            inset: 0; 
+            width: 100vw; 
+            height: 100vh; 
+        }
+        .js-canvas { 
+            width: 100%; 
+            height: 100%; 
+            display: block; 
+        }
+        #slideshow-container {
+            position: absolute;
+            pointer-events: none;
+            overflow: hidden;
+            display: none;
+        }
+        #slideshow-video {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            display: none;
+            z-index: 5;
+        }
+        .slideshow-shadow {
+            position: absolute;
+            pointer-events: none;
+            z-index: 10;
+        }
+        #fullscreen-video {
+            position: fixed;
+            inset: 0;
+            width: 100vw;
+            height: 100vh;
+            object-fit: cover;
+            z-index: 9999;
+            display: none;
+        }
+    </style>
+</head>
+<body>
+    <div id="container">
+        <canvas class="js-canvas"></canvas>
+    </div>
+    
+    <script src="/socket.io/socket.io.js"></script>
+    <script src="/brush-minimal.js"></script>
+</body>
+</html>
