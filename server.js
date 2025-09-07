@@ -55,7 +55,8 @@ let sequenceReturnTimeoutId = null;
 // ==============================
 // PROGRAMADOR CENTRAL DE PASOS DE COLOR
 // ==============================
-const COLOR_DURATION_MS = 28000; // Debe coincidir con DURATION_MS del cliente
+// Debe coincidir EXACTAMENTE con DURATION_MS del cliente (brush-minimal.js)
+const COLOR_DURATION_MS = 30000;
 let colorStepScheduler = {
     active: false,
     paused: false,
@@ -66,8 +67,13 @@ let colorStepScheduler = {
     // Nuevo orden solicitado: amarillo -> rojo -> azul -> logo1 -> logo2
     patterns: ['amarillo.jpg','rojo.jpg','azul.jpg','logo1.jpg','logo2.jpg'],
     currentIndex: 0,
-    lastStep: null
+    lastStep: null,
+    nextIntervalOverrideMs: null // permite un intervalo especial (logo1->logo2)
 };
+
+const LOGO_CHAIN_INTERVAL_MS = 1800; // tiempo reducido entre logo1 y logo2
+const WALLPAPER_HOLD_MS = 45000; // mostrar wallpaper.jpg antes de reanudar secuencia
+let wallpaperHoldTimer = null;
 
 function emitNextColorStep() {
     if (!colorStepScheduler.active || colorStepScheduler.paused) return;
@@ -85,6 +91,12 @@ function emitNextColorStep() {
         }
     });
     colorStepScheduler.currentIndex = (colorStepScheduler.currentIndex + 1) % colorStepScheduler.patterns.length;
+    // Si el patrón actual es logo1, forzar intervalo corto hacia logo2
+    if (pattern === 'logo1.jpg') {
+        colorStepScheduler.nextIntervalOverrideMs = LOGO_CHAIN_INTERVAL_MS;
+    } else {
+        colorStepScheduler.nextIntervalOverrideMs = null;
+    }
 }
 
 function scheduleNextColorBoundary() {
@@ -96,12 +108,14 @@ function scheduleNextColorBoundary() {
     while (colorStepScheduler.nextBoundary <= now) {
         // Emit inmediatamente si ya pasó la frontera (catch-up) pero evitar loop infinito
         emitNextColorStep();
-        colorStepScheduler.nextBoundary += colorStepScheduler.periodMs;
+        const interval = colorStepScheduler.nextIntervalOverrideMs || colorStepScheduler.periodMs;
+        colorStepScheduler.nextBoundary += interval;
     }
     const delay = Math.max(0, colorStepScheduler.nextBoundary - Date.now());
     colorStepScheduler.timeoutId = setTimeout(() => {
         emitNextColorStep();
-        colorStepScheduler.nextBoundary += colorStepScheduler.periodMs;
+        const interval = colorStepScheduler.nextIntervalOverrideMs || colorStepScheduler.periodMs;
+        colorStepScheduler.nextBoundary += interval;
         scheduleNextColorBoundary();
     }, delay);
 }
@@ -141,6 +155,33 @@ function resumeCentralColorScheduler() {
     colorStepScheduler.paused = false;
     console.log('▶️ *** SERVER *** Reanudando ColorScheduler');
     scheduleNextColorBoundary();
+}
+
+// NUEVA: Función para salto manual con recálculo correcto de timing
+function jumpToPatternAndResync(targetIndex, pattern) {
+    if (!colorStepScheduler.active) return;
+    
+    // Cancelar timeout actual
+    if (colorStepScheduler.timeoutId) {
+        clearTimeout(colorStepScheduler.timeoutId);
+        colorStepScheduler.timeoutId = null;
+    }
+    
+    // Cambiar al patrón objetivo
+    colorStepScheduler.currentIndex = targetIndex;
+    console.log(`⏭️ Salto manual -> ${pattern} (idx ${targetIndex})`);
+    
+    // Emitir inmediatamente el nuevo patrón
+    emitNextColorStep();
+    
+    // CLAVE: Recalcular nextBoundary desde AHORA para mantener el timing correcto
+    const now = Date.now();
+    colorStepScheduler.nextBoundary = now + colorStepScheduler.periodMs;
+    
+    // Reprogramar el siguiente paso con el timing correcto
+    scheduleNextColorBoundary();
+    
+    console.log(`🔄 Timing recalculado - próximo paso en ${colorStepScheduler.periodMs}ms desde ahora`);
 }
 
 // AUTO-INICIO de la secuencia de color al levantar el servidor
@@ -938,9 +979,9 @@ io.on('connection', (socket) => {
             console.log('▶️ Arrancando scheduler antes de salto manual');
             startCentralColorScheduler();
         }
-        colorStepScheduler.currentIndex = idx;
-        console.log(`⏭️ Salto manual solicitado -> ${pattern} (idx ${idx})`);
-        emitNextColorStep();
+        
+        // CORREGIDO: Hacer salto manual con recálculo de timing correcto
+        jumpToPatternAndResync(idx, pattern);
     });
 
     // NUEVO: Forzar mostrar wallpaper.jpg en todos los brush-reveal
@@ -1144,29 +1185,18 @@ io.on('connection', (socket) => {
     socket.on('nextColorStep', () => {
         const client = connectedClients.get(socket.id);
         if (client && client.type === 'control') {
-            console.log('⏭️ *** SERVER *** Ejecutando siguiente paso de color');
+            console.log('⏭️ *** SERVER *** Ejecutando siguiente paso de color manual');
             
-            // Crear timestamp de sincronización
-            const syncTimestamp = Date.now();
-        // Determinar patrón actual del paso según el orden deseado
-    const seq = ['amarillo.jpg', 'rojo.jpg', 'azul.jpg', 'logo1.jpg', 'logo2.jpg'];
-        // Guardar y actualizar índice en estado de servidor
-        server._colorSeqIndex = (server._colorSeqIndex || 0) % seq.length;
-        const pattern = seq[server._colorSeqIndex];
-        server._colorSeqIndex = (server._colorSeqIndex + 1) % seq.length;
-        if (autoSeqActive && autoSeqState) {
-            autoSeqState.patterns = seq;
-            autoSeqState.currentIndex = server._colorSeqIndex;
-        }
+            if (!colorStepScheduler.active) {
+                console.log('▶️ Arrancando scheduler antes de paso manual');
+                startCentralColorScheduler();
+            }
             
-            // Enviar comando con timestamp a todos los brush-reveal
-            connectedClients.forEach((otherClient) => {
-                if (otherClient.type === 'brush-reveal' && otherClient.socket.connected) {
-            otherClient.socket.emit('nextColorStep', { timestamp: syncTimestamp, pattern, currentIndex: server._colorSeqIndex });
-                }
-            });
-            
-        console.log(`📡 *** SERVER *** Comando nextColorStep enviado con patrón=${pattern} ts=${syncTimestamp}`);
+            // CORREGIDO: Usar jumpToPatternAndResync para mantener timing correcto
+            // Avanzar al siguiente patrón en la secuencia
+            const nextIndex = colorStepScheduler.currentIndex % colorStepScheduler.patterns.length;
+            const pattern = colorStepScheduler.patterns[nextIndex];
+            jumpToPatternAndResync(nextIndex, pattern);
         }
     });
     
@@ -1214,14 +1244,8 @@ io.on('connection', (socket) => {
         if (client && client.type === 'control') {
             console.log('🔄 *** SERVER *** Reseteando secuencia de coloreado a amarillo');
             
-            // Enviar comando a todos los brush-reveal
-            connectedClients.forEach((otherClient) => {
-                if (otherClient.type === 'brush-reveal' && otherClient.socket.connected) {
-                    otherClient.socket.emit('resetColorSequence');
-                }
-            });
-            
-            console.log('📡 *** SERVER *** Comando resetColorSequence enviado a brush-reveal clients');
+            // Usar la función de resincronización para resetear a amarillo (index 0)
+            jumpToPatternAndResync(0, 'Reset to amarillo');
         }
     });
 
@@ -1256,6 +1280,15 @@ io.on('connection', (socket) => {
             // Generar ID de secuencia único
             const sequenceId = `wallpaper_manual_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
             currentWallpaperSequenceId = sequenceId;
+
+            // THROTTLE SIMPLE: evitar duplicados inmediatos (p.e. UI doble click)
+            if (!global.__lastSwitchWallpaperTs) global.__lastSwitchWallpaperTs = 0;
+            const nowTs = Date.now();
+            if (nowTs - global.__lastSwitchWallpaperTs < 800) {
+                console.log('⏩ switchToWallpaperMode ignorado (throttle <800ms)');
+                return;
+            }
+            global.__lastSwitchWallpaperTs = nowTs;
             
             // Enviar comando a todos los brush-reveal
             connectedClients.forEach((otherClient) => {
@@ -1809,11 +1842,27 @@ io.on('connection', (socket) => {
             fs.copyFileSync(processedPath, wallpaperPath);
             
             console.log('✅ *** CONFIRMACIÓN *** wallpaper.jpg guardado exitosamente desde processed.png');
+            // Notificar a solicitante
             socket.emit('wallpaperSaved', { 
                 success: true, 
                 message: 'wallpaper.jpg guardado desde processed.png',
                 timestamp: Date.now()
             });
+            // Broadcast a todas las pantallas para que entren en modo wallpaper (fade + coloreo)
+            io.emit('switchToWallpaperMode', { timestamp: Date.now() });
+            // Pausar secuencia de colores durante hold
+            if (colorStepScheduler.active && !colorStepScheduler.paused) {
+                pauseCentralColorScheduler();
+            }
+            if (wallpaperHoldTimer) clearTimeout(wallpaperHoldTimer);
+            wallpaperHoldTimer = setTimeout(() => {
+                // Reanudar secuencia
+                if (colorStepScheduler.active && colorStepScheduler.paused) {
+                    resumeCentralColorScheduler();
+                } else if (!colorStepScheduler.active) {
+                    startCentralColorScheduler();
+                }
+            }, WALLPAPER_HOLD_MS);
 
         } catch (error) {
             console.error('❌ Error guardando wallpaper.jpg:', error);
