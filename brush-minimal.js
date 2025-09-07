@@ -4,12 +4,21 @@
 // ==============================
 
 // CONFIGURACIÓN BÁSICA
-const DURATION_MS = 30000; // 30 segundos para coloreado más lento
+const DURATION_MS = 30000; // 30 segundos para coloreado más lento (colores)
+// Logos: acelerar fade-in y soportar crossfade directo
+const LOGO_FADE_IN_DURATION_MS = 1500; // antes 9000ms
+const LOGO_CROSSFADE_MS = 900; // duración crossfade logo1<->logo2
 // Eliminado delay artificial: revelar imagen desde el primer frame de coloreo
 const IMAGE_REVEAL_DELAY_MS = 0;
-const FADE_FINAL_DURATION = 5000; // 5 segundos para fade final
+// Eliminamos fade final: la imagen queda estática hasta próximo patrón
+const FADE_FINAL_DURATION = 0; // (legacy constant retained to avoid ref errors)
 const FADE_OUT_DURATION = 3000; // 3 segundos para fade-out entre transiciones
-const BACKGROUND_FADE_IN_DURATION = 3000; // 3 segundos para fade-in del fondo anaranjado
+// Fade-in aún más rápido (antes 2400, original 3000)
+const BACKGROUND_FADE_IN_DURATION = 1600; // 1.6s total
+// Iniciar coloreo MUCHO antes para reducir vacío visual
+const EARLY_COLORING_THRESHOLD = 0.18; // 18% (~288ms) del fade
+// Acelerar la cola del fade una vez que comenzó el coloreo para no prolongar fondo "plano"
+const FADE_TAIL_ACCEL_EXP = 0.6; // <1 => acelera
 const WALLPAPER_SECTION_WIDTH = 2160;
 const WALLPAPER_SECTION_HEIGHT = 3840;
 const WALLPAPER_TOTAL_WIDTH = 6480;
@@ -238,8 +247,17 @@ let animationProgress = 0;
 let animationStartTime = 0;
 let rafId = 0;
 
+// NUEVO: variables para manejar la próxima petición de patrón antes de que se cargue
+let upcomingPatternName = null; // e.g. 'amarillo.jpg'
+let upcomingIsLogoType = false;
+let lastPatternRequestedAt = 0;
+let lastPatternName = null;
+
 // Variables para fade-in de logos
 let logoFadeActive = false;
+let logoCrossfadeActive = false;
+let logoCrossfadeStartTime = 0;
+let previousLogoImage = null;
 
 // Variables para fade-out
 let fadeOutActive = false;
@@ -251,10 +269,20 @@ let nextImageToLoad = null;
 let backgroundFadeInActive = false;
 let backgroundFadeInProgress = 0;
 let backgroundFadeInStartTime = 0;
-let pendingAction = null; // 'coloring' | 'logoFadeIn' | 'deferredLoadAndColor'
-// Carga diferida de imagen (para wallpaper tras fade-in limpio)
-let deferredImageToLoad = null;
-let deferredMode = null; // 'coloring' | 'logo'
+let earlyColoringStarted = false;
+let earlyColoringTimeout = null;
+// NUEVO: soporte de crossfade
+let previousFrameCanvas = null;
+let previousFrameCtx = null;
+let hasPreviousFrame = false;
+let pendingAction = null; // 'coloring' o 'logoFadeIn'
+
+// Variable para cargar imagen DURANTE el coloreado (no antes del fade-in)
+let pendingImageToLoad = null;
+// Modo wallpaper (hold) para mostrar wallpaper sin avanzar secuencia
+let wallpaperHoldActive = false;
+let wallpaperHoldTimeout = null;
+const WALLPAPER_HOLD_CLIENT_MS = 45000; // debe coincidir con servidor
 
 // Elementos para simular brushes y strokes como en brush-reveal.js
 let brushElements = [];
@@ -264,63 +292,68 @@ function initBrushElements() {
     brushElements = [];
     strokeElements = [];
 
-    // Ajustado: aparición más rápida (startTimes reducidos) y semillas inmediatas
-    const numBrushes = 60 + Math.random() * 40; // 60-100
+    // MEJORADO: más elementos inmediatos y más grandes para visibilidad en primeros 3 segundos
+    const numBrushes = 80 + Math.random() * 60; // 80-140 (antes 60-100)
     for (let i = 0; i < numBrushes; i++) {
         brushElements.push({
             x: Math.random() * size.w,
             y: Math.random() * size.h,
-            radius: 120 + Math.random() * 300, // un poco más grandes para cubrir antes
-            opacity: 0.35 + Math.random() * 0.55,
-            growthRate: 1.3 + Math.random() * 0.9,
-            startTime: Math.random() * 0.4 // antes era hasta 0.9
+            radius: 180 + Math.random() * 400, // más grandes: 180-580 (antes 120-420)
+            opacity: 0.45 + Math.random() * 0.65, // más opacidad: 0.45-1.1 (antes 0.35-0.9)
+            growthRate: 1.5 + Math.random() * 1.2, // crecimiento más rápido
+            startTime: Math.random() * 0.3 // aparición más temprana: 0-30% (antes 40%)
         });
     }
 
-    const numStrokes = 40 + Math.random() * 20; // 40-60
+    const numStrokes = 60 + Math.random() * 40; // 60-100 (antes 40-60)
     for (let i = 0; i < numStrokes; i++) {
         strokeElements.push({
             startX: Math.random() * size.w,
             startY: Math.random() * size.h,
             endX: Math.random() * size.w,
             endY: Math.random() * size.h,
-            width: 55 + Math.random() * 140,
-            opacity: 0.3 + Math.random() * 0.5,
-            startTime: Math.random() * 0.3, // antes 0.8
-            waveAmplitude: 50 + Math.random() * 100,
+            width: 75 + Math.random() * 180, // más anchos: 75-255 (antes 55-195)
+            opacity: 0.4 + Math.random() * 0.6, // más opacidad
+            startTime: Math.random() * 0.2, // aparición muy temprana: 0-20% (antes 30%)
+            waveAmplitude: 60 + Math.random() * 120, // ondas más pronunciadas
             waveFrequency: 2.5 + Math.random() * 8,
             wavePhase: Math.random() * Math.PI * 2,
-            secondaryAmplitude: 20 + Math.random() * 40,
+            secondaryAmplitude: 25 + Math.random() * 50,
             secondaryFrequency: 1.0 + Math.random() * 3,
             secondaryPhase: Math.random() * Math.PI * 2
         });
     }
 
-    const numBigBrushes = 15 + Math.random() * 20;
+    const numBigBrushes = 25 + Math.random() * 35; // más elementos grandes: 25-60 (antes 15-35)
     for (let i = 0; i < numBigBrushes; i++) {
         brushElements.push({
             x: Math.random() * size.w,
             y: Math.random() * size.h,
-            radius: 350 + Math.random() * 650,
-            opacity: 0.25 + Math.random() * 0.45,
-            growthRate: 0.9 + Math.random() * 0.7,
-            startTime: Math.random() * 0.25,
+            radius: 450 + Math.random() * 800, // mucho más grandes: 450-1250 (antes 350-1000)
+            opacity: 0.35 + Math.random() * 0.55, // más opacidad
+            growthRate: 1.1 + Math.random() * 0.9, // crecimiento más rápido
+            startTime: Math.random() * 0.15, // aparición súper temprana: 0-15% (antes 25%)
             type: 'bigBrush'
         });
     }
 
-    // Semillas inmediatas: algunos elementos empiezan en t=0 para que se vea al instante
-    brushElements.slice(0, 12).forEach(b => b.startTime = 0);
-    strokeElements.slice(0, 8).forEach(s => s.startTime = 0);
-    console.log(`🖌️ Brushes inicializados: ${brushElements.length} (semillas inmediatas visibles)`);
+    // MUCHAS MÁS semillas inmediatas para visibilidad en primeros 3 segundos
+    brushElements.slice(0, 24).forEach(b => b.startTime = 0); // 24 inmediatos (antes 12)
+    strokeElements.slice(0, 16).forEach(s => s.startTime = 0); // 16 inmediatos (antes 8)
+    console.log(`🖌️ Brushes inicializados: ${brushElements.length} (${24} semillas inmediatas visibles)`);
 }
 
-function startColoring() {
+function startColoring(actionOverride = null) {
     if (animationActive || logoFadeActive || fadeOutActive || backgroundFadeInActive) return;
-    
-    // SIEMPRE comenzar con fade-in del fondo anaranjado
-    console.log('🎨 Iniciando fade-in del fondo anaranjado antes de colorear...');
-    pendingAction = isLogoType ? 'logoFadeIn' : 'coloring';
+    // Forzar acción pendiente según override o tipo de la PRÓXIMA imagen (si ya fue preclasificada)
+    if (actionOverride) {
+        pendingAction = actionOverride;
+    } else if (upcomingPatternName) {
+        pendingAction = upcomingIsLogoType ? 'logoFadeIn' : 'coloring';
+    } else {
+        pendingAction = isLogoType ? 'logoFadeIn' : 'coloring';
+    }
+    console.log(`🎨 Iniciando fade-in del fondo anaranjado antes de ${pendingAction}...`);
     startBackgroundFadeIn();
 }
 
@@ -337,10 +370,40 @@ function startBackgroundFadeIn() {
     }
     
     // Iniciar fade-in del fondo
+    // Capturar frame previo para crossfade sólo si no fue preparado externamente
+    if (!hasPreviousFrame) {
+        try {
+            if (!previousFrameCanvas) {
+                previousFrameCanvas = document.createElement('canvas');
+                previousFrameCtx = previousFrameCanvas.getContext('2d');
+            }
+            previousFrameCanvas.width = size.w;
+            previousFrameCanvas.height = size.h;
+            previousFrameCtx.clearRect(0,0,size.w,size.h);
+            previousFrameCtx.drawImage(canvas,0,0);
+            hasPreviousFrame = true;
+        } catch(e) {
+            hasPreviousFrame = false;
+        }
+    }
+
+    // Iniciar fade-in del fondo
     backgroundFadeInActive = true;
     backgroundFadeInProgress = 0;
     backgroundFadeInStartTime = performance.now();
     
+    // Programar inicio anticipado de coloreo (solo para patrones de color / wallpaper NO logos)
+    earlyColoringStarted = false;
+    if (pendingAction === 'coloring' && !isLogoType) {
+        // Fallback por timeout (por si frame rate bajo): inicia tras threshold*duración
+        earlyColoringTimeout = setTimeout(() => {
+            if (!animationActive && backgroundFadeInActive && !earlyColoringStarted) {
+                console.log('⚡ Inicio anticipado de coloreo (timeout)');
+                earlyColoringStarted = true;
+                executeColoring();
+            }
+        }, Math.max(50, BACKGROUND_FADE_IN_DURATION * EARLY_COLORING_THRESHOLD));
+    }
     rafId = requestAnimationFrame(backgroundFadeInLoop);
 }
 
@@ -348,11 +411,29 @@ function backgroundFadeInLoop(timestamp) {
     if (!backgroundFadeInActive) return;
     
     const elapsed = timestamp - backgroundFadeInStartTime;
-    backgroundFadeInProgress = Math.min(elapsed / BACKGROUND_FADE_IN_DURATION, 1);
+    const raw = Math.min(elapsed / BACKGROUND_FADE_IN_DURATION, 1);
+    // Aplicar aceleración de la porción final después de iniciar coloreo
+    if (earlyColoringStarted && raw > EARLY_COLORING_THRESHOLD) {
+        const t = (raw - EARLY_COLORING_THRESHOLD) / (1 - EARLY_COLORING_THRESHOLD); // 0..1
+        const fast = Math.pow(t, FADE_TAIL_ACCEL_EXP);
+        backgroundFadeInProgress = EARLY_COLORING_THRESHOLD + fast * (1 - EARLY_COLORING_THRESHOLD);
+    } else {
+        backgroundFadeInProgress = raw;
+    }
     
     // Renderizar fade-in del fondo
     renderBackgroundFadeIn();
     
+    // Inicio anticipado basado en progreso (sin esperar timeout) solo para coloreo
+    if (!earlyColoringStarted && pendingAction === 'coloring' && !isLogoType && backgroundFadeInProgress >= EARLY_COLORING_THRESHOLD) {
+        if (earlyColoringTimeout) { clearTimeout(earlyColoringTimeout); earlyColoringTimeout = null; }
+        if (!animationActive) {
+            console.log(`⚡ Inicio anticipado de coloreo al ${(backgroundFadeInProgress*100).toFixed(1)}% del fade`);
+            earlyColoringStarted = true;
+            executeColoring(); // Comienza mientras el fondo sigue apareciendo
+        }
+    }
+
     if (backgroundFadeInProgress < 1) {
         rafId = requestAnimationFrame(backgroundFadeInLoop);
     } else {
@@ -360,26 +441,11 @@ function backgroundFadeInLoop(timestamp) {
         backgroundFadeInActive = false;
         rafId = 0;
         console.log('✅ Fade-in del fondo completado, iniciando animación...');
-        
+        // Evitar doble inicio si ya hicimos early start
         if (pendingAction === 'logoFadeIn') {
             executeLogoFadeIn();
-        } else if (pendingAction === 'coloring') {
+        } else if (pendingAction === 'coloring' && !animationActive) {
             executeColoring();
-        } else if (pendingAction === 'deferredLoadAndColor') {
-            const img = deferredImageToLoad;
-            const mode = deferredMode;
-            deferredImageToLoad = null; deferredMode = null;
-            if (img) {
-                setCurrentImage(img).then(() => {
-                    if (mode === 'logo') {
-                        executeLogoFadeIn();
-                    } else {
-                        executeColoring();
-                    }
-                });
-            } else {
-                executeColoring();
-            }
         }
         
         pendingAction = null;
@@ -387,13 +453,16 @@ function backgroundFadeInLoop(timestamp) {
 }
 
 function renderBackgroundFadeIn() {
-    // Limpiar canvas
-    ctx.clearRect(0, 0, size.w, size.h);
-    
-    // Fade-in gradual del color de fondo anaranjado
+    // Base: crossfade entre frame previo y fondo naranja
+    ctx.clearRect(0,0,size.w,size.h);
+    if (hasPreviousFrame) {
+        ctx.globalAlpha = 1 - backgroundFadeInProgress;
+        ctx.drawImage(previousFrameCanvas,0,0);
+        ctx.globalAlpha = 1.0;
+    }
     ctx.globalAlpha = backgroundFadeInProgress;
     ctx.fillStyle = '#E89E54';
-    ctx.fillRect(0, 0, size.w, size.h);
+    ctx.fillRect(0,0,size.w,size.h);
     ctx.globalAlpha = 1.0;
 }
 
@@ -413,11 +482,12 @@ function executeColoring() {
 }
 
 function executeLogoFadeIn() {
-    console.log('🎨 Ejecutando fade-in para logo...');
+    console.log('🎨 Ejecutando fade-in para logo (rápido, sin fade-out)...');
+    logoCrossfadeActive = false;
+    previousLogoImage = null;
     logoFadeActive = true;
     animationProgress = 0;
     animationStartTime = performance.now();
-    // Primer frame: mostrar fondo naranja solamente (backgroundFadeIn ya ocurrió)
     rafId = requestAnimationFrame(logoFadeLoop);
 }
 
@@ -492,6 +562,38 @@ function fadeOutLoop(timestamp) {
 function renderFadeOut() {
     if (!currentImage || !layout.dw || !layout.dh) return;
     
+    // Durante fade-in del fondo, usamos crossfade + (si ya inició) el coloreo sobre capa
+    if (backgroundFadeInActive) {
+        // Dibujar base crossfade
+        renderBackgroundFadeIn();
+        // Si el coloreo ya inició (early start), sobreponer imagen con máscara parcial
+        if (animationActive && !isLogoType) {
+            // Aplicar máscara actual sin limpiar base crossfade
+            ctx.save();
+            ctx.globalCompositeOperation = 'source-over';
+            // Dibujar imagen completa primero en buffer temporal
+            const tempCanvas = document.createElement('canvas');
+            tempCanvas.width = size.w; tempCanvas.height = size.h;
+            const tctx = tempCanvas.getContext('2d');
+            tctx.drawImage(
+                currentImage,
+                layout.sourceX, layout.sourceY, layout.sourceWidth, layout.sourceHeight,
+                layout.dx, layout.dy, layout.dw, layout.dh
+            );
+            // Aplicar máscara
+            if (maskCanvas) {
+                tctx.globalCompositeOperation = 'destination-in';
+                tctx.drawImage(maskCanvas,0,0);
+            }
+            // Mezclar sobre lienzo principal con ligera ganancia de alpha para suavizar aparición
+            ctx.globalAlpha = Math.min(1, backgroundFadeInProgress + 0.15);
+            ctx.drawImage(tempCanvas,0,0);
+            ctx.globalAlpha = 1.0;
+            ctx.restore();
+        }
+        return; // Evitar render normal hasta que termine fade-in
+    }
+    
     // Limpiar canvas
     ctx.clearRect(0, 0, size.w, size.h);
     
@@ -560,72 +662,80 @@ function renderFadeOut() {
 
 function logoFadeLoop(timestamp) {
     if (!logoFadeActive) return;
-    
     const elapsed = timestamp - animationStartTime;
-    const totalDuration = DURATION_MS + FADE_OUT_DURATION; // 30s fade-in + 3s fade-out
-    
-    // Primera fase: fade-in (30 segundos)
-    if (elapsed < DURATION_MS) {
-        animationProgress = elapsed / DURATION_MS;
+    if (elapsed < LOGO_FADE_IN_DURATION_MS) {
+        animationProgress = elapsed / LOGO_FADE_IN_DURATION_MS;
         renderLogoFadeIn();
         rafId = requestAnimationFrame(logoFadeLoop);
-    }
-    // Segunda fase: fade-out (3 segundos)
-    else if (elapsed < totalDuration) {
-        const fadeOutProgress = (elapsed - DURATION_MS) / FADE_OUT_DURATION;
-        renderLogoFadeOut(fadeOutProgress);
-        rafId = requestAnimationFrame(logoFadeLoop);
-    }
-    // Terminado
-    else {
+    } else {
+        animationProgress = 1;
+        renderLogoFadeIn(); // mantener dibujado
         logoFadeActive = false;
         rafId = 0;
-        console.log('✅ Logo fade-in y fade-out completados');
-        
-        // Notificar al servidor
+        console.log('✅ Logo visible (fade-in completo, sin fade-out)');
         if (socket && socket.connected) {
-            socket.emit('animationCompleted', { brushId, timestamp: Date.now() });
+            socket.emit('animationCompleted', { brushId, pattern: currentImageType, timestamp: Date.now() });
         }
     }
 }
 
-function renderLogoFadeOut(fadeOutProgress) {
-    if (!currentImage || !layout.dw || !layout.dh) return;
-    
-    ctx.clearRect(0, 0, size.w, size.h);
-    
-    // Dibujar fondo
+function startLogoCrossfade(newImg) {
+    if (!currentImage) { currentImage = newImg; executeLogoFadeIn(); return; }
+    console.log('🔀 Crossfade logo -> logo');
+    previousLogoImage = currentImage;
+    currentImage = newImg;
+    calculateLayout();
+    logoFadeActive = false;
+    logoCrossfadeActive = true;
+    logoCrossfadeStartTime = performance.now();
+    rafId = requestAnimationFrame(logoCrossfadeLoop);
+}
+
+function logoCrossfadeLoop(timestamp) {
+    if (!logoCrossfadeActive) return;
+    const elapsed = timestamp - logoCrossfadeStartTime;
+    const p = Math.min(1, elapsed / LOGO_CROSSFADE_MS);
+    renderLogoCrossfade(p);
+    if (p < 1) {
+        rafId = requestAnimationFrame(logoCrossfadeLoop);
+    } else {
+        logoCrossfadeActive = false;
+        previousLogoImage = null;
+        console.log('✅ Crossfade logos completado');
+        if (socket && socket.connected) {
+            socket.emit('animationCompleted', { brushId, pattern: currentImageType, timestamp: Date.now() });
+        }
+    }
+}
+
+function renderLogoCrossfade(progress) {
+    ctx.clearRect(0,0,size.w,size.h);
     ctx.fillStyle = '#E89E54';
-    ctx.fillRect(0, 0, size.w, size.h);
-    
-    // Dibujar logo con fade-out
-    ctx.globalAlpha = 1 - fadeOutProgress;
+    ctx.fillRect(0,0,size.w,size.h);
     ctx.imageSmoothingEnabled = true;
     ctx.imageSmoothingQuality = 'high';
-    
-    // Para brushes [1, 4, 5, 9] con video, mostrar logo normal
-    if ([1, 4, 5, 9].includes(brushId)) {
-        // Logo normal fade-out
+    if (previousLogoImage) {
+        ctx.globalAlpha = 1 - progress;
+        drawLogoImage(previousLogoImage);
+    }
+    ctx.globalAlpha = progress;
+    drawLogoImage(currentImage);
+    ctx.globalAlpha = 1;
+}
+
+// (renderLogoFadeOut eliminado)
+
+function drawLogoImage(img) {
+    if (!img) return;
+    if ([1,4,5,9].includes(brushId) || [3,7].includes(brushId)) {
         ctx.drawImage(
-            currentImage,
+            img,
             layout.sourceX, layout.sourceY, layout.sourceWidth, layout.sourceHeight,
             layout.dx, layout.dy, layout.dw, layout.dh
         );
-    }
-    // Para brushes [3, 7] con slideshow, mostrar logo normal  
-    else if ([3, 7].includes(brushId)) {
-        // Logo normal fade-out (slideshow se mantiene por encima)
-        ctx.drawImage(
-            currentImage,
-            layout.sourceX, layout.sourceY, layout.sourceWidth, layout.sourceHeight,
-            layout.dx, layout.dy, layout.dw, layout.dh
-        );
-    }
-    // Para otros brushes, logo fullscreen fade-out
-    else {
-        // Logo fullscreen fade-out
-        const imgW = currentImage.naturalWidth;
-        const imgH = currentImage.naturalHeight;
+    } else {
+        const imgW = img.naturalWidth;
+        const imgH = img.naturalHeight;
         const scaleW = size.w / imgW;
         const scaleH = size.h / imgH;
         const scale = Math.max(scaleW, scaleH);
@@ -633,135 +743,48 @@ function renderLogoFadeOut(fadeOutProgress) {
         const drawH = imgH * scale;
         const drawX = (size.w - drawW) / 2;
         const drawY = (size.h - drawH) / 2;
-        
-        ctx.drawImage(currentImage, drawX, drawY, drawW, drawH);
+        ctx.drawImage(img, drawX, drawY, drawW, drawH);
     }
-    
-    ctx.globalAlpha = 1.0;
 }
 
 function renderLogoFadeIn() {
     if (!currentImage || !layout.dw || !layout.dh) return;
-    
-    ctx.clearRect(0, 0, size.w, size.h);
-    
-    // Dibujar fondo
+    ctx.clearRect(0,0,size.w,size.h);
     ctx.fillStyle = '#E89E54';
-    ctx.fillRect(0, 0, size.w, size.h);
-    
-    // Para brushes [1, 4, 5, 9] con video, mostrar logo normal (video se superpone)
-    if ([1, 4, 5, 9].includes(brushId)) {
-        // Logo normal con layout calculado - el video se superpone después
-        ctx.globalAlpha = animationProgress;
-        ctx.imageSmoothingEnabled = true;
-        ctx.imageSmoothingQuality = 'high';
-        ctx.drawImage(
-            currentImage,
-            layout.sourceX, layout.sourceY, layout.sourceWidth, layout.sourceHeight,
-            layout.dx, layout.dy, layout.dw, layout.dh
-        );
-        ctx.globalAlpha = 1.0;
-    } 
-    // Para brushes [3, 7] mostrar logo normal (slideshow se superpone) 
-    else if ([3, 7].includes(brushId)) {
-        // Logo normal con layout calculado - el slideshow se mantiene por encima
-        ctx.globalAlpha = animationProgress;
-        ctx.imageSmoothingEnabled = true;
-        ctx.imageSmoothingQuality = 'high';
-        ctx.drawImage(
-            currentImage,
-            layout.sourceX, layout.sourceY, layout.sourceWidth, layout.sourceHeight,
-            layout.dx, layout.dy, layout.dw, layout.dh
-        );
-        ctx.globalAlpha = 1.0;
-    }
-    // Para otros brushes, mostrar logo fullscreen
-    else {
-        // Mostrar logo fullscreen como amarillo.jpg (ancho completo, alto cropeado)
-        const imgW = currentImage.naturalWidth;
-        const imgH = currentImage.naturalHeight;
-        
-        // Calcular para mostrar fullscreen manteniendo aspect ratio
-        const scaleW = size.w / imgW;
-        const scaleH = size.h / imgH;
-        const scale = Math.max(scaleW, scaleH); // Llenar pantalla completa
-        
-        const drawW = imgW * scale;
-        const drawH = imgH * scale;
-        const drawX = (size.w - drawW) / 2;
-        const drawY = (size.h - drawH) / 2;
-        
-        // Dibujar logo fullscreen con fade-in progresivo
-        ctx.globalAlpha = animationProgress;
-        ctx.imageSmoothingEnabled = true;
-        ctx.imageSmoothingQuality = 'high';
-        ctx.drawImage(currentImage, drawX, drawY, drawW, drawH);
-        ctx.globalAlpha = 1.0;
-    }
+    ctx.fillRect(0,0,size.w,size.h);
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = 'high';
+    const effectiveProgress = animationProgress;
+    ctx.globalAlpha = effectiveProgress;
+    drawLogoImage(currentImage);
+    ctx.globalAlpha = 1;
 }
 
 function coloringLoop(timestamp) {
     if (!animationActive) return;
     const elapsed = timestamp - animationStartTime;
-    const totalDuration = DURATION_MS + FADE_FINAL_DURATION;
 
     if (elapsed < DURATION_MS) { // fase de coloreado
         animationProgress = elapsed / DURATION_MS;
+
         updateBrushMask();
-        // Siempre mostrar la imagen con máscara desde el primer frame
         render();
         rafId = requestAnimationFrame(coloringLoop);
-    } else if (elapsed < totalDuration) { // fade final
-        const fadeProgress = (elapsed - DURATION_MS) / FADE_FINAL_DURATION;
-        renderFinalFade(fadeProgress);
-        rafId = requestAnimationFrame(coloringLoop);
-    } else { // terminado
+    } else { // terminado SIN fade final
         animationActive = false;
         rafId = 0;
-        console.log('✅ Coloreado completado con fade final');
-        renderFinalComplete();
+        console.log('✅ Coloreado completado (sin fade final, imagen permanece estática)');
+        renderFinalComplete(); // mostrar imagen completa sin máscara
+        // No se hace ningún fade-out ni reset: se espera próximo patrón
         if (socket && socket.connected) {
-            socket.emit('animationCompleted', { brushId, timestamp: Date.now() });
+            socket.emit('animationCompleted', { brushId, pattern: currentImageType, timestamp: Date.now() });
         }
+        // Limpiar máscara para que no se reutilice en próximo ciclo accidentalmente
+        maskCtx.clearRect(0,0,maskCanvas.width,maskCanvas.height);
     }
 }
 
-function renderFinalFade(fadeProgress) {
-    if (!currentImage || !layout.dw || !layout.dh) return;
-    
-    // Limpiar canvas
-    ctx.clearRect(0, 0, size.w, size.h);
-    
-    // Dibujar fondo
-    ctx.fillStyle = '#E89E54';
-    ctx.fillRect(0, 0, size.w, size.h);
-    
-    // Durante el fade final, la imagen aparece gradualmente SIN máscara
-    // Esto crea el efecto de que los trazos de coloreado se desvanecen y aparece la imagen completa
-    
-    // Dibujar imagen base con fade-in progresivo
-    ctx.globalAlpha = fadeProgress; // La imagen aparece gradualmente
-    ctx.imageSmoothingEnabled = true;
-    ctx.imageSmoothingQuality = 'high';
-    ctx.drawImage(
-        currentImage,
-        layout.sourceX, layout.sourceY, layout.sourceWidth, layout.sourceHeight,
-        layout.dx, layout.dy, layout.dw, layout.dh
-    );
-    ctx.globalAlpha = 1.0;
-    
-    // Los trazos de pincel se mantienen pero se desvanecen gradualmente con la máscara
-    if (maskCanvas) {
-        ctx.globalCompositeOperation = 'destination-in';
-        ctx.globalAlpha = 1 - fadeProgress; // La máscara de trazos se desvanece
-        ctx.drawImage(maskCanvas, 0, 0);
-        ctx.globalAlpha = 1.0;
-        ctx.globalCompositeOperation = 'destination-over';
-        ctx.fillStyle = '#E89E54';
-        ctx.fillRect(0, 0, size.w, size.h);
-        ctx.globalCompositeOperation = 'source-over';
-    }
-}
+// (renderFinalFade eliminado: ya no se usa fade final)
 
 function renderFinalComplete() {
     if (!currentImage || !layout.dw || !layout.dh) return;
@@ -783,29 +806,6 @@ function renderFinalComplete() {
 }
 
 function updateBrushMask() {
-    // BOOST INICIAL: acelerar revelado primeros 3s (~0.1 progreso)
-    if (animationProgress < 0.1) {
-        const boost = animationProgress / 0.1; // 0..1
-        const blobs = 20;
-        for (let i = 0; i < blobs; i++) {
-            maskCtx.globalAlpha = 0.55 * boost;
-            const x = Math.random() * size.w;
-            const y = Math.random() * size.h;
-            const r = (450 + Math.random() * 850) * (0.7 + 0.3 * boost);
-            const g = maskCtx.createRadialGradient(x, y, 0, x, y, r);
-            g.addColorStop(0, 'rgba(255,255,255,1)');
-            g.addColorStop(0.5, 'rgba(255,255,255,0.85)');
-            g.addColorStop(1, 'rgba(255,255,255,0)');
-            maskCtx.fillStyle = g;
-            maskCtx.beginPath();
-            maskCtx.arc(x, y, r, 0, Math.PI * 2);
-            maskCtx.fill();
-        }
-        // Velo suave para evitar vacío total
-        maskCtx.globalAlpha = 0.18 * boost;
-        maskCtx.fillStyle = 'white';
-        maskCtx.fillRect(0, 0, size.w, size.h);
-    }
     // Dibujar elementos de brush con más variedad y 5 veces más gruesos
     brushElements.forEach(brush => {
         if (animationProgress >= brush.startTime) {
@@ -1063,6 +1063,8 @@ function createSlideshowContainer() {
     slideshowContainer.appendChild(shadowLeft);
     slideshowContainer.appendChild(shadowTop);
     document.body.appendChild(slideshowContainer);
+    // Asegurar visibilidad (plantilla HTML lo tenía posiblemente oculto)
+    slideshowContainer.style.display = 'block';
     
     console.log('📺 Contenedor de slideshow creado');
 }
@@ -1073,6 +1075,7 @@ function startSlideshow() {
     if (slideshowImages.length === 0) return;
     
     console.log('📺 Iniciando slideshow');
+    if (slideshowContainer) slideshowContainer.style.display = 'block';
     
     // Mostrar primera imagen
     const imagesLayer = document.getElementById('slideshow-images-layer');
@@ -1240,22 +1243,78 @@ function setupWebSocket() {
         }
     });
     
-    socket.on('nextColorStep', (data) => {
-        console.log(`🎨 Nuevo paso de color: ${data.pattern}`);
-        setCurrentImage(data.pattern).then(() => {
-            // Siempre iniciar secuencia unificada (fondo fade-in + coloreo o logo)
-            startColoring();
-            
-            // Video SOLO para logos en brushes específicos [1, 4, 5, 9]
-            // Para el RESTO de IDs (2, 3, 6, 7, 8, etc.) los logos se muestran SIN video
-            if (/logo1|logo2/.test(data.pattern) && [1, 4, 5, 9].includes(brushId)) {
-                console.log(`📹 Reproduciendo video para logo en brush ${brushId}`);
-                playFullscreenVideo();
+    function requestPattern(pattern) {
+        const now = Date.now();
+        // Dedupe rápida para eventos duplicados (especialmente wallpaper)
+        if (pattern === lastPatternName && (now - lastPatternRequestedAt) < 800) {
+            console.log(`⏩ Ignorando patrón duplicado reciente: ${pattern}`);
+            return;
+        }
+        lastPatternName = pattern;
+        lastPatternRequestedAt = now;
+        upcomingPatternName = pattern;
+        upcomingIsLogoType = /logo1|logo2/.test(pattern);
+        pendingImageToLoad = null; // Usaremos carga anticipada tras fade-in fondo
+        nextImageToLoad = null;
+        // NUEVO: transición directa sin fadeOut - capturamos frame actual y arrancamos nuevo fade-in
+        // Detener animaciones en curso SIN limpiar canvas (preservamos el frame para crossfade)
+        if (rafId) { cancelAnimationFrame(rafId); rafId = 0; }
+        animationActive = false;
+        logoFadeActive = false;
+        fadeOutActive = false;
+
+        // Capturar frame actual antes de modificar
+        try {
+            if (!previousFrameCanvas) {
+                previousFrameCanvas = document.createElement('canvas');
+                previousFrameCtx = previousFrameCanvas.getContext('2d');
+            }
+            previousFrameCanvas.width = size.w;
+            previousFrameCanvas.height = size.h;
+            previousFrameCtx.clearRect(0,0,size.w,size.h);
+            previousFrameCtx.drawImage(canvas,0,0);
+            hasPreviousFrame = true;
+        } catch(e) {
+            hasPreviousFrame = false;
+        }
+
+        // Cargar nueva imagen y decidir transición
+        loadImage(pattern).then(img => {
+            if (!img) return;
+            const newIsLogo = /logo1|logo2/.test(pattern);
+            if (newIsLogo && isLogoType && currentImage) {
+                // crossfade logo→logo sin fondo naranja intermedio
+                startLogoCrossfade(img);
+                isLogoType = true; isColorType = false; isWallpaperType = false;
+                currentImageType = pattern.replace('.jpg','');
             } else {
-                console.log(`🖼️ Mostrando logo SIN video en brush ${brushId}`);
-                stopFullscreenVideo();
+                currentImage = img;
+                currentImageType = pattern.replace('.jpg','');
+                isWallpaperType = pattern.includes('wallpaper');
+                isColorType = /amarillo|azul|rojo/.test(pattern);
+                isLogoType = newIsLogo;
+                calculateLayout();
+                startColoring(newIsLogo ? 'logoFadeIn' : 'coloring');
             }
         });
+
+        // Video para logos sólo en brushes específicos
+        if (/logo1|logo2/.test(pattern) && [1,4,5,9].includes(brushId)) {
+            playFullscreenVideo();
+        } else if (/logo1|logo2/.test(pattern)) {
+            stopFullscreenVideo(); // asegurar que no quede video colgado
+        } else {
+            stopFullscreenVideo();
+        }
+    }
+
+    socket.on('nextColorStep', (data) => {
+        if (wallpaperHoldActive) {
+            console.log('⏸️ Ignorando nextColorStep durante wallpaperHold');
+            return;
+        }
+        console.log(`🎨 Nuevo paso de color: ${data.pattern}`);
+        requestPattern(data.pattern);
     });
     
     socket.on('slideshowConfigUpdate', (data) => {
@@ -1272,31 +1331,31 @@ function setupWebSocket() {
     });
     
     socket.on('forceWallpaperPattern', () => {
-        console.log('🖼️ Forzando mostrar wallpaper.jpg (deferred)');
-        applyWallpaperMode('forceWallpaperPattern');
+        console.log('🖼️ Forzando mostrar wallpaper.jpg');
+        requestPattern('wallpaper.jpg');
     });
 
     // Helper unificado para aplicar modo wallpaper con fade-in identico al botón
     function applyWallpaperMode(sourceLabel = 'desconocido', sequenceId = null) {
-        console.log(`🖼️ (deferred) Aplicando modo wallpaper (origen=${sourceLabel}${sequenceId?` seq=${sequenceId}`:''})`);
-        deferredImageToLoad = 'wallpaper.jpg';
-        deferredMode = 'coloring';
-        // Parar animaciones actuales
-        if (animationActive || logoFadeActive || fadeOutActive) {
-            animationActive = false; logoFadeActive = false; fadeOutActive = false;
+        if (wallpaperHoldActive) {
+            console.log('🖼️ Ya en wallpaperHold, se ignora solicitud duplicada');
+            return;
         }
-        // Lanzar fade-in limpio si no está corriendo; si ya está, solo cambiar acción
-        pendingAction = 'deferredLoadAndColor';
-        if (!backgroundFadeInActive) {
-            startBackgroundFadeIn();
-        }
-        stopFullscreenVideo();
+        console.log(`🖼️ Aplicando modo wallpaper (origen=${sourceLabel}${sequenceId?` seq=${sequenceId}`:''})`);
+        wallpaperHoldActive = true;
+        if (wallpaperHoldTimeout) clearTimeout(wallpaperHoldTimeout);
+        wallpaperHoldTimeout = setTimeout(() => {
+            wallpaperHoldActive = false;
+            console.log('▶️ Fin de wallpaperHold, se reanuda secuencia entrante');
+            // solicitar al servidor el último paso para sincronizar
+            try { socket.emit('requestLastColorStep'); } catch(_) {}
+        }, WALLPAPER_HOLD_CLIENT_MS);
+        requestPattern('wallpaper.jpg');
     }
 
     // NUEVO: Al recibir confirmación de que wallpaper fue guardado (flujo tecla "1")
     socket.on('wallpaperSaved', (data) => {
         if (!data || !data.success) return;
-        // En lugar de lógica propia reutilizamos EXACTAMENTE la del botón (switchToWallpaperMode)
         applyWallpaperMode('wallpaperSaved');
     });
 
