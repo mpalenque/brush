@@ -39,20 +39,60 @@
             </div>
         </div>
 
-        <!-- Monitor UDP -->
+        <!-- Control de Protocolos UDP/TCP -->
         <div class="section" style="background: #f8f9fa; border-left: 4px solid #6c757d;">
-            <h2>📡 Monitor UDP - Puerto 5555</h2>
-            <div class="udp-monitor">
-                <div class="udp-status" id="udpStatus">
-                    <span class="status-indicator" id="udpIndicator">⚪</span>
-                    <span id="udpStatusText">Esperando mensajes...</span>
+            <h2>📡 Control de Protocolos de Cámara</h2>
+            
+            <!-- Switches de Control -->
+            <div style="display: flex; flex-wrap: wrap; gap: 20px; align-items: center; margin-bottom: 15px; padding: 10px; background: #e9ecef; border-radius: 6px;">
+                <div style="display: flex; align-items: center; gap: 8px;">
+                    <label style="font-weight: 600; color: #495057;">UDP (Puerto 5555):</label>
+                    <label class="switch">
+                        <input type="checkbox" id="udpEnabledSwitch" checked>
+                        <span class="slider"></span>
+                    </label>
+                    <span id="udpStatusBadge" class="status-badge active">ACTIVO</span>
                 </div>
-                <div class="udp-log" id="udpLog">
-                    <div class="log-entry">🚀 Monitor UDP iniciado</div>
+                
+                <div style="display: flex; align-items: center; gap: 8px;">
+                    <label style="font-weight: 600; color: #495057;">TCP (Puerto 6000):</label>
+                    <label class="switch">
+                        <input type="checkbox" id="tcpEnabledSwitch" checked>
+                        <span class="slider"></span>
+                    </label>
+                    <span id="tcpStatusBadge" class="status-badge active">ACTIVO</span>
                 </div>
-                <div class="udp-actions">
-                    <button id="clearUdpLog" class="btn btn-small">🗑️ Limpiar Log</button>
-                    <button id="testUdpConnection" class="btn btn-small">🔍 Test Conexión</button>
+                
+                <div style="display: flex; align-items: center; gap: 8px; margin-left: 20px; padding-left: 20px; border-left: 2px solid #ced4da;">
+                    <label style="font-weight: 600; color: #495057;">Preferido:</label>
+                    <select id="preferredProtocolSelect" style="padding: 4px 8px; border: 1px solid #ced4da; border-radius: 4px;">
+                        <option value="UDP">UDP</option>
+                        <option value="TCP">TCP</option>
+                    </select>
+                </div>
+            </div>
+            
+            <!-- Monitor de Mensajes -->
+            <div class="protocol-monitor">
+                <div class="protocol-status" id="protocolStatus">
+                    <div style="display: flex; gap: 15px; align-items: center;">
+                        <div>
+                            <span class="status-indicator" id="udpIndicator">⚪</span>
+                            <span id="udpStatusText">UDP: Esperando mensajes...</span>
+                        </div>
+                        <div>
+                            <span class="status-indicator" id="tcpIndicator">⚪</span>
+                            <span id="tcpStatusText">TCP: Esperando mensajes...</span>
+                        </div>
+                    </div>
+                </div>
+                <div class="protocol-log" id="protocolLog">
+                    <div class="log-entry">🚀 Monitor de protocolos iniciado</div>
+                </div>
+                <div class="protocol-actions">
+                    <button id="clearProtocolLog" class="btn btn-small">🗑️ Limpiar Log</button>
+                    <button id="testUdpConnection" class="btn btn-small">🔍 Test UDP</button>
+                    <button id="testTcpConnection" class="btn btn-small">🔍 Test TCP</button>
                 </div>
             </div>
         </div>
@@ -199,8 +239,8 @@
                 </div>
 
                 <div class="control-group">
-                    <label for="backgroundColor">🎨 Color de Fondo: <span id="backgroundRgb" class="range-display">RGB: 238, 206, 173</span></label>
-                    <input type="color" id="backgroundColor" value="#EECEAD">
+                    <label for="backgroundColor">🎨 Color de Fondo: <span id="backgroundRgb" class="range-display">RGB: 250, 188, 175</span></label>
+                    <input type="color" id="backgroundColor" value="#FABCAF">
                 </div>
             </div>
         </div>

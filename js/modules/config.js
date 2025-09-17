@@ -61,7 +61,7 @@ const CONFIG = {
             rotation: 0,
             zoom: 2.3,
             blendMode: 'multiply',
-            backgroundColor: '#F5DDC7',
+            backgroundColor: '#FABCAF',
             selectedImage: 'red',
             patternSource: 'processed',
             overlayImages: {

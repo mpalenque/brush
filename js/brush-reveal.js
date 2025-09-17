@@ -364,7 +364,7 @@ async function performSmoothFadeToBackground() {
       // Limpiar y dibujar fondo con fade
       ctx.save();
       ctx.globalAlpha = alpha;
-      ctx.fillStyle = '#E89E54'; // Color de fondo
+      ctx.fillStyle = '#FABCAF'; // Color de fondo
       ctx.fillRect(0, 0, canvas.width, canvas.height);
       ctx.restore();
       
@@ -373,7 +373,7 @@ async function performSmoothFadeToBackground() {
       } else {
         // Fade completado - limpiar completamente el canvas
         ctx.clearRect(0, 0, canvas.width, canvas.height);
-        ctx.fillStyle = '#E89E54';
+        ctx.fillStyle = '#FABCAF';
         ctx.fillRect(0, 0, canvas.width, canvas.height);
         
         fadeOutProgress = false;
@@ -1398,7 +1398,7 @@ function performFinalSmoothFade(postCleanup){
     ctx.globalAlpha = 1;
     // Fondo por debajo para asegurar áreas sin dibujar
     ctx.globalCompositeOperation = 'destination-over';
-    ctx.fillStyle = '#E89E54';
+    ctx.fillStyle = '#FABCAF';
     ctx.fillRect(0,0,size.w,size.h);
     ctx.globalCompositeOperation = 'source-over';
     if (t < 1){
@@ -3152,7 +3152,7 @@ function render(){
   try { ctx.imageSmoothingEnabled = true; ctx.imageSmoothingQuality = 'high'; } catch(_){}
   ctx.drawImage(maskCanvas, 0, 0, maskCanvas.width, maskCanvas.height, 0, 0, size.w, size.h);
   ctx.globalCompositeOperation = 'destination-over'; 
-  ctx.fillStyle = '#E89E54'; 
+  ctx.fillStyle = '#FABCAF'; 
     ctx.fillRect(0, 0, size.w, size.h);
   } else {
     // Misma ruta de wallpaper también para coloreados posteriores

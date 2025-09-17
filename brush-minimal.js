@@ -216,7 +216,7 @@ function render() {
     ctx.clearRect(0, 0, size.w, size.h);
     
     // Dibujar fondo
-    ctx.fillStyle = '#E89E54';
+    ctx.fillStyle = '#FABCAF';
     ctx.fillRect(0, 0, size.w, size.h);
     
     // Dibujar imagen
@@ -233,7 +233,7 @@ function render() {
         ctx.globalCompositeOperation = 'destination-in';
         ctx.drawImage(maskCanvas, 0, 0);
         ctx.globalCompositeOperation = 'destination-over';
-        ctx.fillStyle = '#E89E54';
+        ctx.fillStyle = '#FABCAF';
         ctx.fillRect(0, 0, size.w, size.h);
         ctx.globalCompositeOperation = 'source-over';
     }
@@ -461,7 +461,7 @@ function renderBackgroundFadeIn() {
         ctx.globalAlpha = 1.0;
     }
     ctx.globalAlpha = backgroundFadeInProgress;
-    ctx.fillStyle = '#E89E54';
+    ctx.fillStyle = '#FABCAF';
     ctx.fillRect(0,0,size.w,size.h);
     ctx.globalAlpha = 1.0;
 }
@@ -598,7 +598,7 @@ function renderFadeOut() {
     ctx.clearRect(0, 0, size.w, size.h);
     
     // Dibujar fondo
-    ctx.fillStyle = '#E89E54';
+    ctx.fillStyle = '#FABCAF';
     ctx.fillRect(0, 0, size.w, size.h);
     
     // Dibujar imagen actual con opacidad decreciente
@@ -652,7 +652,7 @@ function renderFadeOut() {
         ctx.globalCompositeOperation = 'destination-in';
         ctx.drawImage(maskCanvas, 0, 0);
         ctx.globalCompositeOperation = 'destination-over';
-        ctx.fillStyle = '#E89E54';
+        ctx.fillStyle = '#FABCAF';
         ctx.fillRect(0, 0, size.w, size.h);
         ctx.globalCompositeOperation = 'source-over';
     }
@@ -710,7 +710,7 @@ function logoCrossfadeLoop(timestamp) {
 
 function renderLogoCrossfade(progress) {
     ctx.clearRect(0,0,size.w,size.h);
-    ctx.fillStyle = '#E89E54';
+    ctx.fillStyle = '#FABCAF';
     ctx.fillRect(0,0,size.w,size.h);
     ctx.imageSmoothingEnabled = true;
     ctx.imageSmoothingQuality = 'high';
@@ -750,7 +750,7 @@ function drawLogoImage(img) {
 function renderLogoFadeIn() {
     if (!currentImage || !layout.dw || !layout.dh) return;
     ctx.clearRect(0,0,size.w,size.h);
-    ctx.fillStyle = '#E89E54';
+    ctx.fillStyle = '#FABCAF';
     ctx.fillRect(0,0,size.w,size.h);
     ctx.imageSmoothingEnabled = true;
     ctx.imageSmoothingQuality = 'high';
@@ -792,7 +792,7 @@ function renderFinalComplete() {
     ctx.clearRect(0, 0, size.w, size.h);
     
     // Dibujar fondo
-    ctx.fillStyle = '#E89E54';
+    ctx.fillStyle = '#FABCAF';
     ctx.fillRect(0, 0, size.w, size.h);
     
     // Dibujar imagen completa sin máscara

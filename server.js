@@ -4,6 +4,7 @@ const socketIo = require('socket.io');
 const path = require('path');
 const fs = require('fs');
 const dgram = require('dgram'); // Para UDP
+const net = require('net'); // Para TCP
 
 // Prefer prebuilt @napi-rs/canvas on Windows; fallback to node-canvas
 let createCanvas, loadImage;
@@ -231,11 +232,26 @@ function cleanWallpaperTemps() {
 const UDP_PORT = 5555;
 const udpServer = dgram.createSocket('udp4');
 
+// ========================================
+// SERVIDOR TCP PARA ESCUCHAR MENSAJES DE CÁMARA (ALTERNATIVO)
+// ========================================
+
+// Configuración TCP
+const TCP_PORT = 6000;
+const tcpServer = net.createServer();
+
 // Estado del procesamiento de imagen
 let imageProcessingState = {
     isProcessing: false,
     lastProcessed: null,
     pendingOperation: null
+};
+
+// Estado de los servidores UDP/TCP
+let serverState = {
+    udpEnabled: true,
+    tcpEnabled: true,
+    preferredProtocol: 'UDP' // 'UDP' o 'TCP'
 };
 
 udpServer.on('listening', () => {
@@ -244,14 +260,19 @@ udpServer.on('listening', () => {
 });
 
 udpServer.on('message', (msg, rinfo) => {
+    if (!serverState.udpEnabled) {
+        console.log(`🚫 *** UDP *** Servidor deshabilitado - ignorando mensaje: "${msg.toString().trim()}"`);
+        return;
+    }
+    
     const message = msg.toString().trim();
-    console.log(`📨 *** UDP *** Mensaje recibido: "${message}" desde ${rinfo.address}:${rinfo.port}`);
+    console.log(`📨 *** UDP *** [ACTIVO] Mensaje recibido: "${message}" desde ${rinfo.address}:${rinfo.port}`);
     
     if (message === 'save') {
-        console.log('📸 *** UDP *** Confirmación de guardado de imagen recibida!');
-        handleImageSaved();
+        console.log('📸 *** UDP *** [ACTIVO] Confirmación de guardado de imagen recibida!');
+        handleImageSaved('UDP');
     } else {
-        console.log(`⚠️ *** UDP *** Mensaje no reconocido: "${message}"`);
+        console.log(`⚠️ *** UDP *** [ACTIVO] Mensaje no reconocido: "${message}"`);
     }
 });
 
@@ -259,9 +280,56 @@ udpServer.on('error', (err) => {
     console.error('❌ *** UDP SERVER *** Error:', err);
 });
 
+// ========================================
+// CONFIGURACIÓN Y EVENTOS DEL SERVIDOR TCP
+// ========================================
+
+tcpServer.on('connection', (socket) => {
+    console.log('📡 *** TCP SERVER *** Nueva conexión establecida desde:', socket.remoteAddress + ':' + socket.remotePort);
+    
+    socket.on('data', (data) => {
+        if (!serverState.tcpEnabled) {
+            console.log(`🚫 *** TCP *** Servidor deshabilitado - ignorando mensaje: "${data.toString().trim()}"`);
+            socket.write('ERROR: Servidor TCP deshabilitado\n');
+            return;
+        }
+        
+        const message = data.toString().trim();
+        console.log(`📨 *** TCP *** [ACTIVO] Mensaje recibido: "${message}" desde ${socket.remoteAddress}:${socket.remotePort}`);
+        
+        if (message === 'save') {
+            console.log('📸 *** TCP *** [ACTIVO] Confirmación de guardado de imagen recibida!');
+            handleImageSaved('TCP');
+            // Enviar confirmación de vuelta al cliente TCP
+            socket.write('OK\n');
+        } else {
+            console.log(`⚠️ *** TCP *** [ACTIVO] Mensaje no reconocido: "${message}"`);
+            socket.write('ERROR: Mensaje no reconocido\n');
+        }
+    });
+    
+    socket.on('error', (err) => {
+        console.error('❌ *** TCP CONNECTION *** Error:', err);
+    });
+    
+    socket.on('close', () => {
+        console.log('📡 *** TCP CONNECTION *** Conexión cerrada desde:', socket.remoteAddress);
+    });
+});
+
+tcpServer.on('listening', () => {
+    const address = tcpServer.address();
+    console.log(`📡 *** TCP SERVER *** Escuchando en puerto ${address.port} para mensajes de cámara`);
+});
+
+tcpServer.on('error', (err) => {
+    console.error('❌ *** TCP SERVER *** Error:', err);
+});
+
 // Función para manejar cuando se confirma que la imagen fue guardada
-function handleImageSaved() {
-    console.log('🎯 *** SERVER *** Procesando confirmación de imagen guardada');
+function handleImageSaved(protocol = 'UNKNOWN') {
+    console.log(`🎯 *** SERVER *** Procesando confirmación de imagen guardada via ${protocol}`);
+    console.log(`📊 *** ESTADO PROTOCOLOS *** UDP: ${serverState.udpEnabled ? 'ACTIVO' : 'INACTIVO'} | TCP: ${serverState.tcpEnabled ? 'ACTIVO' : 'INACTIVO'} | Preferido: ${serverState.preferredProtocol}`);
     
     imageProcessingState.isProcessing = false;
     imageProcessingState.lastProcessed = Date.now();
@@ -271,7 +339,8 @@ function handleImageSaved() {
         type: 'processed', 
         filename: 'processed.png',
         timestamp: Date.now(),
-        source: 'camera-udp'
+        source: `camera-${protocol.toLowerCase()}`,
+        protocol: protocol
     });
     
     // Si hay una operación pendiente, continuar con la secuencia
@@ -279,7 +348,7 @@ function handleImageSaved() {
         const operation = imageProcessingState.pendingOperation;
         imageProcessingState.pendingOperation = null;
         
-        console.log(`🔄 *** SERVER *** Continuando operación pendiente: ${operation.id}`);
+        console.log(`🔄 *** SERVER *** Continuando operación pendiente: ${operation.id} [${protocol}]`);
         
         // Continuar con la recarga y captura
         setTimeout(() => {
@@ -310,6 +379,18 @@ function handleImageSaved() {
 
 // Iniciar servidor UDP
 udpServer.bind(UDP_PORT);
+
+// Iniciar servidor TCP
+tcpServer.listen(TCP_PORT, () => {
+    console.log(`📡 *** TCP SERVER *** Servidor TCP iniciado y escuchando en puerto ${TCP_PORT}`);
+});
+
+// Mostrar estado inicial de protocolos
+console.log(`📊 *** ESTADO INICIAL PROTOCOLOS ***`);
+console.log(`📡 UDP Puerto ${UDP_PORT}: ${serverState.udpEnabled ? 'ACTIVO' : 'INACTIVO'}`);
+console.log(`📡 TCP Puerto ${TCP_PORT}: ${serverState.tcpEnabled ? 'ACTIVO' : 'INACTIVO'}`);
+console.log(`🎯 Protocolo preferido: ${serverState.preferredProtocol}`);
+console.log(`📊 *** Ambos protocolos escuchan el mensaje "save" ***`);
 
 // Ruta para la pantalla de 3 monitores
 app.get('/3screens', (req, res) => {
@@ -504,7 +585,7 @@ let globalState = {
         perfumeSpacingH: 0.25,   // NUEVO VALOR
         perfumeSpacingV: 0.30,   // NUEVO VALOR
         perfumeSizeFactor: 0.55, // NUEVO VALOR
-        backgroundColor: '#FFF2E5', // NUEVO COLOR
+        backgroundColor: '#EECEAD', // NUEVO COLOR
         selectedImage: 'red',
         patternSource: 'processed',
         // Configuración de imágenes superpuestas - NUEVOS VALORES
@@ -748,6 +829,46 @@ app.post('/api/save-config', (req, res) => {
     }
 });
 
+// NUEVO: Endpoint para obtener estado de servidores UDP/TCP
+app.get('/api/server-state', (req, res) => {
+    res.json({
+        success: true,
+        serverState: serverState,
+        udpPort: UDP_PORT,
+        tcpPort: TCP_PORT
+    });
+});
+
+// NUEVO: Endpoint para configurar servidores UDP/TCP
+app.post('/api/server-state', (req, res) => {
+    try {
+        const { udpEnabled, tcpEnabled, preferredProtocol } = req.body;
+        
+        if (typeof udpEnabled === 'boolean') {
+            serverState.udpEnabled = udpEnabled;
+        }
+        if (typeof tcpEnabled === 'boolean') {
+            serverState.tcpEnabled = tcpEnabled;
+        }
+        if (['UDP', 'TCP'].includes(preferredProtocol)) {
+            serverState.preferredProtocol = preferredProtocol;
+        }
+        
+        console.log(`🔧 *** CONFIGURACIÓN SERVIDORES *** UDP: ${serverState.udpEnabled ? 'ACTIVO' : 'INACTIVO'} | TCP: ${serverState.tcpEnabled ? 'ACTIVO' : 'INACTIVO'} | Preferido: ${serverState.preferredProtocol}`);
+        
+        // Notificar a todos los clientes control sobre el cambio
+        io.emit('serverStateUpdate', serverState);
+        
+        res.json({ 
+            success: true, 
+            message: 'Configuración de servidores actualizada',
+            serverState: serverState 
+        });
+    } catch (error) {
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
 app.post('/api/screen/:id', (req, res) => {
     const screenId = parseInt(req.params.id);
     if (screenId >= 1 && screenId <= 9) {
@@ -854,13 +975,20 @@ io.on('connection', (socket) => {
                 }, 400); // pequeño delay para que el cliente procese switchToSequenceMode primero
             }
         } else {
-            // Configuración para screens normales
-            socket.emit('initialState', {
+            // Configuración para screens normales y control
+            const initialState = {
                 general: globalState.general,
                 screen: globalState.screens[screenId] || { offsetX: 0 },
                 animation: globalState.animation,
                 wallpaper: { isActive: true }
-            });
+            };
+            
+            // Para clientes de tipo control, agregar estado de servidores
+            if (type === 'control') {
+                initialState.serverState = serverState;
+            }
+            
+            socket.emit('initialState', initialState);
             console.log(`${type} registered with screen ID: ${screenId}`);
         }
     });
@@ -937,6 +1065,29 @@ io.on('connection', (socket) => {
             io.emit('patternSourceChanged', { source: src });
             // También reenviar el estado general para que screen.html lo tenga sincronizado
             io.emit('generalConfigUpdate', globalState.general);
+        }
+    });
+
+    // NUEVO: Controlar estado de servidores UDP/TCP
+    socket.on('updateServerState', (data) => {
+        const client = connectedClients.get(socket.id);
+        if (client && client.type === 'control') {
+            const { udpEnabled, tcpEnabled, preferredProtocol } = data;
+            
+            if (typeof udpEnabled === 'boolean') {
+                serverState.udpEnabled = udpEnabled;
+            }
+            if (typeof tcpEnabled === 'boolean') {
+                serverState.tcpEnabled = tcpEnabled;
+            }
+            if (['UDP', 'TCP'].includes(preferredProtocol)) {
+                serverState.preferredProtocol = preferredProtocol;
+            }
+            
+            console.log(`🔧 *** SOCKET *** Configuración servidores actualizada: UDP: ${serverState.udpEnabled ? 'ACTIVO' : 'INACTIVO'} | TCP: ${serverState.tcpEnabled ? 'ACTIVO' : 'INACTIVO'} | Preferido: ${serverState.preferredProtocol}`);
+            
+            // Notificar a todos los clientes control
+            io.emit('serverStateUpdate', serverState);
         }
     });
 
@@ -1036,23 +1187,29 @@ io.on('connection', (socket) => {
                 startedAt: Date.now()
             };
             
-            console.log('📸 *** SERVER *** Esperando confirmación UDP de cámara en puerto 5555...');
+            console.log('📸 *** SERVER *** Esperando confirmación de cámara via UDP puerto 5555 o TCP puerto 6000...');
             
             // Notificar al control que estamos esperando
+            const enabledProtocols = [];
+            if (serverState.udpEnabled) enabledProtocols.push(`UDP:${UDP_PORT}`);
+            if (serverState.tcpEnabled) enabledProtocols.push(`TCP:${TCP_PORT}`);
+            const protocolsStr = enabledProtocols.join(' o ');
+            
             io.emit('waitingForImageCapture', {
-                message: 'Esperando confirmación de cámara via UDP puerto 5555',
-                timestamp: Date.now()
+                message: `Esperando confirmación de cámara via ${protocolsStr}`,
+                timestamp: Date.now(),
+                serverState: serverState
             });
             
             // Timeout de seguridad: si no llega confirmación UDP en 30 segundos, abortar
             setTimeout(() => {
                 if (imageProcessingState.isProcessing && 
                     imageProcessingState.pendingOperation?.id === operationId) {
-                    console.warn('⏰ *** SERVER *** Timeout esperando confirmación UDP - abortando secuencia');
+                    console.warn('⏰ *** SERVER *** Timeout esperando confirmación de protocolos - abortando secuencia');
                     imageProcessingState.isProcessing = false;
                     imageProcessingState.pendingOperation = null;
                     io.emit('imageProcessingTimeout', {
-                        message: 'Timeout esperando confirmación de cámara',
+                        message: 'Timeout esperando confirmación de cámara (UDP/TCP)',
                         operationId,
                         timestamp: Date.now()
                     });

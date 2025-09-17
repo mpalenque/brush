@@ -67,7 +67,21 @@ const elements = {
     overlayAlternateRowX: null,
     overlayAlternateRowY: null,
     overlayAlternateColX: null,
-    overlayAlternateColY: null
+    overlayAlternateColY: null,
+    // Controles UDP/TCP
+    udpEnabledSwitch: null,
+    tcpEnabledSwitch: null,
+    preferredProtocolSelect: null,
+    udpStatusBadge: null,
+    tcpStatusBadge: null,
+    udpIndicator: null,
+    tcpIndicator: null,
+    udpStatusText: null,
+    tcpStatusText: null,
+    protocolLog: null,
+    clearProtocolLog: null,
+    testUdpConnection: null,
+    testTcpConnection: null
 };
 
 // Valores mostrados
@@ -188,6 +202,21 @@ function initializeDOMElements() {
     elements.overlayAlternateColX = document.getElementById('overlayAlternateColX');
     elements.overlayAlternateColY = document.getElementById('overlayAlternateColY');
 
+    // Elementos UDP/TCP
+    elements.udpEnabledSwitch = document.getElementById('udpEnabledSwitch');
+    elements.tcpEnabledSwitch = document.getElementById('tcpEnabledSwitch');
+    elements.preferredProtocolSelect = document.getElementById('preferredProtocolSelect');
+    elements.udpStatusBadge = document.getElementById('udpStatusBadge');
+    elements.tcpStatusBadge = document.getElementById('tcpStatusBadge');
+    elements.udpIndicator = document.getElementById('udpIndicator');
+    elements.tcpIndicator = document.getElementById('tcpIndicator');
+    elements.udpStatusText = document.getElementById('udpStatusText');
+    elements.tcpStatusText = document.getElementById('tcpStatusText');
+    elements.protocolLog = document.getElementById('protocolLog');
+    elements.clearProtocolLog = document.getElementById('clearProtocolLog');
+    elements.testUdpConnection = document.getElementById('testUdpConnection');
+    elements.testTcpConnection = document.getElementById('testTcpConnection');
+
     // Elementos de coloreado automático
     elements.startColorSequenceBtn = document.getElementById('startColorSequenceBtn');
     elements.stopColorSequenceBtn = document.getElementById('stopColorSequenceBtn');
@@ -255,6 +284,11 @@ function setupWebSocket() {
         }
         socket.emit('registerScreen', { screenId: 0, type: 'control' });
         console.log('🔌 Control panel conectado al servidor');
+        
+        // Inicializar estado de protocolos
+        setTimeout(() => {
+            initializeProtocolState();
+        }, 500);
     });
 
     socket.on('disconnect', () => {
@@ -288,6 +322,13 @@ function setupWebSocket() {
         loadGeneralConfig(state.general);
         updateWallpaperButtonState(state.wallpaper?.isActive || false);
         updateUI();
+
+        // Cargar estado de servidores si existe
+        if (state.serverState) {
+            setTimeout(() => {
+                updateServerStateFromInitial(state.serverState);
+            }, 200);
+        }
 
     // Initialize pattern preview thumb based on source
     const patThumb = document.getElementById('patternPreviewThumb');
@@ -399,6 +440,44 @@ function setupWebSocket() {
         const tsEl = document.getElementById('patternLastUpdated');
         if (tsEl) tsEl.textContent = new Date().toLocaleTimeString();
     });
+
+    // Listeners para eventos de protocolos UDP/TCP
+    socket.on('serverStateUpdate', (state) => {
+        console.log('🔧 Estado de servidores actualizado:', state);
+        
+        // Actualizar switches
+        if (elements.udpEnabledSwitch) {
+            elements.udpEnabledSwitch.checked = state.udpEnabled;
+        }
+        if (elements.tcpEnabledSwitch) {
+            elements.tcpEnabledSwitch.checked = state.tcpEnabled;
+        }
+        if (elements.preferredProtocolSelect) {
+            elements.preferredProtocolSelect.value = state.preferredProtocol;
+        }
+        
+        // Actualizar UI
+        updateProtocolStatus('udp', state.udpEnabled);
+        updateProtocolStatus('tcp', state.tcpEnabled);
+        
+        logProtocolMessage('SYSTEM', `Estado actualizado - UDP: ${state.udpEnabled ? 'ACTIVO' : 'INACTIVO'}, TCP: ${state.tcpEnabled ? 'ACTIVO' : 'INACTIVO'}, Preferido: ${state.preferredProtocol}`, 'info');
+    });
+
+    // Listener específico para mensajes de imagen procesada con información de protocolo
+    socket.on('processedImageReady', (data) => {
+        if (data.protocol) {
+            logProtocolMessage(data.protocol, `Confirmación de imagen guardada recibida`, 'success');
+            
+            // Actualizar indicador del protocolo que recibió el mensaje
+            const indicator = elements[`${data.protocol.toLowerCase()}Indicator`];
+            if (indicator) {
+                indicator.textContent = '✅';
+                setTimeout(() => {
+                    indicator.textContent = '🟢';
+                }, 2000);
+            }
+        }
+    });
 }
 
 // ==============================
@@ -421,7 +500,7 @@ function loadGeneralConfig(config) {
     if (elements.perfumeSpacingH) elements.perfumeSpacingH.value = config.perfumeSpacingH || 0.45;
     if (elements.perfumeSpacingV) elements.perfumeSpacingV.value = config.perfumeSpacingV || 0.7;
     if (elements.perfumeSizeFactor) elements.perfumeSizeFactor.value = config.perfumeSizeFactor || 0.85;
-    if (elements.backgroundColor) elements.backgroundColor.value = config.backgroundColor || '#F5DDC7';
+    if (elements.backgroundColor) elements.backgroundColor.value = config.backgroundColor || '#FABCAF';
     
     // Cargar configuración de overlay
     const overlayConfig = config.overlayImages || {};
@@ -605,6 +684,9 @@ function setupEventListeners() {
     
     // Event listeners para controles de coloreado automático
     setupColorSequenceEventListeners();
+    
+    // Event listeners para controles UDP/TCP
+    setupProtocolEventListeners();
     
     // Configurar controles de rango con actualización en tiempo real
     setupRangeControls();
@@ -1618,4 +1700,174 @@ function updateColorSequenceMonitor(step) {
         }
     }, 300);
 })();
+
+// ==============================
+// CONTROL DE PROTOCOLOS UDP/TCP
+// ==============================
+
+function setupProtocolEventListeners() {
+    // Switch UDP
+    if (elements.udpEnabledSwitch) {
+        elements.udpEnabledSwitch.addEventListener('change', (e) => {
+            updateServerState({
+                udpEnabled: e.target.checked
+            });
+        });
+    }
+
+    // Switch TCP
+    if (elements.tcpEnabledSwitch) {
+        elements.tcpEnabledSwitch.addEventListener('change', (e) => {
+            updateServerState({
+                tcpEnabled: e.target.checked
+            });
+        });
+    }
+
+    // Select protocolo preferido
+    if (elements.preferredProtocolSelect) {
+        elements.preferredProtocolSelect.addEventListener('change', (e) => {
+            updateServerState({
+                preferredProtocol: e.target.value
+            });
+        });
+    }
+
+    // Botón limpiar log
+    if (elements.clearProtocolLog) {
+        elements.clearProtocolLog.addEventListener('click', () => {
+            if (elements.protocolLog) {
+                elements.protocolLog.innerHTML = '<div class="log-entry">🧹 Log limpiado</div>';
+            }
+        });
+    }
+
+    // Botón test UDP
+    if (elements.testUdpConnection) {
+        elements.testUdpConnection.addEventListener('click', () => {
+            logProtocolMessage('TEST', 'Prueba de conexión UDP enviada a puerto 5555', 'info');
+            // Aquí podrías agregar lógica adicional para testing
+        });
+    }
+
+    // Botón test TCP
+    if (elements.testTcpConnection) {
+        elements.testTcpConnection.addEventListener('click', () => {
+            logProtocolMessage('TEST', 'Prueba de conexión TCP enviada a puerto 6000', 'info');
+            // Aquí podrías agregar lógica adicional para testing
+        });
+    }
+}
+
+function updateServerState(changes) {
+    console.log('🔧 Actualizando estado de servidores:', changes);
+    
+    // Enviar al servidor via WebSocket
+    if (socket) {
+        socket.emit('updateServerState', changes);
+    }
+    
+    // Actualizar UI local inmediatamente para feedback rápido
+    if (changes.udpEnabled !== undefined) {
+        updateProtocolStatus('udp', changes.udpEnabled);
+    }
+    if (changes.tcpEnabled !== undefined) {
+        updateProtocolStatus('tcp', changes.tcpEnabled);
+    }
+}
+
+function updateProtocolStatus(protocol, enabled) {
+    const badge = elements[`${protocol}StatusBadge`];
+    const indicator = elements[`${protocol}Indicator`];
+    const statusText = elements[`${protocol}StatusText`];
+    
+    if (badge) {
+        badge.textContent = enabled ? 'ACTIVO' : 'INACTIVO';
+        badge.className = `status-badge ${enabled ? 'active' : 'inactive'}`;
+    }
+    
+    if (indicator) {
+        indicator.textContent = enabled ? '🟢' : '🔴';
+    }
+    
+    if (statusText) {
+        const protocolUpper = protocol.toUpperCase();
+        statusText.textContent = `${protocolUpper}: ${enabled ? 'Esperando mensajes...' : 'Deshabilitado'}`;
+    }
+}
+
+function logProtocolMessage(protocol, message, type = 'info') {
+    if (!elements.protocolLog) return;
+    
+    const timestamp = new Date().toLocaleTimeString();
+    const entry = document.createElement('div');
+    entry.className = `log-entry ${type}`;
+    entry.innerHTML = `<span style="color: #666;">[${timestamp}]</span> <span style="font-weight: 600; color: ${protocol === 'UDP' ? '#007bff' : '#28a745'};">${protocol}:</span> ${message}`;
+    
+    elements.protocolLog.appendChild(entry);
+    elements.protocolLog.scrollTop = elements.protocolLog.scrollHeight;
+    
+    // Limitar el número de entradas del log
+    const entries = elements.protocolLog.children;
+    if (entries.length > 100) {
+        elements.protocolLog.removeChild(entries[0]);
+    }
+}
+
+// Inicializar estado de protocolos cuando se establezca la conexión
+function initializeProtocolState() {
+    // Solicitar estado actual del servidor
+    if (socket) {
+        fetch('/api/server-state')
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    const state = data.serverState;
+                    
+                    // Actualizar switches
+                    if (elements.udpEnabledSwitch) {
+                        elements.udpEnabledSwitch.checked = state.udpEnabled;
+                    }
+                    if (elements.tcpEnabledSwitch) {
+                        elements.tcpEnabledSwitch.checked = state.tcpEnabled;
+                    }
+                    if (elements.preferredProtocolSelect) {
+                        elements.preferredProtocolSelect.value = state.preferredProtocol;
+                    }
+                    
+                    // Actualizar UI
+                    updateProtocolStatus('udp', state.udpEnabled);
+                    updateProtocolStatus('tcp', state.tcpEnabled);
+                    
+                    logProtocolMessage('SYSTEM', `Estado inicial cargado - UDP: ${state.udpEnabled ? 'ACTIVO' : 'INACTIVO'}, TCP: ${state.tcpEnabled ? 'ACTIVO' : 'INACTIVO'}, Preferido: ${state.preferredProtocol}`, 'info');
+                }
+            })
+            .catch(error => {
+                console.error('Error cargando estado de protocolos:', error);
+                logProtocolMessage('SYSTEM', 'Error cargando estado inicial', 'error');
+            });
+    }
+}
+
+// Actualizar estado de protocolos desde estado inicial del servidor
+function updateServerStateFromInitial(state) {
+    console.log('🔧 Cargando estado inicial de servidores:', state);
+    
+    // Actualizar switches
+    if (elements.udpEnabledSwitch) {
+        elements.udpEnabledSwitch.checked = state.udpEnabled;
+    }
+    if (elements.tcpEnabledSwitch) {
+        elements.tcpEnabledSwitch.checked = state.tcpEnabled;
+    }
+    if (elements.preferredProtocolSelect) {
+        elements.preferredProtocolSelect.value = state.preferredProtocol;
+    }
+    
+    // Actualizar UI
+    updateProtocolStatus('udp', state.udpEnabled);
+    updateProtocolStatus('tcp', state.tcpEnabled);
+    
+    logProtocolMessage('SYSTEM', `Estado inicial - UDP: ${state.udpEnabled ? 'ACTIVO' : 'INACTIVO'}, TCP: ${state.tcpEnabled ? 'ACTIVO' : 'INACTIVO'}, Preferido: ${state.preferredProtocol}`, 'info');
+}
 
