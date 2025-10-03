@@ -80,16 +80,17 @@ function emitNextColorStep() {
     if (!colorStepScheduler.active || colorStepScheduler.paused) return;
     const pattern = colorStepScheduler.patterns[colorStepScheduler.currentIndex % colorStepScheduler.patterns.length];
     const idx = colorStepScheduler.currentIndex % colorStepScheduler.patterns.length;
-    const payload = { timestamp: Date.now(), pattern, currentIndex: idx };
+    const now = Date.now();
+    // Pequeño offset para permitir que todos programen (frame budget)
+    const APPLY_OFFSET_MS = 120; // ~2 frames a 60fps
+    const payload = { timestamp: now, applyAt: now + APPLY_OFFSET_MS, pattern, currentIndex: idx };
     colorStepScheduler.lastStep = payload;
-    // Emitir a todos los brush-reveal
+    // Broadcast optimizado: primero control, luego brushes
     connectedClients.forEach(c => {
-        if (c.type === 'brush-reveal' && c.socket.connected) {
-            c.socket.emit('nextColorStep', payload);
-        }
-        if (c.type === 'control' && c.socket.connected) {
-            c.socket.emit('colorStepUpdate', payload);
-        }
+        if (c.type === 'control' && c.socket.connected) c.socket.emit('colorStepUpdate', payload);
+    });
+    connectedClients.forEach(c => {
+        if (c.type === 'brush-reveal' && c.socket.connected) c.socket.emit('nextColorStep', payload);
     });
     colorStepScheduler.currentIndex = (colorStepScheduler.currentIndex + 1) % colorStepScheduler.patterns.length;
     // Si el patrón actual es logo1, forzar intervalo corto hacia logo2
@@ -254,6 +255,30 @@ let serverState = {
     preferredProtocol: 'UDP' // 'UDP' o 'TCP'
 };
 
+// ==============================
+// NUEVO: Control avanzado protocolos
+// ==============================
+let tcpConnectionCount = 0;
+let lastSaveEventTs = 0;
+const SAVE_DEBOUNCE_MS = 500; // evita doble disparo UDP+TCP
+function shouldProcessSave(proto){
+    const now = Date.now();
+    if (now - lastSaveEventTs < SAVE_DEBOUNCE_MS){
+        console.log(`⏱️ Debounce ignorando 'save' duplicado (${proto})`);
+        return false;
+    }
+    lastSaveEventTs = now;
+    return true;
+}
+
+// Flags para reinicio dinámico
+let udpBound = true;
+let tcpListening = false;
+function stopUDPServer(){ if(!udpBound) return; try{ udpServer.close(()=>console.log('🛑 UDP server detenido')); }catch(e){console.warn('⚠️ Error deteniendo UDP:', e.message);} udpBound=false; }
+function startUDPServer(){ if(udpBound) return; try{ udpServer.bind(UDP_PORT, ()=>{udpBound=true; console.log(`▶️ UDP server reactivado en puerto ${UDP_PORT}`);}); }catch(e){ console.error('❌ Error reactivando UDP:', e.message);} }
+function stopTCPServer(){ if(!tcpListening) return; try{ tcpServer.close(()=>console.log('🛑 TCP server detenido')); tcpListening=false; }catch(e){ console.warn('⚠️ Error deteniendo TCP:', e.message);} }
+function startTCPServer(){ if(tcpListening) return; try{ tcpServer.listen(TCP_PORT,'0.0.0.0',()=>{ tcpListening=true; console.log(`▶️ TCP server reactivado en 0.0.0.0:${TCP_PORT}`);}); }catch(e){ console.error('❌ Error reactivando TCP:', e.message);} }
+
 udpServer.on('listening', () => {
     const address = udpServer.address();
     console.log(`📡 *** UDP SERVER *** Escuchando en puerto ${address.port} para mensajes de cámara`);
@@ -270,7 +295,7 @@ udpServer.on('message', (msg, rinfo) => {
     
     if (message === 'save') {
         console.log('📸 *** UDP *** [ACTIVO] Confirmación de guardado de imagen recibida!');
-        handleImageSaved('UDP');
+        if (shouldProcessSave('UDP')) handleImageSaved('UDP');
     } else {
         console.log(`⚠️ *** UDP *** [ACTIVO] Mensaje no reconocido: "${message}"`);
     }
@@ -285,7 +310,8 @@ udpServer.on('error', (err) => {
 // ========================================
 
 tcpServer.on('connection', (socket) => {
-    console.log('📡 *** TCP SERVER *** Nueva conexión establecida desde:', socket.remoteAddress + ':' + socket.remotePort);
+    tcpConnectionCount++;
+    console.log('📡 *** TCP SERVER *** Nueva conexión #'+tcpConnectionCount+' desde:', socket.remoteAddress + ':' + socket.remotePort);
     
     socket.on('data', (data) => {
         if (!serverState.tcpEnabled) {
@@ -299,7 +325,7 @@ tcpServer.on('connection', (socket) => {
         
         if (message === 'save') {
             console.log('📸 *** TCP *** [ACTIVO] Confirmación de guardado de imagen recibida!');
-            handleImageSaved('TCP');
+            if (shouldProcessSave('TCP')) handleImageSaved('TCP');
             // Enviar confirmación de vuelta al cliente TCP
             socket.write('OK\n');
         } else {
@@ -352,7 +378,7 @@ function handleImageSaved(protocol = 'UNKNOWN') {
         
         // Continuar con la recarga y captura
         setTimeout(() => {
-            const operationId = `udp-${Date.now()}-${Math.floor(Math.random()*1e6)}`;
+            const operationId = `${protocol.toLowerCase()}-${Date.now()}-${Math.floor(Math.random()*1e6)}`;
             
             // Enviar recarga SINCRONIZADA a screen/1 con captura posterior
             io.emit('reloadRequestSync', { 
@@ -362,11 +388,11 @@ function handleImageSaved(protocol = 'UNKNOWN') {
                 captureAfterReload: true
             });
             
-            console.log('🔄 *** SERVER *** reloadRequestSync enviado tras confirmación UDP');
+            console.log(`🔄 *** SERVER *** reloadRequestSync enviado tras confirmación ${protocol}`);
             
             // Fallback: si no llega screenReady en tiempo, intentar capturar
             const fallback = setTimeout(() => {
-                console.warn('⏰ *** SERVER *** Fallback UDP - forzando captura sin confirmación');
+                console.warn(`⏰ *** SERVER *** Fallback ${protocol} - forzando captura sin confirmación`);
                 io.emit('requestCanvasCapture', { screenId: 1 });
                 pendingReloadOps.delete(operationId);
             }, 12000);
@@ -381,8 +407,9 @@ function handleImageSaved(protocol = 'UNKNOWN') {
 udpServer.bind(UDP_PORT);
 
 // Iniciar servidor TCP
-tcpServer.listen(TCP_PORT, () => {
-    console.log(`📡 *** TCP SERVER *** Servidor TCP iniciado y escuchando en puerto ${TCP_PORT}`);
+tcpServer.listen(TCP_PORT,'0.0.0.0', () => {
+    tcpListening = true;
+    console.log(`📡 *** TCP SERVER *** Servidor TCP iniciado y escuchando en 0.0.0.0:${TCP_PORT}`);
 });
 
 // Mostrar estado inicial de protocolos
@@ -845,9 +872,13 @@ app.post('/api/server-state', (req, res) => {
         const { udpEnabled, tcpEnabled, preferredProtocol } = req.body;
         
         if (typeof udpEnabled === 'boolean') {
+            if (udpEnabled && !serverState.udpEnabled) startUDPServer();
+            if (!udpEnabled && serverState.udpEnabled) stopUDPServer();
             serverState.udpEnabled = udpEnabled;
         }
         if (typeof tcpEnabled === 'boolean') {
+            if (tcpEnabled && !serverState.tcpEnabled) startTCPServer();
+            if (!tcpEnabled && serverState.tcpEnabled) stopTCPServer();
             serverState.tcpEnabled = tcpEnabled;
         }
         if (['UDP', 'TCP'].includes(preferredProtocol)) {
@@ -901,6 +932,26 @@ app.post('/api/slideshow/:id', (req, res) => {
         saveConfig(globalState); // GUARDAR CONFIGURACIÓN
         io.emit('slideshowConfigUpdate', { brushId, config: globalState.slideshow[brushId] });
         res.json({ success: true });
+    } else {
+        res.status(404).json({ error: 'Slideshow only available for brush-reveal 3 and 7' });
+    }
+});
+
+// API para sincronizar slideshow (controlar qué imagen/video mostrar)
+app.post('/api/slideshow/:id/sync', (req, res) => {
+    const brushId = parseInt(req.params.id);
+    const { index, type } = req.body; // type: 'image' o 'video', index: número de imagen
+    
+    if ([3, 7].includes(brushId) || brushId === 0) { // 0 = all brushes
+        const targetBrush = brushId === 0 ? 'all' : brushId;
+        io.emit('slideshowSync', { 
+            brushId: targetBrush, 
+            index: index || 0, 
+            type: type || 'image',
+            timestamp: Date.now()
+        });
+        console.log(`🎬 Sincronización de slideshow emitida: brush ${targetBrush}, tipo: ${type}, índice: ${index}`);
+        res.json({ success: true, brushId: targetBrush, index, type });
     } else {
         res.status(404).json({ error: 'Slideshow only available for brush-reveal 3 and 7' });
     }
@@ -1075,9 +1126,13 @@ io.on('connection', (socket) => {
             const { udpEnabled, tcpEnabled, preferredProtocol } = data;
             
             if (typeof udpEnabled === 'boolean') {
+                if (udpEnabled && !serverState.udpEnabled) startUDPServer();
+                if (!udpEnabled && serverState.udpEnabled) stopUDPServer();
                 serverState.udpEnabled = udpEnabled;
             }
             if (typeof tcpEnabled === 'boolean') {
+                if (tcpEnabled && !serverState.tcpEnabled) startTCPServer();
+                if (!tcpEnabled && serverState.tcpEnabled) stopTCPServer();
                 serverState.tcpEnabled = tcpEnabled;
             }
             if (['UDP', 'TCP'].includes(preferredProtocol)) {
@@ -1328,6 +1383,12 @@ io.on('connection', (socket) => {
             
             autoSeqActive = false;
             autoSeqState = null;
+            // Pausar el programador central para congelar en la última imagen
+            try {
+                pauseCentralColorScheduler();
+            } catch (e) {
+                console.warn('⚠️ No se pudo pausar el scheduler central:', e.message);
+            }
             // Enviar comando a todos los brush-reveal
             connectedClients.forEach((otherClient) => {
                 if (otherClient.type === 'brush-reveal' && otherClient.socket.connected) {
@@ -1381,17 +1442,15 @@ io.on('connection', (socket) => {
     socket.on('requestLastColorStep', () => {
         const client = connectedClients.get(socket.id);
         if (client && client.type === 'brush-reveal') {
-            // Si el scheduler está pausado (por wallpaper) reanudar inmediatamente para no quedarse en fondo vacío
-            if (colorStepScheduler.active && colorStepScheduler.paused) {
-                console.log('▶️ Reanudando scheduler al recibir requestLastColorStep');
-                resumeCentralColorScheduler();
-            }
+            // No reanudar el scheduler aquí: mantener pausa si estaba pausado
             if (colorStepScheduler.lastStep) {
                 console.log(`📤 Reenviando último paso de color a brush ${client.brushId || '?'} (${colorStepScheduler.lastStep.pattern})`);
                 try { socket.emit('nextColorStep', colorStepScheduler.lastStep); } catch(_) {}
             } else if (colorStepScheduler.active && !colorStepScheduler.paused) {
                 console.log('⚡ No había paso previo; emitiendo uno nuevo para enganchar a todos');
                 emitNextColorStep();
+            } else {
+                console.log('ℹ️ requestLastColorStep recibido pero no hay paso previo y el scheduler está inactivo/pausado');
             }
         }
     });

@@ -12,6 +12,14 @@ const FINAL_SEAL_CHUNK_BASE = 15; // trabajo moderado por frame para cerrar huec
 const WASH_START = 0.45; // iniciar lavado antes para cobertura completa
 const WASH_CHUNK_BASE = 30; // más wash por frame para cobertura completa
 const MAX_STEPS_PER_ENTITY_FRAME = 5; // permitir más pasos por entidad para coloreado
+// FADE SUAVE FINAL: cuando el coloreado agresivo llega al final, actualmente "salta" a completo.
+// Añadimos un fade overlay que mezcla gradualmente la imagen completa (sin máscara) sobre
+// el resultado parcial para evitar el corte abrupto.
+// Ajustado: iniciar antes del sellado súper agresivo (que empieza ~0.85) y extender para transición suave
+const FINAL_REVEAL_FADE_START = 0.80;          // Progreso (0..1) a partir del cual inicia el fade (antes de cobertura agresiva)
+const FINAL_REVEAL_FADE_DURATION = 0.22;       // Rango de progreso para completar el fade (≈ 28s * 0.22 ≈ 6s)
+let _finalRevealFadeActive = false;            // Flag interno (solo informativo)
+let _finalRevealLastFactor = 0;                // Último factor aplicado (debug)
 
 // Detectar brushId de la URL
 function getBrushIdFromURL() {
@@ -80,19 +88,25 @@ let slideshowImages = [];
 let currentSlideshowIndex = 0;
 let slideshowInterval = null; // Initialize slideshow interval
 let slideshowContainer = null;
+// Cache-buster único de sesión para evitar glitches de caché en algunas cargas
+const SLIDESHOW_CACHE_BUSTER = `v=${Date.now()}`;
 // Slideshow scheduling helpers
 let _slideshowTimeoutId = null; // timeout-based scheduler id
 let _slideshowTransitioning = false; // guard to avoid overlapping transitions
+let _slideshowHealthId = null; // periodic health check
+// Track if we hid the slideshow due to a logo step
+let slideshowHiddenForLogo = false;
 // Control de ciclos y video
 let slideshowCycleCount = 0; // cuenta de vueltas completas (recorrer todas las imágenes)
 let inVideoPlayback = false; // bandera mientras se reproduce el video
 let slideshowVideoEl = null; // referencia al elemento <video>
+let videoShownInCurrentCycle = false; // controla si el video ya se mostró en este ciclo
 // Video forzado por logos (logo1 / logo2)
 let videoForcedByLogo = false;
 
 // Flags para controlar características del slideshow/video
-// Desactivamos cualquier reproducción de video para evitar bloqueos del slideshow
-const ENABLE_SLIDESHOW_VIDEO = false;
+// Activado para integrar video en slideshow
+const ENABLE_SLIDESHOW_VIDEO = true;
 const ENABLE_LOGO_VIDEO = false;
 
 // Patrones para alternar secuencialmente
@@ -177,6 +191,13 @@ let autoColorSequence = {
   periodMs: 0,
   lastBoundaryTs: 0
 };
+// Pausa global de secuencia: ignora pasos y watchdog mientras esté activa
+let sequencePaused = false;
+// Modo en el que el servidor es la única autoridad para avanzar pasos
+autoColorSequence.serverSync = false;
+// Recordar último patrón aplicado para ignorar duplicados rápidos
+let lastAppliedPattern = null;
+let lastAppliedPatternTs = 0;
 
 // Variable para controlar el modo de coloreado
 let coloringMode = 'sequence'; // 'sequence' o 'wallpaper'
@@ -197,8 +218,8 @@ let watchdogInterval = null; // Referencia al intervalo del watchdog para poder 
 // OPTIMIZADO: Solo ejecutar si no estamos en modo inactivo
 watchdogInterval = setInterval(() => {
   try {
-    // No ejecutar watchdog si estamos en modo inactivo
-    if (idleMode) return;
+    // No ejecutar watchdog si estamos en modo inactivo o en pausa de secuencia
+    if (idleMode || sequencePaused) return;
     
     if (wallpaperSequenceActive) {
       const now = Date.now();
@@ -208,8 +229,8 @@ watchdogInterval = setInterval(() => {
         wallpaperSequenceId = null;
       }
     }
-    // SOLO reactivar si realmente se necesita y no hay animación activa
-    if (coloringMode === 'sequence' && !autoColorSequence.active && !rafId && !animationFinished) {
+  // SOLO reactivar si realmente se necesita y no hay animación activa ni pausa
+  if (!sequencePaused && coloringMode === 'sequence' && !autoColorSequence.active && !rafId && !animationFinished) {
       // Intentar reactivar secuencia automática con ancla simple
       autoColorSequence.active = true;
       autoColorSequence.anchorStartAt = Date.now() + 500;
@@ -240,6 +261,8 @@ function startAutoColorSequence() {
     return;
   }
   
+  // Al iniciar manualmente, levantar pausa si existiera
+  sequencePaused = false;
   autoColorSequence.active = true;
   autoColorSequence.currentIndex = 0;
   autoColorSequence.nextStepScheduled = false;
@@ -272,6 +295,7 @@ function startAutoColorSequenceSync(syncData) {
   }
   
   autoColorSequence.active = true;
+  autoColorSequence.serverSync = true; // forzar modo sólo servidor
   autoColorSequence.currentIndex = 0;
   autoColorSequence.nextStepScheduled = false;
   
@@ -602,6 +626,8 @@ function switchToSequenceMode() {
   stopAutoColorSequence();
   autoColorSequence.currentIndex = 0; // empezar desde el comienzo
   autoColorSequence.nextStepScheduled = false;
+  // Si estaba pausada, permitir que una futura orden de inicio funcione
+  sequencePaused = false;
   // Mantener el orden por defecto salvo que el servidor envíe otro
   autoColorSequence.patterns = autoColorSequence.patterns && autoColorSequence.patterns.length
     ? autoColorSequence.patterns
@@ -626,6 +652,8 @@ function switchToSequenceMode() {
   // Sin fallback local: esperar órdenes explícitas del servidor para iniciar la secuencia
   if (sequenceFallbackTimeoutId) { clearTimeout(sequenceFallbackTimeoutId); sequenceFallbackTimeoutId = null; }
   console.log('⏳ Modo secuencia preparado. Esperando startAutoColorSequence desde el servidor...');
+  // Solicitar explícitamente el último paso al servidor para enganchar al estado actual
+  try { if (window.socket) window.socket.emit('requestLastColorStep'); } catch(_) {}
   }
   
   // Limpiar estado guardado: no reanudamos desde mitad de ciclo
@@ -634,6 +662,10 @@ function switchToSequenceMode() {
 
 // Función para ejecutar un paso de la secuencia de coloreado
 async function executeColorStep() {
+  if (sequencePaused) {
+    console.log(`⏸️ Brush ${brushId}: executeColorStep ignorado por pausa`);
+    return;
+  }
   if (!autoColorSequence.active) {
     console.log(`⚠️ Brush ${brushId}: executeColorStep llamado pero autoColorSequence.active = false`);
     return;
@@ -645,6 +677,10 @@ async function executeColorStep() {
   }
   if (autoColorSequence.isRunning) {
     console.log(`⛔ Brush ${brushId}: Paso de color ignorado: ya hay un coloreado en curso`);
+    return;
+  }
+  if (autoColorSequence.serverSync) {
+    console.log(`⏭️ Brush ${brushId}: executeColorStep ignorado (serverSync activo, sólo servidor avanza)`);
     return;
   }
   autoColorSequence.isRunning = true;
@@ -681,6 +717,14 @@ async function executeColorStep() {
     // LOGO SPECIAL: mostrar logo1/ logo2 a altura completa con fade-in en lugar de coloreo
     if (/logo1\.jpg|logo2\.jpg/i.test(currentPattern)) {
       console.log('🆕 LOGO MODE: mostrando', currentPattern, 'con fade-in full-height (sin efecto de coloreo)');
+      // Ocultar slideshow durante logos (evita superposición/desincronización), especialmente en brush 3
+      try {
+        const imagesLayer = document.getElementById('slideshow-images-layer');
+        if (imagesLayer && imagesLayer.style.display !== 'none') {
+          imagesLayer.style.display = 'none';
+          slideshowHiddenForLogo = true;
+        }
+      } catch (_) {}
       await showLogoFullFade(img, currentPattern);
       // Avanzar índice y scheduling como si hubiera terminado animación normal
       autoColorSequence.currentIndex = (autoColorSequence.currentIndex + 1) % autoColorSequence.patterns.length;
@@ -1004,44 +1048,67 @@ function setupWebSocket() {
     socket.on('startAutoColorSequence', (syncData) => {
       console.log('🔄 *** BRUSH *** Iniciando secuencia automática desde control con sincronización');
       console.log(`⏰ *** BRUSH *** Timestamp del servidor: ${syncData?.timestamp}`);
+  // Quitar pausa global al arrancar de nuevo
+  sequencePaused = false;
       startAutoColorSequenceSync(syncData);
     });
     
     // NUEVO: Detener secuencia automática
     socket.on('stopAutoColorSequence', () => {
       console.log('⏹️ *** BRUSH *** Deteniendo secuencia automática desde control');
+  // Activar pausa global para bloquear watchdog y pasos entrantes
+  sequencePaused = true;
       stopAutoColorSequence();
     });
     
     // NUEVO: Siguiente paso manual de coloreado con sincronización
     socket.on('nextColorStep', (syncData) => {
-      console.log(`⏭️ *** BRUSH ${brushId} *** Ejecutando siguiente paso de color desde control`);
-      
-      // Verificar si el comando es reciente para mantener sincronización
-      if (syncData?.timestamp) {
-        const now = Date.now();
-        const timeSinceSync = now - syncData.timestamp;
-        console.log(`⏰ *** BRUSH ${brushId} *** Timestamp del servidor: ${syncData.timestamp} (hace ${timeSinceSync}ms)`);
-        
-        // Si el comando es muy antiguo (>3s), ignorar para evitar desincronización
-        if (timeSinceSync > 3000) {
-          console.log(`⚠️ Brush ${brushId}: Comando demasiado antiguo (${timeSinceSync}ms), ignorando`);
-          return;
+      if (sequencePaused) {
+        console.log('⏸️ *** BRUSH *** Paso de color ignorado (sequencePaused=true)');
+        return;
+      }
+      const nowLocal = Date.now();
+      const { timestamp, applyAt, pattern, currentIndex } = syncData || {};
+      console.log(`⏭️ *** BRUSH ${brushId} *** Paso color recibido pattern=${pattern} idx=${currentIndex} ts=${timestamp} applyAt=${applyAt}`);
+
+      // Debounce: si es el mismo patrón muy rápido, ignorar (evita doble logo)
+      if (pattern && lastAppliedPattern === pattern && (Date.now() - lastAppliedPatternTs) < 800) {
+        console.log(`⛔ BRUSH ${brushId} patrón duplicado ignorado (${pattern})`);
+        return;
+      }
+
+      if (typeof currentIndex === 'number') {
+        autoColorSequence.currentIndex = currentIndex % autoColorSequence.patterns.length;
+      }
+
+      // Calcular delta y programar
+      let delay = 0;
+      if (applyAt && applyAt > nowLocal) {
+        delay = applyAt - nowLocal;
+      }
+      // Si el retraso es demasiado (llegó tarde), ejecutar inmediato
+      if (delay > 1000) {
+        console.log(`⚠️ BRUSH ${brushId} retraso grande (${delay}ms) ajustando a 120ms`);
+        delay = 120;
+      }
+      if (delay < 0) {
+        // Llegó tarde; ejecutar inmediato
+        console.log(`⚠️ BRUSH ${brushId} llegó tarde (${delay}ms) ejecutando inmediato`);
+        delay = 0;
+      }
+
+      const run = () => {
+  if (sequencePaused) { console.log('⏸️ *** BRUSH *** Ignorado run() por pausa activa'); return; }
+        if (pattern) {
+          executeColorStepWithPattern(pattern);
+        } else {
+          executeColorStep();
         }
-      }
-      
-      if (typeof syncData?.currentIndex === 'number') {
-        autoColorSequence.currentIndex = syncData.currentIndex % autoColorSequence.patterns.length;
-        console.log(`🎯 Brush ${brushId}: Índice actualizado a ${autoColorSequence.currentIndex}`);
-      }
-      
-      // EJECUCIÓN INMEDIATA para sincronización perfecta
-      if (syncData?.pattern) {
-        console.log(`🎯 *** BRUSH ${brushId} *** Patrón forzado por servidor: ${syncData.pattern}`);
-  executeColorStepWithPattern(syncData.pattern);
+      };
+      if (delay === 0) {
+        run();
       } else {
-        console.log(`🚀 Brush ${brushId}: Ejecutando paso INMEDIATAMENTE`);
-        executeColorStep();
+        setTimeout(run, delay);
       }
     });
 
@@ -1108,6 +1175,28 @@ function setupWebSocket() {
         // console.log(`📺 Configuración de slideshow actualizada para brush ${brushId}:`, data.config);
         slideshowConfig = { ...slideshowConfig, ...data.config };
         updateSlideshowDisplay();
+      }
+    });
+    
+    // NUEVO: Sincronización de slideshow desde servidor
+    socket.on('slideshowSync', (data) => {
+      if (data.brushId === brushId || data.brushId === 'all') {
+        console.log(`🎬 Sincronización de slideshow recibida: índice ${data.index}, tipo: ${data.type}`);
+        
+        if (data.type === 'video') {
+          // Reproducir video inmediatamente
+          const videoSrc = slideshowImages.find(src => src && src.startsWith('VIDEO:'));
+          if (videoSrc) {
+            currentSlideshowIndex = slideshowImages.indexOf(videoSrc);
+            playSlideshowVideo(videoSrc.substring(6));
+          }
+        } else if (data.type === 'image' && typeof data.index === 'number') {
+          // Mostrar imagen específica
+          currentSlideshowIndex = data.index;
+          if (slideshowImages[data.index] && !slideshowImages[data.index].startsWith('VIDEO:')) {
+            showSlideshowImage(data.index);
+          }
+        }
       }
     });
 
@@ -2999,11 +3088,18 @@ function drawProgress(p, budget = MAX_UNITS_PER_FRAME){
   if (e >= FINAL_SEAL_START && budget > 0 && finalSealing.length){
     if (finalSealing._drawn===undefined) finalSealing._drawn=0;
     const t = clamp((e - FINAL_SEAL_START) / (1 - FINAL_SEAL_START), 0, 1);
-    const alpha = FINAL_SEAL_ALPHA_MIN + (FINAL_SEAL_ALPHA_MAX - FINAL_SEAL_ALPHA_MIN) * t;
+    // Si ya está activo el fade final, suavizar la opacidad de sellado para evitar salto brusco
+    const fadePhase = (e >= FINAL_REVEAL_FADE_START)
+      ? clamp((e - FINAL_REVEAL_FADE_START)/FINAL_REVEAL_FADE_DURATION, 0, 1)
+      : 0;
+    const baseAlpha = FINAL_SEAL_ALPHA_MIN + (FINAL_SEAL_ALPHA_MAX - FINAL_SEAL_ALPHA_MIN) * t;
+    const alpha = baseAlpha * (1 - 0.55 * fadePhase); // reducir hasta 45% al final
     const total = finalSealing.length;
     const target = Math.floor(total * Math.min(1, t*1.5)); // Muy agresivo
     const remaining = target - finalSealing._drawn;
-    const base = Math.max(5, Math.ceil(FINAL_SEAL_CHUNK_BASE * (1 + t*3))); // Mucho más agresivo
+    // Reducir ritmo de sellado en tramo de fade para permitir transición progresiva
+    const aggressionScale = 1 - 0.6 * fadePhase; // reduce chunk cuando fade activo
+    const base = Math.max(5, Math.ceil(FINAL_SEAL_CHUNK_BASE * (1 + t*3) * aggressionScale));
     const perFrame = Math.max(5, Math.min(base, Math.min(remaining, Math.floor(budget*0.2)))); // 20% del presupuesto
     const end = Math.min(finalSealing.length, finalSealing._drawn + perFrame);
     for (let i = finalSealing._drawn; i < end && budget > 0; i++){
@@ -3029,7 +3125,7 @@ function drawProgress(p, budget = MAX_UNITS_PER_FRAME){
   }
 
   // Cobertura final SÚPER AGRESIVA para asegurar 100% de revelado
-  if (e >= 0.85 && budget > 0) { // Empezar antes (85% en lugar de 95%)
+  if (e >= 0.85 && budget > 0) { // Cobertura extra final
     // Más puntos de sellado para cobertura total
     const extraSeals = [];
     // Grid más denso para cobertura completa
@@ -3038,7 +3134,10 @@ function drawProgress(p, budget = MAX_UNITS_PER_FRAME){
         extraSeals.push({x: size.w * x, y: size.h * y});
       }
     }
-    const extraAlpha = (e - 0.85) * 0.6; // Más opaco
+    const fadePhase2 = (e >= FINAL_REVEAL_FADE_START)
+      ? clamp((e - FINAL_REVEAL_FADE_START)/FINAL_REVEAL_FADE_DURATION, 0, 1)
+      : 0;
+    const extraAlpha = ((e - 0.85) * 0.6) * (1 - 0.6 * fadePhase2); // reducir alpha mientras el fade avanza
     for (let i=0; i<extraSeals.length && budget>0; i++) {
       const pt = extraSeals[i];
       const b = maskBrushes.length ? maskBrushes[i % maskBrushes.length] : null;
@@ -3182,6 +3281,41 @@ function render(){
   
   // Mantener modo de composición normal
   ctx.globalCompositeOperation='source-over';
+
+  // APLICAR FADE SUAVE FINAL (sobre la imagen enmascarada) mezclando la imagen completa
+  // para eliminar la sensación de corte brusco al terminar.
+  // Se activa únicamente en la fase final de la animación (p calculado en loop, pero aquí
+  // derivamos un estimador usando startedAt/DURATION_MS para no pasar parámetros por toda la cadena).
+  if (!animationFinished && startedAt){
+    const nowTs = performance.now();
+    const pApprox = clamp((nowTs - startedAt)/DURATION_MS, 0, 1);
+    if (pApprox >= FINAL_REVEAL_FADE_START){
+      const local = (pApprox - FINAL_REVEAL_FADE_START) / FINAL_REVEAL_FADE_DURATION; // 0..~1
+      const fadeFactor = clamp(local, 0, 1);
+      if (fadeFactor > 0){
+        _finalRevealFadeActive = true;
+        _finalRevealLastFactor = fadeFactor;
+        try {
+          ctx.save();
+            ctx.globalAlpha = fadeFactor; // permitir llegar a 100% y evitar salto perceptible
+          if (layout.sourceWidth && layout.sourceHeight){
+            ctx.drawImage(
+              currentBG,
+              layout.sourceX, layout.sourceY, layout.sourceWidth, layout.sourceHeight,
+              layout.dx, layout.dy, layout.dw, layout.dh
+            );
+          } else {
+            const sw = currentBG.naturalWidth || currentBG.width || layout.dw;
+            const sh = currentBG.naturalHeight || currentBG.height || layout.dh;
+            ctx.drawImage(currentBG, 0,0, sw, sh, layout.dx, layout.dy, layout.dw, layout.dh);
+          }
+          ctx.restore();
+        } catch(e){ /* silencioso */ }
+      }
+    } else {
+      _finalRevealFadeActive = false;
+    }
+  }
 }
 function loop(ts){
   // OPTIMIZACIÓN: Evitar trabajo cuando la pestaña está oculta
@@ -3879,29 +4013,76 @@ async function initializeSlideshow() {
   
   // Actualizar display
   updateSlideshowDisplay();
+  // Arranque defensivo: asegurar que el slideshow queda mostrando una imagen
+  try { ensureSlideshowReady(); } catch (_) {}
+}
+
+// Verificación simple para asegurar que el slideshow tiene algo visible
+function ensureSlideshowReady() {
+  if (!slideshowConfig.enabled) return;
+  if (!slideshowContainer || !document.getElementById('slideshow-container')) {
+    createSlideshowContainer();
+  }
+  const layer = document.getElementById('slideshow-images-layer');
+  if (!layer || layer.children.length === 0) {
+    startSlideshow();
+    return;
+  }
+  if (layer.style.display === 'none' && !inVideoPlayback && !videoForcedByLogo) {
+    layer.style.display = '';
+  }
 }
 
 async function loadSlideshowImages() {
+  if (typeof window.__slideshowLoadRetries === 'undefined') window.__slideshowLoadRetries = 0;
   try {
     const response = await fetch(`/api/slideshow/${slideshowConfig.folder}`);
     const data = await response.json();
     
     if (data.success && data.images.length > 0) {
-  // Tomar solo las primeras 3 imágenes para asegurar ciclo estable
-  slideshowImages = data.images.slice(0, 3);
+  // Tomar exactamente 2 imágenes para mantener ciclos simples y predecibles
+      // 2 imágenes (6s cada una) + video (26s) = ciclo de 38 segundos
+      const maxImages = 2;
+      const base = data.images.slice(0, maxImages);
+      
+      if (base.length === 0) {
+        console.error('❌ No hay imágenes disponibles en el slideshow');
+        slideshowImages = [];
+        return;
+      }
+      
+      // Aplicar cache-buster para evitar respuestas de caché inconsistentes
+      slideshowImages = base.map(u => u.includes('?') ? `${u}&${SLIDESHOW_CACHE_BUSTER}` : `${u}?${SLIDESHOW_CACHE_BUSTER}`);
+      
+      // Agregar el video pampita.mp4 al final del ciclo de imágenes
+      // El video se mostrará después de ver las 2 imágenes
+      slideshowImages.push('VIDEO:/pampita.mp4');
+      
+      console.log(`📸 Slideshow configurado: ${base.length} imágenes + 1 video`);
+      
   currentSlideshowIndex = 0; // reset index to avoid OOB
       
       // PRECARGAR IMÁGENES PARA MEJOR PERFORMANCE
       preloadSlideshowImages();
       
       console.log(`📸 ${slideshowImages.length} imágenes cargadas para slideshow:`, slideshowImages);
+      window.__slideshowLoadRetries = 0; // reset retries
     } else {
       console.warn('No se encontraron imágenes para el slideshow');
       slideshowImages = [];
+      // Reintentar algunas veces por si el FS tardó en responder
+      if (window.__slideshowLoadRetries < 3) {
+        window.__slideshowLoadRetries++;
+        setTimeout(() => { loadSlideshowImages().then(() => updateSlideshowDisplay()); }, 1500);
+      }
     }
   } catch (error) {
     console.error('Error cargando imágenes del slideshow:', error);
     slideshowImages = [];
+    if (window.__slideshowLoadRetries < 3) {
+      window.__slideshowLoadRetries++;
+      setTimeout(() => { loadSlideshowImages().then(() => updateSlideshowDisplay()); }, 2000);
+    }
   }
 }
 
@@ -3911,12 +4092,16 @@ function preloadSlideshowImages() {
   
   console.log('📥 Iniciando precarga optimizada de imágenes del slideshow...');
   
-  // Precargar las primeras 3 imágenes inmediatamente para inicio rápido
+  // Precargar las primeras 3 imágenes inmediatamente para inicio rápido (saltando videos)
   const immediatePreload = Math.min(3, slideshowImages.length);
   
   for (let i = 0; i < immediatePreload; i++) {
+    const src = slideshowImages[i];
+    // Saltar videos en la precarga
+    if (src && src.startsWith('VIDEO:')) continue;
+    
     const img = new Image();
-    img.src = slideshowImages[i];
+    img.src = src;
     
     // Optimizaciones de carga
     img.loading = 'eager';
@@ -3927,18 +4112,46 @@ function preloadSlideshowImages() {
     }
   }
   
-  // Precargar el resto de imágenes de forma asíncrona para no bloquear
+  // Precargar el resto de imágenes de forma asíncrona para no bloquear (saltando videos)
   if (slideshowImages.length > immediatePreload) {
     setTimeout(() => {
       for (let i = immediatePreload; i < slideshowImages.length; i++) {
+        const src = slideshowImages[i];
+        // Saltar videos en la precarga
+        if (src && src.startsWith('VIDEO:')) continue;
+        
         const img = new Image();
-        img.src = slideshowImages[i];
+        img.src = src;
         img.loading = 'lazy';
         img.decoding = 'async';
       }
-      console.log(`📥 Precarga completa: ${slideshowImages.length} imágenes cargadas`);
+      console.log(`📥 Precarga completa: ${slideshowImages.length} elementos procesados`);
     }, 1000); // Retrasar 1 segundo para no interferir con el inicio
   }
+  
+  // Precargar el video en segundo plano (sin bloquear)
+  setTimeout(() => {
+    const videoSrc = slideshowImages.find(src => src && src.startsWith('VIDEO:'));
+    if (videoSrc) {
+      try {
+        // Crear elemento temporal solo para precarga
+        const preloadVideo = document.createElement('video');
+        preloadVideo.preload = 'auto';
+        preloadVideo.muted = true;
+        preloadVideo.src = videoSrc.substring(6);
+        preloadVideo.style.display = 'none';
+        document.body.appendChild(preloadVideo);
+        // Remover después de cargar metadata
+        preloadVideo.addEventListener('loadedmetadata', () => {
+          console.log(`🎥 Video precargado (metadata): ${videoSrc.substring(6)}`);
+          setTimeout(() => preloadVideo.remove(), 100);
+        });
+        preloadVideo.load();
+      } catch (e) {
+        console.warn('⚠️ No se pudo precargar el video:', e);
+      }
+    }
+  }, 2000); // Esperar 2 segundos para no interferir con inicio
 }
 
 function createSlideshowContainer() {
@@ -4062,7 +4275,7 @@ function updateSlideshowDisplay() {
     slideshowContainer.style.display = 'block';
     // Si estamos en reproducción de video, no tocar el slideshow aquí
     if (!inVideoPlayback) {
-      startSlideshow();
+  startSlideshow();
     }
   } else {
     slideshowContainer.style.display = 'none';
@@ -4077,16 +4290,97 @@ function startSlideshow() {
   stopSlideshow();
   
   if (slideshowImages.length === 0) {
+    console.warn('⚠️ No hay elementos en slideshowImages');
     return;
   }
   
-  // Limpiar capa de imágenes y mostrar primera imagen
+  // Asegurar que empezamos con una IMAGEN, no con el video
+  // Si el índice actual apunta al video, reiniciar a 0
+  let attempts = 0;
+  while (currentSlideshowIndex < slideshowImages.length && 
+         slideshowImages[currentSlideshowIndex] && 
+         slideshowImages[currentSlideshowIndex].startsWith('VIDEO:') &&
+         attempts < slideshowImages.length) {
+    currentSlideshowIndex = 0; // Siempre empezar desde la primera imagen
+    attempts++;
+  }
+  
+  console.log(`🎬 Iniciando slideshow - Total elementos: ${slideshowImages.length}, Índice inicial: ${currentSlideshowIndex}`);
+  
+  // Asegurar contenedor y capa de imágenes
+  const containerExists = document.getElementById('slideshow-container');
+  if (!containerExists) {
+    createSlideshowContainer();
+  }
+  // Limpiar capa de imágenes y mostrar primera imagen (o video)
   const imagesLayer = document.getElementById('slideshow-images-layer');
   if (imagesLayer) {
+    // Visibilizar capa por si quedó oculta (p.e., tras logos)
+    imagesLayer.style.display = '';
+    imagesLayer.style.opacity = '1';
     imagesLayer.innerHTML = '';
-    // Crear y mostrar primera imagen
-    const firstImg = createSlideshowImage(slideshowImages[currentSlideshowIndex], 1);
+    
+    // Verificar si el primer elemento es un video (no debería serlo después del ajuste arriba)
+    const firstSrc = slideshowImages[currentSlideshowIndex];
+    if (firstSrc && firstSrc.startsWith('VIDEO:')) {
+      // Si es video, reproducirlo directamente
+      console.log('🎥 Elemento inicial es video, reproduciendo');
+      playSlideshowVideo(firstSrc.substring(6));
+      return;
+    }
+    
+    // Crear y mostrar primera imagen CON GARANTÍA de visibilidad
+    console.log(`📺 Mostrando primera imagen del slideshow [${currentSlideshowIndex}]: ${firstSrc}`);
+    const firstImg = createSlideshowImage(firstSrc, 1);
+    
+    // ⚡ GARANTÍA: La imagen se muestra INMEDIATAMENTE sin esperar load
+    // Esto evita cualquier momento sin contenido visible
     imagesLayer.appendChild(firstImg);
+    imagesLayer.style.display = '';
+    imagesLayer.style.opacity = '1';
+    firstImg.style.opacity = '1';
+    
+    console.log(`✅ Primera imagen agregada al DOM inmediatamente (sin esperar carga)`);
+    
+    // Manejar carga exitosa (para logging)
+    firstImg.addEventListener('load', () => {
+      console.log(`✅ Primera imagen cargada correctamente: ${firstImg.naturalWidth}x${firstImg.naturalHeight}`);
+    });
+    
+    // Manejar errores de carga para reintentar
+    firstImg.addEventListener('error', (e) => {
+      console.error('❌ Error cargando primera imagen del slideshow:', e);
+      console.warn('⚠️ Reintentando con la siguiente imagen...');
+      currentSlideshowIndex = (currentSlideshowIndex + 1) % slideshowImages.length;
+      try { startSlideshow(); } catch (_) {}
+    });
+    
+    // Log del estado actual
+    console.log(`📊 Estado slideshow: ${slideshowImages.length} elementos totales, índice actual: ${currentSlideshowIndex}`);
+    // Fallback inmediato: si el navegador marca complete pero sin tamaño, reintentar
+    try {
+      if (firstImg.complete && (firstImg.naturalWidth === 0 || firstImg.naturalHeight === 0)) {
+        console.warn('⚠️ Primera imagen marcada como complete pero sin datos, reintentando');
+        currentSlideshowIndex = (currentSlideshowIndex + 1) % slideshowImages.length;
+        startSlideshow();
+        return;
+      }
+    } catch (_) {}
+    // Fallback por timeout: asegurar que al menos una imagen visible quede cargada
+    setTimeout(() => {
+      try {
+        const layerNow = document.getElementById('slideshow-images-layer');
+        if (!layerNow) return;
+        const imgs = Array.from(layerNow.querySelectorAll('img'));
+        const top = imgs[imgs.length - 1];
+        const visible = top && (parseFloat(getComputedStyle(top).opacity || '0') > 0.01) && top.naturalWidth > 0;
+        if (!visible) {
+          console.warn('🛠️ Fallback: primera imagen no visible tras timeout, avanzando');
+          currentSlideshowIndex = (currentSlideshowIndex + 1) % slideshowImages.length;
+          startSlideshow();
+        }
+      } catch (_) {}
+    }, 1500);
   }
 
   // Asegurar que el video esté oculto al iniciar slideshow
@@ -4099,6 +4393,7 @@ function startSlideshow() {
   // Reiniciar contador de vueltas si no venimos de video
   if (!inVideoPlayback) {
     slideshowCycleCount = 0;
+    videoShownInCurrentCycle = false; // Reset del flag de video
   }
   inVideoPlayback = false;
 
@@ -4106,6 +4401,70 @@ function startSlideshow() {
   if (slideshowImages.length > 1) {
     scheduleNextSlide();
   }
+  // Health-check: asegurar que siempre haya al menos 1 elemento visible (imagen o video)
+  if (_slideshowHealthId) { clearInterval(_slideshowHealthId); _slideshowHealthId = null; }
+  _slideshowHealthId = setInterval(() => {
+    try {
+      if (!slideshowConfig.enabled) return;
+      
+      const layer = document.getElementById('slideshow-images-layer');
+      const videoEl = document.getElementById('slideshow-video');
+      
+      // Verificar si el video está visible y reproduciéndose
+      const videoVisible = videoEl && videoEl.style.display !== 'none' && !videoEl.paused;
+      
+      if (videoVisible) {
+        // Si el video está activo, todo bien
+        return;
+      }
+      
+      // Si no hay video activo, debe haber imágenes visibles
+      if (!layer) { 
+        console.warn('🛠️ Health-check: capa de imágenes no existe, recreando');
+        createSlideshowContainer(); 
+        startSlideshow(); 
+        return; 
+      }
+      
+      // Si la capa está oculta sin estar en video/logo, re-mostrar y reiniciar
+      if (layer.style.display === 'none' && !inVideoPlayback && !videoForcedByLogo) {
+        console.warn('🛠️ Health-check: capa oculta sin razón, mostrando');
+        layer.style.display = '';
+        layer.style.opacity = '1';
+        if (layer.children.length === 0) startSlideshow();
+      }
+      
+      const imgs = layer.querySelectorAll('img');
+      if (imgs.length === 0 && !inVideoPlayback) {
+        // Reconstruir slideshow si quedó vacío
+        console.warn('🛠️ Health-check: sin imágenes, reconstruyendo slideshow');
+        startSlideshow();
+        return;
+      }
+      
+      // Verificar si hay al menos una imagen visible
+      const list = Array.from(imgs);
+      const anyVisible = list.some(el => {
+        const op = parseFloat(getComputedStyle(el).opacity || '0');
+        const hasSize = el.naturalWidth > 0 && el.naturalHeight > 0;
+        return op > 0.01 && hasSize;
+      });
+      
+      if (!anyVisible && !inVideoPlayback) {
+        const top = list[list.length - 1];
+        if (top && top.naturalWidth > 0) {
+          console.warn('🛠️ Health-check: todas transparentes, forzando última imagen visible');
+          top.style.transition = 'opacity 300ms ease';
+          top.style.opacity = '1';
+        } else {
+          console.warn('🛠️ Health-check: imágenes sin datos, reiniciando slideshow');
+          startSlideshow();
+        }
+      }
+    } catch (e) {
+      console.error('❌ Error en health-check:', e);
+    }
+  }, 3000); // Check cada 3 segundos
   
   // Programación por timeout para evitar bloqueos si la transición se retrasa
   // console.log(`📺 Slideshow iniciado con fade simple - ${slideshowImages.length} imágenes, intervalo: ${slideshowConfig.interval}ms`);
@@ -4145,11 +4504,27 @@ function addNextSlideshowImage(onDone) {
   _slideshowTransitioning = true;
 
   const nextSrc = slideshowImages[currentSlideshowIndex];
+  console.log(`🔄 Transición a siguiente elemento [${currentSlideshowIndex}]: ${nextSrc}`);
+  
   const prevImgs = Array.from(imagesLayer.querySelectorAll('img'));
   const prevTop = prevImgs.length ? prevImgs[prevImgs.length - 1] : null;
 
   // Crear nueva imagen con opacidad 0 y añadirla encima
   const nextImg = createSlideshowImage(nextSrc, 0);
+  
+  // Agregar handlers de carga
+  nextImg.addEventListener('load', () => {
+    console.log(`✅ Imagen cargada: ${nextImg.naturalWidth}x${nextImg.naturalHeight}`);
+  });
+  
+  nextImg.addEventListener('error', (e) => {
+    console.error(`❌ Error cargando imagen [${currentSlideshowIndex}]:`, nextSrc, e);
+    // Si falla, intentar con la siguiente
+    _slideshowTransitioning = false;
+    currentSlideshowIndex = (currentSlideshowIndex + 1) % slideshowImages.length;
+    if (typeof onDone === 'function') onDone();
+  });
+  
   imagesLayer.appendChild(nextImg);
 
   // Cuando esté lista, iniciar el fade
@@ -4189,7 +4564,7 @@ function addNextSlideshowImage(onDone) {
     };
     nextImg.addEventListener('transitionend', onEnd);
     if (prevTop) prevTop.addEventListener('transitionend', onEnd);
-    setTimeoua11zt(onEnd, SLIDESHOW_FADE_MS + 80);
+  setTimeout(onEnd, SLIDESHOW_FADE_MS + 80);
   };
 
   // Intentar decode() para evitar parpadeos; fallback por tiempo
@@ -4218,19 +4593,42 @@ function scheduleNextSlide() {
   _slideshowTimeoutId = setTimeout(() => {
     if (!slideshowImages || slideshowImages.length <= 1) return;
     if (_slideshowTransitioning) {
-      // Si seguimos en transición, reintentar un poco después
-      return scheduleNextSlide();
+      // Si seguimos en transición, reintentar un poco después sin recursión inmediata
+      setTimeout(() => scheduleNextSlide(), 80);
+      return;
     }
     const prevIndex = currentSlideshowIndex;
     currentSlideshowIndex = (currentSlideshowIndex + 1) % slideshowImages.length;
 
     if (currentSlideshowIndex === 0 && slideshowImages.length > 0 && !inVideoPlayback) {
       slideshowCycleCount++;
+      // Resetear flag del video al completar un ciclo
+      videoShownInCurrentCycle = false;
     }
-    addNextSlideshowImage(() => {
-      // Reprogramar cuando termina el fade
-      scheduleNextSlide();
-    });
+    
+    // Verificar si el siguiente elemento es un video
+    const nextItem = slideshowImages[currentSlideshowIndex];
+    if (nextItem && nextItem.startsWith('VIDEO:')) {
+      // Solo mostrar el video si no se ha mostrado en este ciclo
+      if (!videoShownInCurrentCycle) {
+        videoShownInCurrentCycle = true;
+        playSlideshowVideo(nextItem.substring(6)); // Quitar el prefijo "VIDEO:"
+      } else {
+        // Si el video ya se mostró, saltar al siguiente elemento
+        currentSlideshowIndex = (currentSlideshowIndex + 1) % slideshowImages.length;
+        if (currentSlideshowIndex === 0) {
+          slideshowCycleCount++;
+          videoShownInCurrentCycle = false; // Reset para el nuevo ciclo
+        }
+        scheduleNextSlide(); // Continuar inmediatamente con el siguiente
+      }
+    } else {
+      // Mostrar imagen
+      addNextSlideshowImage(() => {
+        // Reprogramar cuando termina el fade
+        scheduleNextSlide();
+      });
+    }
   }, delay);
 }
 
@@ -4238,6 +4636,7 @@ function stopSlideshow() {
   if (slideshowInterval) { clearInterval(slideshowInterval); slideshowInterval = null; }
   if (_slideshowTimeoutId) { clearTimeout(_slideshowTimeoutId); _slideshowTimeoutId = null; }
   _slideshowTransitioning = false; // Reset transitioning flag
+  if (_slideshowHealthId) { clearInterval(_slideshowHealthId); _slideshowHealthId = null; }
 }
 
 function showSlideshowImage(index) {
@@ -4255,25 +4654,30 @@ function showSlideshowImage(index) {
 }
 
 // ==============================
-// VIDEO: Reproducir elixir.webm tras 10 vueltas
+// VIDEO: Reproducir video dentro del slideshow
 // ==============================
 
-function triggerVideoPlayback() {
+function playSlideshowVideo(videoSrc) {
   if (!ENABLE_SLIDESHOW_VIDEO) {
-    // Feature deshabilitada: no interrumpir slideshow
+    // Feature deshabilitada: saltar al siguiente
+    scheduleNextSlide();
     return;
   }
+  
   // Proteger de reentradas
   if (inVideoPlayback) return;
   inVideoPlayback = true;
-
-  // Detener el slideshow mientras se reproduce el video
-  stopSlideshow();
+  _slideshowTransitioning = true;
 
   // Asegurar que el elemento de video exista
   if (!slideshowVideoEl) {
     const wrapper = document.getElementById('slideshow-image-wrapper');
-    if (!wrapper) return;
+    if (!wrapper) {
+      inVideoPlayback = false;
+      _slideshowTransitioning = false;
+      scheduleNextSlide();
+      return;
+    }
     slideshowVideoEl = document.createElement('video');
     slideshowVideoEl.id = 'slideshow-video';
     slideshowVideoEl.style.position = 'absolute';
@@ -4288,43 +4692,182 @@ function triggerVideoPlayback() {
     slideshowVideoEl.muted = true;
     slideshowVideoEl.playsInline = true;
     slideshowVideoEl.preload = 'auto';
+    // Optimizaciones de rendimiento
+    slideshowVideoEl.setAttribute('playsinline', 'true');
+    slideshowVideoEl.setAttribute('webkit-playsinline', 'true');
+    slideshowVideoEl.disablePictureInPicture = true;
     wrapper.appendChild(slideshowVideoEl);
   }
 
-  // Configurar fuente y mostrar
+  // Ocultar capa de imágenes durante el video (sin transición para evitar conflictos)
+  const imagesLayer = document.getElementById('slideshow-images-layer');
+  if (imagesLayer) {
+    imagesLayer.style.transition = 'opacity 500ms ease';
+    imagesLayer.style.opacity = '0';
+  }
+
+  // Configurar fuente y mostrar (sin resetear src si ya está cargado)
+  const needsLoad = slideshowVideoEl.src !== videoSrc && !slideshowVideoEl.src.endsWith(videoSrc);
+  if (needsLoad) {
+    try {
+      slideshowVideoEl.src = videoSrc;
+      slideshowVideoEl.load(); // Forzar recarga solo si cambió la fuente
+    } catch (_) {}
+  }
+  
   try {
-    slideshowVideoEl.src = '/elixir.webm';
     slideshowVideoEl.currentTime = 0;
+    slideshowVideoEl.loop = false; // No loop, reproducir una vez
   } catch (_) {}
+  
+  // Mostrar video sin fade para evitar trabas (cambio directo)
+  slideshowVideoEl.style.transition = 'none';
   slideshowVideoEl.style.display = 'block';
+  slideshowVideoEl.style.opacity = '1';
 
-  // Reproducir y al terminar, reanudar slideshow por 10 vueltas más
-  const onEnded = () => {
-    slideshowVideoEl.removeEventListener('ended', onEnded);
-    // Ocultar video y limpiar src para liberar
-    slideshowVideoEl.style.display = 'none';
-    try { slideshowVideoEl.pause(); } catch (_) {}
-    try { slideshowVideoEl.src = ''; } catch (_) {}
-
-    // Reset contador de vueltas y estado video
-    slideshowCycleCount = 0;
-    inVideoPlayback = false;
-
-    // Reanudar slideshow si sigue habilitado
-    if (slideshowConfig.enabled && slideshowImages.length > 0) {
-      startSlideshow();
+  // Variable para guardar la imagen pre-cargada
+  let nextImagePreloaded = null;
+  
+  // Función para PRE-CARGAR la siguiente imagen (sin mostrarla aún)
+  const preloadNextImage = () => {
+    console.log('� Pre-cargando siguiente imagen en background');
+    
+    // Calcular el siguiente índice (debe ser una imagen, no video)
+    let nextIndex = (currentSlideshowIndex + 1) % slideshowImages.length;
+    while (nextIndex < slideshowImages.length && 
+           slideshowImages[nextIndex] && 
+           slideshowImages[nextIndex].startsWith('VIDEO:')) {
+      nextIndex = (nextIndex + 1) % slideshowImages.length;
+    }
+    
+    if (slideshowImages[nextIndex] && !slideshowImages[nextIndex].startsWith('VIDEO:')) {
+      const nextSrc = slideshowImages[nextIndex];
+      nextImagePreloaded = new Image();
+      nextImagePreloaded.src = nextSrc;
+      nextImagePreloaded.onload = () => {
+        console.log('✅ Imagen pre-cargada lista:', nextSrc);
+      };
     }
   };
-  slideshowVideoEl.addEventListener('ended', onEnded);
+  
+  // Función para mostrar la imagen pre-cargada INSTANTÁNEAMENTE
+  const showPreloadedImage = () => {
+    console.log('⚡ Mostrando imagen pre-cargada INMEDIATAMENTE');
+    
+    // Calcular el siguiente índice (debe ser una imagen, no video)
+    let nextIndex = (currentSlideshowIndex + 1) % slideshowImages.length;
+    while (nextIndex < slideshowImages.length && 
+           slideshowImages[nextIndex] && 
+           slideshowImages[nextIndex].startsWith('VIDEO:')) {
+      nextIndex = (nextIndex + 1) % slideshowImages.length;
+    }
+    
+    if (imagesLayer && slideshowImages[nextIndex]) {
+      const nextSrc = slideshowImages[nextIndex];
+      
+      // Crear elemento de imagen y agregarlo INMEDIATAMENTE con opacidad 1
+      const nextImg = createSlideshowImage(nextSrc, 1); // ⚡ Opacidad 1 directa
+      imagesLayer.innerHTML = ''; // Limpiar capa
+      imagesLayer.appendChild(nextImg);
+      
+      // Mostrar la capa INMEDIATAMENTE sin transición
+      imagesLayer.style.transition = 'none';
+      imagesLayer.style.opacity = '1';
+      
+      // Ocultar video INMEDIATAMENTE
+      slideshowVideoEl.style.display = 'none';
+      try { slideshowVideoEl.pause(); } catch (_) {}
+      
+      console.log('✅ Imagen mostrada instantáneamente, video oculto');
+    }
+  };
 
-  // Intentar reproducir
+  // Reproducir y al terminar, continuar con el slideshow
+  const onEnded = () => {
+    console.log('🎬 Video terminado - mostrando imagen INMEDIATAMENTE');
+    slideshowVideoEl.removeEventListener('ended', onEnded);
+    slideshowVideoEl.removeEventListener('error', onError);
+    slideshowVideoEl.removeEventListener('timeupdate', onTimeUpdate);
+    
+    // ⚡ MOSTRAR IMAGEN INMEDIATAMENTE (sin esperar nada)
+    showPreloadedImage();
+    
+    // Reset estado video
+    inVideoPlayback = false;
+    _slideshowTransitioning = false;
+
+    // Continuar con el siguiente elemento del slideshow
+    scheduleNextSlide();
+  };
+  
+  // Monitorear tiempo para PRE-CARGAR imagen temprano
+  const onTimeUpdate = () => {
+    if (!slideshowVideoEl) return;
+    const currentTime = slideshowVideoEl.currentTime;
+    const duration = slideshowVideoEl.duration;
+    const remaining = duration - currentTime;
+    
+    // 3 segundos antes: PRE-CARGAR la siguiente imagen
+    if (remaining > 0 && remaining <= 3.0 && !slideshowVideoEl._preloadStarted) {
+      slideshowVideoEl._preloadStarted = true;
+      console.log('📥 3s restantes - pre-cargando siguiente imagen');
+      preloadNextImage();
+    }
+    
+    // 0.5 segundos antes: PREPARAR para mostrar inmediatamente
+    if (remaining > 0 && remaining <= 0.5 && !slideshowVideoEl._transitionStarted) {
+      slideshowVideoEl._transitionStarted = true;
+      console.log('⚡ 0.5s restantes - preparado para transición instantánea');
+      // La imagen ya está pre-cargada, solo esperamos el onEnded
+    }
+  };
+  
+  // Manejar errores de reproducción
+  const onError = (err) => {
+    console.error('❌ Error en reproducción de video:', err);
+    slideshowVideoEl.removeEventListener('ended', onEnded);
+    slideshowVideoEl.removeEventListener('error', onError);
+    slideshowVideoEl.removeEventListener('timeupdate', onTimeUpdate);
+    
+    // Mostrar inmediatamente una imagen
+    if (imagesLayer) {
+      imagesLayer.style.opacity = '1';
+    }
+    onEnded(); // Saltar al siguiente
+  };
+  
+  slideshowVideoEl.addEventListener('ended', onEnded, { once: true });
+  slideshowVideoEl.addEventListener('error', onError, { once: true });
+  slideshowVideoEl.addEventListener('timeupdate', onTimeUpdate);
+  slideshowVideoEl._transitionStarted = false; // Reset flag
+  slideshowVideoEl._preloadStarted = false; // Reset flag de precarga
+
+  // Intentar reproducir con manejo robusto de errores
   const playPromise = slideshowVideoEl.play();
   if (playPromise && typeof playPromise.then === 'function') {
-    playPromise.catch(() => {
-      // Si falla autoplay, intentar iniciar mostrando primer frame (muted/inline debe permitir)
-      setTimeout(() => slideshowVideoEl.play().catch(() => {}), 200);
+    playPromise.then(() => {
+      console.log(`🎥 Video reproduciéndose: ${videoSrc} (duración: ${slideshowVideoEl.duration}s)`);
+    }).catch((err) => {
+      console.error('❌ Error al iniciar video:', err);
+      // Si falla autoplay, saltar al siguiente
+      onEnded();
     });
+  } else {
+    console.log(`🎥 Video reproduciéndose (sin Promise): ${videoSrc}`);
   }
+}
+
+// ==============================
+// VIDEO: Reproducir elixir.webm tras 10 vueltas (LEGACY - mantener por compatibilidad)
+// ==============================
+
+function triggerVideoPlayback() {
+  if (!ENABLE_SLIDESHOW_VIDEO) {
+    // Feature deshabilitada: no interrumpir slideshow
+    return;
+  }
+  // Usar la nueva función de video en slideshow
+  playSlideshowVideo('/elixir.webm');
 }
 
 // ==============================
@@ -4399,7 +4942,13 @@ function stopLogoVideoLoopIfActive() {
 // Aplicar un paso de color con un patrón específico enviado por el servidor (sin alterar el orden local)
 async function executeColorStepWithPattern(forcedPattern) {
   if (!forcedPattern) return executeColorStep();
-  if (autoColorSequence.isRunning) return; // evitar solapado
+  // Autoridad del servidor: si hay un paso corriendo lo interrumpimos (especialmente para logo1->logo2)
+  if (autoColorSequence.isRunning) {
+    console.log(`⚡ Interrumpiendo paso en curso para aplicar patrón servidor: ${forcedPattern}`);
+    try { if (rafId) cancelAnimationFrame(rafId); } catch(_) {}
+    try { if (fpsMonitorRafId) cancelAnimationFrame(fpsMonitorRafId); } catch(_) {}
+    autoColorSequence.isRunning = false;
+  }
   autoColorSequence.isRunning = true;
   console.log(`🎨 *** COLOREANDO (forzado) *** Aplicando: ${forcedPattern}`);
   try {
@@ -4411,6 +4960,14 @@ async function executeColorStepWithPattern(forcedPattern) {
     });
     if (/logo1\.jpg|logo2\.jpg/i.test(forcedPattern)) {
       console.log('🆕 LOGO MODE (forzado):', forcedPattern, 'fade-in directo sin coloreo');
+      // Ocultar slideshow durante logos (evita superposición/desincronización)
+      try {
+        const imagesLayer = document.getElementById('slideshow-images-layer');
+        if (imagesLayer && imagesLayer.style.display !== 'none') {
+          imagesLayer.style.display = 'none';
+          slideshowHiddenForLogo = true;
+        }
+      } catch (_) {}
       await showLogoFullFade(img, forcedPattern);
       finalizeLogoStep();
     } else {
@@ -4426,7 +4983,12 @@ async function executeColorStepWithPattern(forcedPattern) {
       try { resize(); } catch (_) {}
       colorOnTop();
       playFullscreenLogoVideoIfNeeded(forcedPattern);
+      if (!autoColorSequence.serverSync) {
+        autoColorSequence.currentIndex = (autoColorSequence.currentIndex + 1) % autoColorSequence.patterns.length;
+      }
     }
+    lastAppliedPattern = forcedPattern;
+    lastAppliedPatternTs = Date.now();
   } catch (e) {
     console.error('❌ Error aplicando patrón forzado:', forcedPattern, e);
   } finally {
@@ -4501,6 +5063,19 @@ function finalizeLogoStep(){
   // Liberar lock
   if (autoColorSequence) autoColorSequence.isRunning = false;
   animationFinished = true;
+  // En modo serverSync NO programamos nada localmente; el servidor enviará próximo paso
+  if (autoColorSequence && autoColorSequence.serverSync) {
+    // Restaurar slideshow si fue ocultado por logo
+    try {
+      if (slideshowHiddenForLogo) {
+        const imagesLayer = document.getElementById('slideshow-images-layer');
+        if (imagesLayer) imagesLayer.style.display = '';
+        slideshowHiddenForLogo = false;
+        if (slideshowConfig.enabled && slideshowImages.length > 0) startSlideshow();
+      }
+    } catch (_) {}
+    return;
+  }
   // Programar siguiente como en finalize de coloreo (simplificado)
   if (autoColorSequence && autoColorSequence.active && !autoColorSequence.nextStepScheduled){
     autoColorSequence.nextStepScheduled = true;
@@ -4509,6 +5084,15 @@ function finalizeLogoStep(){
     let base = autoColorSequence.lastBoundaryTs || autoColorSequence.anchorStartAt || nowTs;
     while (base <= nowTs) base += period;
     const delayMs = Math.max(0, base - nowTs);
+    // Restaurar slideshow si fue ocultado por logo
+    try {
+      if (slideshowHiddenForLogo) {
+        const imagesLayer = document.getElementById('slideshow-images-layer');
+        if (imagesLayer) imagesLayer.style.display = '';
+        slideshowHiddenForLogo = false;
+        if (slideshowConfig.enabled && slideshowImages.length > 0) startSlideshow();
+      }
+    } catch (_) {}
     console.log(`⏱️ (LOGO) Próximo paso en ${delayMs}ms`);
     if (autoColorSequence.timeoutId) clearTimeout(autoColorSequence.timeoutId);
     autoColorSequence.timeoutId = setTimeout(()=>{

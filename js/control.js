@@ -224,6 +224,8 @@ function initializeDOMElements() {
     elements.resetColorBtn = document.getElementById('resetColorBtn');
     elements.switchModeBtn = document.getElementById('switchModeBtn');
     elements.colorSequenceStatus = document.getElementById('colorSequenceStatus');
+    // Botón de pausa de secuencia de color
+    elements.pauseColorSequenceBtn = document.getElementById('btnPauseColorSequence');
 
     // Valores mostrados
     values.repetitionXValue = document.getElementById('repetitionXValue');
@@ -684,6 +686,47 @@ function setupEventListeners() {
     
     // Event listeners para controles de coloreado automático
     setupColorSequenceEventListeners();
+
+    // Botón Pausar secuencia de coloreado
+    if (elements.pauseColorSequenceBtn) {
+        elements.pauseColorSequenceBtn.addEventListener('click', () => {
+            try {
+                const btn = elements.pauseColorSequenceBtn;
+                const isPaused = btn.dataset.state === 'paused';
+                const status = document.getElementById('connectionStatus');
+                const prevBg = status ? status.style.background : '';
+                const prevText = status ? status.textContent : '';
+                if (!isPaused) {
+                    // Pausar
+                    stopColorSequence();
+                    if (status) {
+                        const last = (window.lastColorStepInfo?.pattern) || '—';
+                        status.textContent = `⏸️ Secuencia pausada (manteniendo ${last})`;
+                        status.style.background = '#6c757d';
+                        setTimeout(() => { status.textContent = prevText; status.style.background = prevBg; }, 1500);
+                    }
+                    updateColorSequenceStatus('⏸️ Secuencia detenida (se mantiene último color)');
+                    btn.textContent = '▶️ Reanudar';
+                    btn.style.background = '#28a745';
+                    btn.dataset.state = 'paused';
+                } else {
+                    // Reanudar
+                    startColorSequence();
+                    if (status) {
+                        status.textContent = `▶️ Reanudando secuencia`;
+                        status.style.background = '#28a745';
+                        setTimeout(() => { status.textContent = prevText; status.style.background = prevBg; }, 1200);
+                    }
+                    updateColorSequenceStatus('🔄 Secuencia activa - Coloreando automáticamente...');
+                    btn.textContent = '⏸️ Pausar';
+                    btn.style.background = '#6c757d';
+                    btn.dataset.state = '';
+                }
+            } catch (e) {
+                console.error('Error en toggle pausa/reanudar:', e);
+            }
+        });
+    }
     
     // Event listeners para controles UDP/TCP
     setupProtocolEventListeners();
