@@ -218,6 +218,11 @@ watchdogInterval = setInterval(() => {
     // No ejecutar watchdog si estamos en modo inactivo o en pausa de secuencia
     if (idleMode || sequencePaused) return;
     
+    // CRÍTICO: Si estamos en serverSync, el servidor controla TODO - no reactivar localmente
+    if (autoColorSequence && autoColorSequence.serverSync) {
+      return;
+    }
+    
   // SOLO reactivar si realmente se necesita y no hay animación activa ni pausa
   if (!sequencePaused && coloringMode === 'sequence' && !autoColorSequence.active && !rafId && !animationFinished) {
       // Intentar reactivar secuencia automática con ancla simple
@@ -916,9 +921,10 @@ function setupWebSocket() {
     
     // NUEVO: Siguiente paso manual de coloreado con sincronización
     socket.on('nextColorStep', (syncData) => {
+      // CRÍTICO: nextColorStep ES la señal de que la secuencia está activa - despausar siempre
       if (sequencePaused) {
-        console.log('⏸️ *** BRUSH *** Paso de color ignorado (sequencePaused=true)');
-        return;
+        console.log('▶️ *** BRUSH *** Despausando secuencia porque llegó nextColorStep del servidor');
+        sequencePaused = false;
       }
       const nowLocal = Date.now();
       const { timestamp, applyAt, pattern, currentIndex } = syncData || {};
@@ -990,6 +996,12 @@ function setupWebSocket() {
     socket.on('resetColorSequence', () => {
       console.log(`🔄 *** BRUSH ${brushId} *** Reseteando secuencia de coloreado desde control`);
       resetColorSequenceToYellow();
+    });
+    
+    // NUEVO: Reanudar secuencia de coloreado (despausar)
+    socket.on('resumeColorSequence', () => {
+      console.log(`▶️ *** BRUSH ${brushId} *** Reanudando secuencia desde servidor`);
+      sequencePaused = false;
     });
     
     // Eliminado: switchToWallpaperMode (legacy)
@@ -3226,6 +3238,13 @@ function loop(ts){
       
       const delayMs = Math.max(0, base - nowTs);
       autoColorSequence.lastBoundaryTs = base;
+      
+      // CRÍTICO: Si estamos en serverSync, NO programar paso local - esperar nextColorStep del servidor
+      if (autoColorSequence.serverSync) {
+        console.log(`⏳ Brush ${brushId}: Animación completada - esperando nextColorStep del servidor (serverSync activo)`);
+        autoColorSequence.nextStepScheduled = false;
+        return;
+      }
       
       console.log(`⏱️ Brush ${brushId}: Próximo paso programado en ${delayMs}ms (period=${period}) - FALLBACK AUTO`);
       

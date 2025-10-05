@@ -156,6 +156,14 @@ function resumeCentralColorScheduler() {
     if (!colorStepScheduler.active || !colorStepScheduler.paused) return;
     colorStepScheduler.paused = false;
     console.log('▶️ *** SERVER *** Reanudando ColorScheduler');
+    
+    // CRÍTICO: Despausar a todos los clientes también
+    connectedClients.forEach(c => {
+        if (c.type === 'brush-reveal' && c.socket.connected) {
+            c.socket.emit('resumeColorSequence');
+        }
+    });
+    
     scheduleNextColorBoundary();
 }
 
