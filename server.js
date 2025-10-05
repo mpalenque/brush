@@ -772,6 +772,11 @@ app.get('/brush-reveal/:id', (req, res) => {
     }
 });
 
+// NUEVA RUTA: Grid con 4 brush-reveal en 2x2
+app.get('/brush-grid', (req, res) => {
+    res.sendFile(path.join(__dirname, 'brush-grid.html'));
+});
+
 // NUEVA RUTA: Versión minimal de brush-reveal
 app.get('/brush-minimal', (req, res) => {
     res.sendFile(path.join(__dirname, 'brush-minimal.html'));
@@ -1728,7 +1733,14 @@ io.on('connection', (socket) => {
             const nowTs = Date.now();
             const sequenceId = `wallpaper_${nowTs}_${Math.random().toString(36).substr(2, 9)}`;
             
-            if (nowTs - lastWallpaperBroadcastTs > 3000) { // Aumentar throttle a 3 segundos
+            // Throttle mejorado: 5 segundos entre broadcasts del mismo tipo
+            if (nowTs - lastWallpaperBroadcastTs > 5000) { // Aumentar throttle a 5 segundos
+                // Validación adicional: si ya hay un sequenceId activo muy reciente (< 8s), omitir
+                if (currentWallpaperSequenceId && (nowTs - lastWallpaperBroadcastTs) < 8000) {
+                    console.log(`🛑 Broadcast wallpaper omitido - secuencia reciente aún activa (ID: ${currentWallpaperSequenceId})`);
+                    return;
+                }
+                
                 currentWallpaperSequenceId = sequenceId;
                 io.emit('newPatternReady', { 
                     patternId: 'wallpaper', 
