@@ -200,42 +200,24 @@ let lastAppliedPattern = null;
 let lastAppliedPatternTs = 0;
 
 // Variable para controlar el modo de coloreado
-let coloringMode = 'sequence'; // 'sequence' o 'wallpaper'
-// Orden de inicio diferida cuando aún estamos en modo wallpaper
-let pendingSequenceStart = null;
-// Nuevo: Cambio a secuencia diferido si llega mientras se colorea wallpaper
-let pendingSwitchToSequence = false;
+let coloringMode = 'sequence'; // Siempre en modo 'sequence' - wallpaper.jpg se trata igual que rojo.jpg
 // Temporizador fallback local para arrancar la secuencia si no llega señal del servidor
 let sequenceFallbackTimeoutId = null;
 
-// Control de secuencia única para evitar múltiples ejecuciones de wallpaper
-let wallpaperSequenceActive = false;
-let wallpaperSequenceActiveStartTs = 0; // timestamp para detectar locks colgados
-// Debouncing: rastrear últimas solicitudes para ignorar duplicados rápidos
-let lastWallpaperRequestTs = 0;
-let lastWallpaperRequestSeqId = null;
-const WALLPAPER_DEBOUNCE_MS = 4000; // ignorar solicitudes duplicadas dentro de 4 segundos
 // Contador para rastrear cuántas veces se llama colorOnTop
 let colorOnTopCallCount = 0;
 let lastColorOnTopTs = 0;
+let skipImmediateRenderOnce = false;
 
 let watchdogInterval = null; // Referencia al intervalo del watchdog para poder limpiarlo
 
-// Watchdog periódico para detectar estados atascados (ej: lock de wallpaper sin progreso)
+// Watchdog periódico para reactivar secuencia si se detiene
 // OPTIMIZADO: Solo ejecutar si no estamos en modo inactivo
 watchdogInterval = setInterval(() => {
   try {
     // No ejecutar watchdog si estamos en modo inactivo o en pausa de secuencia
     if (idleMode || sequencePaused) return;
     
-    if (wallpaperSequenceActive) {
-      const now = Date.now();
-      if ((now - wallpaperSequenceActiveStartTs) > (DURATION_MS * 3)) {
-        console.warn('🛠️ Watchdog: liberando lock de wallpaperSequenceActive por timeout extendido');
-        wallpaperSequenceActive = false;
-        wallpaperSequenceId = null;
-      }
-    }
   // SOLO reactivar si realmente se necesita y no hay animación activa ni pausa
   if (!sequencePaused && coloringMode === 'sequence' && !autoColorSequence.active && !rafId && !animationFinished) {
       // Intentar reactivar secuencia automática con ancla simple
@@ -249,7 +231,6 @@ watchdogInterval = setInterval(() => {
     // Silencioso
   }
 }, 15000); // Aumentar intervalo a 15 segundos para menos overhead
-let wallpaperSequenceId = null;
 
 // Control de fade in/out suave
 let fadeInProgress = false;
@@ -460,177 +441,15 @@ async function resetColorSequenceToYellow() {
   console.log('✅ Reset completado - Patrón por defecto restaurado, listo para nueva secuencia');
 }
 
-// NOTA: Esta función ya NO se usa directamente desde el socket handler
-// Ahora wallpaper.jpg se trata como un color más vía executeColorStepWithPattern()
-// Mantenida por compatibilidad pero puede ser removida en futuras versiones
-async function switchToWallpaperMode(sequenceId = null) {
-  const currentSequenceId = sequenceId || `manual_${Date.now()}_${Math.random()}`;
-  const now = Date.now();
-  
-  // LOGGING: Rastrear todas las llamadas
-  console.log(`🔔 switchToWallpaperMode LLAMADO - SeqID: ${sequenceId}, Timestamp: ${now}`);
-  console.log(`📊 Estado actual: wallpaperSequenceActive=${wallpaperSequenceActive}, lastSeqId=${lastWallpaperRequestSeqId}, timeSinceLastRequest=${now - lastWallpaperRequestTs}ms`);
-  
-  // DEBOUNCING: Rechazar solicitudes duplicadas dentro de ventana de tiempo
-  if (sequenceId && sequenceId === lastWallpaperRequestSeqId && (now - lastWallpaperRequestTs) < WALLPAPER_DEBOUNCE_MS) {
-    console.log(`⏸️ DEBOUNCE: Ignorando solicitud duplicada de wallpaper (SeqID: ${sequenceId}) - última hace ${now - lastWallpaperRequestTs}ms`);
-    return;
-  }
-  
-  // PROTECCIÓN ADICIONAL: Si la animación actual NO ha terminado, rechazar nuevas solicitudes
-  if (wallpaperSequenceActive && !animationFinished && (now - wallpaperSequenceActiveStartTs) < DURATION_MS) {
-    console.log(`⏸️ PROTECCIÓN: Wallpaper aún coloreando (${now - wallpaperSequenceActiveStartTs}ms de ${DURATION_MS}ms) - ignorando nueva solicitud`);
-    return;
-  }
-  
-  // Registrar esta solicitud
-  lastWallpaperRequestTs = now;
-  lastWallpaperRequestSeqId = sequenceId;
-  
-  console.log(`🔀 *** SWITCH *** Cambiando a modo Wallpaper (wallpaper.jpg) - Seq ID: ${currentSequenceId}`);
-  
-  // Control de secuencia única: evitar múltiples ejecuciones
-  if (wallpaperSequenceActive) {
-    // Detectar lock colgado: si pasaron más de 2x la duración esperada sin estar realmente en modo wallpaper coloreando, liberar
-    const now = Date.now();
-    const stale = (now - wallpaperSequenceActiveStartTs) > (DURATION_MS * 2.2);
-    if (!stale) {
-      console.log(`⏸️ Secuencia wallpaper ya activa (ID actual: ${wallpaperSequenceId}) - ignorando nueva solicitud (ID: ${currentSequenceId})`);
-      return;
-    } else {
-      console.warn('🧹 Detectado lock de wallpaperSequenceActive colgado. Liberando para permitir nueva carga.');
-      wallpaperSequenceActive = false;
-      wallpaperSequenceId = null;
-    }
-  }
-  
-  // Evitar reentradas: si ya estamos coloreando wallpaper, no interrumpir
-  if (coloringMode === 'wallpaper' && !animationFinished) {
-    console.log(`⏸️ Ignorado: ya en modo wallpaper y coloreando (ID: ${currentSequenceId})`);
-    return;
-  }
-  
-  // Marcar secuencia activa
-  wallpaperSequenceActive = true;
-  wallpaperSequenceId = currentSequenceId;
-  wallpaperSequenceActiveStartTs = Date.now();
-  
-  // Detener secuencia automática si está activa
-  // Guardar estado actual para poder reanudar
-  savedSequenceState = {
-    active: autoColorSequence.active,
-    patterns: [...autoColorSequence.patterns],
-    currentIndex: autoColorSequence.currentIndex,
-    intervalTime: autoColorSequence.intervalTime
-  };
-  stopAutoColorSequence();
-  // Limpiar watchdog por seguridad
-  if (autoColorSequence.watchdogId) { clearTimeout(autoColorSequence.watchdogId); autoColorSequence.watchdogId = null; }
-  // Limpiar cualquier arranque diferido/fallback pendiente
-  pendingSequenceStart = null;
-  if (sequenceFallbackTimeoutId) { clearTimeout(sequenceFallbackTimeoutId); sequenceFallbackTimeoutId = null; }
-  
-  // Cambiar modo
-  coloringMode = 'wallpaper';
-  
-  try {
-    // Verificar si aún somos la secuencia activa
-    if (wallpaperSequenceId !== currentSequenceId) {
-      console.log(`⏹️ Secuencia cancelada - otra secuencia tomó control (actual: ${wallpaperSequenceId}, esperado: ${currentSequenceId})`);
-      return;
-    }
-    
-    // Primero hacer fade out suave al color de fondo
-    await performSmoothFadeToBackground();
-    
-    // Verificar nuevamente después del fade
-    if (wallpaperSequenceId !== currentSequenceId) {
-      console.log(`⏹️ Secuencia cancelada durante fade out (actual: ${wallpaperSequenceId}, esperado: ${currentSequenceId})`);
-      return;
-    }
-    
-    // Cargar wallpaper.jpg
-    const img = new Image();
-    let attempts = 0;
-    const MAX_ATTEMPTS = 4;
-    while (attempts < MAX_ATTEMPTS) {
-      attempts++;
-      try {
-        await new Promise((resolve, reject) => {
-          img.onload = () => {
-            if (!img.naturalWidth || !img.naturalHeight || img.naturalWidth < 500 || img.naturalHeight < 500) {
-              return reject(new Error('Dimensiones incompletas'));
-            }
-            resolve();
-          };
-          img.onerror = reject;
-          img.src = `/patterns/wallpaper.jpg?t=${Date.now()}&try=${attempts}`;
-        });
-        break; // éxito
-      } catch (e) {
-        console.warn(`⚠️ Intento ${attempts}/${MAX_ATTEMPTS} cargando wallpaper.jpg falló: ${e.message}`);
-        if (attempts >= MAX_ATTEMPTS) throw e;
-        await new Promise(r=>setTimeout(r, 600 * attempts));
-      }
-    }
-    
-    // Verificar una vez más antes de continuar
-    if (wallpaperSequenceId !== currentSequenceId) {
-      console.log(`⏹️ Secuencia cancelada durante carga de imagen (actual: ${wallpaperSequenceId}, esperado: ${currentSequenceId})`);
-      return;
-    }
-    
-    // Agregar wallpaper.jpg como patrón de coloreado
-    const cacheBust = Date.now();
-    const wallpaperPattern = {
-      src: `/patterns/wallpaper.jpg?cb=${cacheBust}`,
-      image: img,
-      filename: 'wallpaper.jpg',
-      type: 'wallpaper',
-      sequenceId: currentSequenceId
-    };
-    
-    // Reemplazar o agregar wallpaper como patrón activo único para evitar duplicados
-    const existingIdx = patterns.findIndex(p => p.filename === 'wallpaper.jpg' || p.type === 'wallpaper');
-    if (existingIdx >= 0) {
-      patterns[existingIdx] = wallpaperPattern;
-      currentPatternIndex = existingIdx;
-    } else {
-      patterns.push(wallpaperPattern);
-      currentPatternIndex = patterns.length - 1;
-    }
-    patternsReady = true;
-    
-    console.log(`✅ Wallpaper.jpg cargado (Seq ID: ${currentSequenceId}), iniciando coloreado...`);
-    
-    // Recalcular layout
-    resize();
-    
-    // Iniciar coloreado con wallpaper
-    colorOnTop();
-    // Al entrar a wallpaper, asegurar que el video por logos esté detenido
-    stopLogoVideoLoopIfActive();
-    stopFullscreenLogoVideo();
-    
-  } catch (error) {
-    console.error(`❌ Error cargando wallpaper.jpg (Seq ID: ${currentSequenceId}):`, error);
-    wallpaperSequenceActive = false;
-    wallpaperSequenceId = null;
-  }
-}
+// Eliminado: switchToWallpaperMode (legacy)
 
 // Función para cambiar a modo secuencia
 function switchToSequenceMode() {
   console.log('🔀 *** SWITCH *** Cambiando a modo Secuencia (rojo/azul/amarillo)');
   
-  // Marcar que la secuencia de wallpaper ha terminado
-  wallpaperSequenceActive = false;
-  wallpaperSequenceId = null;
-  
-  // Si estamos en modo wallpaper y la animación aún no termina, diferir el cambio
+  // Ya no hay modo wallpaper especial - siempre estamos en 'sequence'
   if (coloringMode === 'wallpaper' && !animationFinished) {
-    pendingSwitchToSequence = true;
-    console.log('⏳ Cambio a modo secuencia DIFERIDO hasta completar coloreado de wallpaper');
+    console.log('⏳ Cambio a modo secuencia DIFERIDO hasta completar coloreado');
     return;
   }
   
@@ -1036,15 +855,9 @@ function setupWebSocket() {
         return;
       }
       
-      // No interrumpir coloreado de wallpaper en curso
-      if (coloringMode === 'wallpaper' && !animationFinished) {
-        console.log('⏸️ newPatternReady ignorado: coloreado de wallpaper en curso');
-        return;
-      }
-      
-      // Si tenemos un sequenceId activo de wallpaper, ignorar patrones regulares
-      if (wallpaperSequenceActive && wallpaperSequenceId) {
-        console.log('⏸️ newPatternReady ignorado: wallpaper sequence activa');
+      // No interrumpir coloreado en curso
+      if (!animationFinished) {
+        console.log('⏸️ newPatternReady ignorado: coloreado en curso');
         return;
       }
       // Permitir todos los patrones de color - azul.jpg funciona igual que amarillo.jpg
@@ -1060,13 +873,9 @@ function setupWebSocket() {
     });
     
     // NUEVO: Escuchar orden desde /control para iniciar animación con último patrón
-    socket.on('requestAnimationStart', (data) => {
-      console.log('🎬 Orden recibida desde /control - coloreando encima con último patrón');
-      if (coloringMode === 'wallpaper' && !animationFinished) {
-        console.log('⏸️ requestAnimationStart ignorado: coloreado de wallpaper en curso');
-        return;
-      }
-      loadLatestPatternAndAnimate();
+    // Deshabilitado: el botón wallpaper ahora usa el mecanismo de pasos de color (nextColorStep)
+    socket.on('requestAnimationStart', () => {
+      console.log('ℹ️ requestAnimationStart recibido pero ignorado (ruta legacy desactivada)');
     });
     
     // Escuchar cambios en la selección de imagen
@@ -1183,35 +992,7 @@ function setupWebSocket() {
       resetColorSequenceToYellow();
     });
     
-    // NUEVO: Switch a modo wallpaper - tratar wallpaper.jpg como un color más
-    // DEBOUNCING AGRESIVO: solo permitir UN wallpaper cada 10 segundos
-    let lastWallpaperExecutionTs = 0;
-    const WALLPAPER_EXECUTION_COOLDOWN = 10000; // 10 segundos entre ejecuciones
-    
-    socket.on('switchToWallpaperMode', (data) => {
-      const sequenceId = data?.sequenceId || `fallback_${Date.now()}`;
-      const now = Date.now();
-      
-      // DEBOUNCE: Ignorar si ya ejecutamos wallpaper hace menos de 10 segundos
-      if ((now - lastWallpaperExecutionTs) < WALLPAPER_EXECUTION_COOLDOWN) {
-        console.log(`⏸️ DEBOUNCE: switchToWallpaperMode ignorado - última ejecución hace ${now - lastWallpaperExecutionTs}ms (cooldown: ${WALLPAPER_EXECUTION_COOLDOWN}ms)`);
-        return;
-      }
-      
-      // PROTECCIÓN: Si aún está coloreando, ignorar
-      if (!animationFinished && autoColorSequence.isRunning) {
-        console.log(`⏸️ PROTECCIÓN: switchToWallpaperMode ignorado - animación en curso`);
-        return;
-      }
-      
-      console.log(`🔀 *** BRUSH ${brushId} *** Cambiando a modo Wallpaper (Seq ID: ${sequenceId})`);
-      
-      // Registrar esta ejecución
-      lastWallpaperExecutionTs = now;
-      
-      // Tratar wallpaper.jpg EXACTAMENTE como amarillo/azul/rojo - sin fade, sin delays
-      executeColorStepWithPattern('wallpaper.jpg').catch(e => console.error('❌ Error cargando wallpaper:', e));
-    });
+    // Eliminado: switchToWallpaperMode (legacy)
     
     // NUEVO: Switch a modo secuencia
     socket.on('switchToSequenceMode', () => {
@@ -1219,22 +1000,9 @@ function setupWebSocket() {
       switchToSequenceMode();
     });
 
-      // NUEVO: Forzar mostrar wallpaper.jpg
-      socket.on('forceWallpaperPattern', () => {
-        console.log('🖼️ *** BRUSH *** Recibido comando para mostrar wallpaper.jpg');
-        coloringMode = 'wallpaper';
-        try {
-          loadLatestPatternAndAnimate();
-        } catch (e) {
-          console.error('❌ Error mostrando wallpaper.jpg:', e);
-        }
-      });
+      // Eliminado: forceWallpaperPattern (legacy)
 
-    // NUEVO: Soportar evento returnToSequenceMode emitido desde el servidor tras timeout
-    socket.on('returnToSequenceMode', (data) => {
-      console.log('🔁 *** BRUSH *** returnToSequenceMode recibido desde servidor');
-      switchToSequenceMode();
-    });
+    // Eliminado: returnToSequenceMode (legacy)
     
     // NUEVO: Escuchar configuración del slideshow
     socket.on('slideshowConfigUpdate', (data) => {
@@ -1361,25 +1129,10 @@ async function loadNewPatternAndAnimate(filename) {
 
 // Helper: asegurar que wallpaper esté cargado y seleccionado
 async function ensureWallpaperAsCurrent() {
-  // Ver si ya existe
-  let idx = patterns.findIndex(p => p.filename === 'wallpaper.jpg' || p.type === 'wallpaper');
-  if (idx >= 0) {
-    currentPatternIndex = idx;
-    return true;
-  }
-  // Cargarlo
-  try {
-    const exists = await checkIfFileExists('/patterns/wallpaper.jpg');
-    if (!exists) return false;
-    const img = new Image();
-    await new Promise((resolve, reject) => { img.onload = resolve; img.onerror = reject; img.src = `/patterns/wallpaper.jpg?t=${Date.now()}`; });
-    patterns.push({ src: '/patterns/wallpaper.jpg', image: img, filename: 'wallpaper.jpg', type: 'wallpaper' });
-    currentPatternIndex = patterns.length - 1;
-    patternsReady = true;
-    return true;
-  } catch (_) {
-    return false;
-  }
+  // DEPRECATED: Esta función ya no debe usarse directamente
+  // Redirigir a executeColorStepWithPattern para evitar duplicación
+  console.log('⚠️ ensureWallpaperAsCurrent DEPRECATED - use executeColorStepWithPattern("wallpaper.jpg")');
+  return false;
 }
 
 // Estado
@@ -1466,7 +1219,6 @@ function cleanupSystem() {
   inFinalFade = false;
   inVideoPlayback = false;
   videoForcedByLogo = false;
-  wallpaperSequenceActive = false;
   
   console.log('✅ Limpieza completa del sistema terminada');
 }
@@ -1908,14 +1660,12 @@ function ensureFpsOverlay() {
 
 // Toggle por teclado: tecla 'f' para mostrar/ocultar FPS
 document.addEventListener('keydown', (e) => {
+  if (e.repeat) return;
   if (e.key === '1') {
-    console.log('🔢 Tecla 1: Forzando pipeline de wallpaper para coloreo de alta calidad');
-    ensureWallpaperAsCurrent().then(ok => {
-      if (!ok) {
-        console.warn('⚠️ No se pudo asegurar wallpaper, usando patrón actual');
-      }
-      startAnimationSequence();
-    });
+    console.log('🔢 Tecla 1: Iniciando coloreado de wallpaper');
+    
+    // SIMPLIFICADO: Solo ejecutar el paso de color con wallpaper, igual que cualquier otro color
+    executeColorStepWithPattern('wallpaper.jpg');
     return;
   }
   if (e.key === 'f' || e.key === 'F') {
@@ -1997,6 +1747,7 @@ function resize(){
   canvas.width=size.w; canvas.height=size.h; canvas.style.width=size.wCSS+'px'; canvas.style.height=size.hCSS+'px';
   // Tras redimensionar, los contextos pierden flags: reforzar suavizado de alta calidad
   try { ensureHQ(ctx); } catch(_){}
+
   // Limpiar cualquier recorte previo por seguridad; se volverá a establecer si es wallpaper
   layout.sourceX = null;
   layout.sourceY = null;
@@ -2008,11 +1759,11 @@ function resize(){
     (currentPatternData.type && currentPatternData.type === 'wallpaper') ||
     (currentPatternData.filename && /wallpaper\.jpg$/i.test(currentPatternData.filename))
   ));
-  // Generalización: cualquier patrón que NO sea wallpaper se considera de color y se dibuja completo sin recorte
+  // SIMPLIFICADO: wallpaper.jpg se trata exactamente igual que rojo.jpg (wide-color)
   const isColorPattern = !!(currentPatternData && currentPatternData.type !== 'wallpaper');
   const isWideColor = !!(currentPatternData && (
-    (currentPatternData.type && ['amarillo','azul','rojo'].includes(String(currentPatternData.type).toLowerCase())) ||
-    (currentPatternData.filename && /(amarillo|azul|rojo)\.jpg$/i.test(currentPatternData.filename))
+    (currentPatternData.type && ['amarillo','azul','rojo','wallpaper'].includes(String(currentPatternData.type).toLowerCase())) ||
+    (currentPatternData.filename && /(amarillo|azul|rojo|wallpaper)\.jpg$/i.test(currentPatternData.filename))
   ));
   // SIEMPRE usar escala 1.0 para máxima resolución
   const effectiveMaskScale = 1.0; // FORZAR alta resolución para todos los patrones
@@ -2020,7 +1771,7 @@ function resize(){
   maskCanvas.height=Math.max(1, Math.floor(size.h*effectiveMaskScale));
   // Reforzar suavizado en el contexto de máscara también
   try { ensureHQ(maskCtx); } catch(_){}
-  
+
   // Redimensionar canvas temporales del pool
   canvasPool.resizeAll(size.w, size.h);
   
@@ -2030,24 +1781,8 @@ function resize(){
   
   const currentBG = getCurrentPattern();
   if (currentBG && currentBG.naturalWidth && currentBG.naturalHeight){
-    if (isWallpaper) {
-      // Para wallpaper.jpg, usar sección según offsets del servidor
-      const sectionWidth = WALLPAPER_SECTION_WIDTH;
-      const sectionHeight = WALLPAPER_SECTION_HEIGHT;
-      const sourceX = brushConfig.offsetX;
-      const sourceY = brushConfig.offsetY;
-      console.log(`🎯 Usando sección del wallpaper - sourceX: ${sourceX}, sourceY: ${sourceY}, width: ${sectionWidth}, height: ${sectionHeight}`);
-      const s = Math.min(size.w/sectionWidth, size.h/sectionHeight);
-      const dw = Math.ceil(sectionWidth*s), dh = Math.ceil(sectionHeight*s);
-      layout.dx = Math.floor((size.w-dw)/2);
-      layout.dy = Math.floor((size.h-dh)/2);
-      layout.dw = dw;
-      layout.dh = dh;
-      layout.sourceX = sourceX;
-      layout.sourceY = sourceY;
-      layout.sourceWidth = sectionWidth;
-      layout.sourceHeight = sectionHeight;
-    } else if (isWideColor) {
+    // CAMBIO: Priorizar isWideColor (que ahora incluye wallpaper) antes del check legacy de wallpaper
+    if (isWideColor) {
       // Amarillo/Azul/Rojo: usar mapeo virtual 6480x3840 como wallpaper, sin escalar la imagen fuente si tiene 3840px de alto
       const imgW = currentBG.naturalWidth;
       const imgH = currentBG.naturalHeight;
@@ -2073,7 +1808,6 @@ function resize(){
       sy = Math.max(0, Math.min(imgH - 1, sy));
       if (sx + sw > imgW) sw = imgW - sx;
       if (sy + sh > imgH) sh = imgH - sy;
-      // Destino igual que wallpaper (encajar la sección al canvas)
       const s = Math.min(size.w/sectionWidth, size.h/sectionHeight);
       const dw = Math.ceil(sectionWidth*s), dh = Math.ceil(sectionHeight*s);
       layout.dx = Math.floor((size.w-dw)/2);
@@ -2699,13 +2433,12 @@ function stepWave(wv, n, sizeMultiplier=1){
     wv.angle += baseDrift + sineWave + randomTurn + directionShift;
     wv.phase += wv.freq * (0.8 + Math.random() * 0.4); // Frecuencia variable
     
-    const nx = wv.x + Math.cos(wv.angle) * wv.stepLen;
-    const ny = wv.y + Math.sin(wv.angle) * wv.stepLen;
-    if (nx<-60||nx>size.w+60||ny<-60||ny>size.h+60){ 
-      wv.angle += Math.PI * (0.25 + Math.random() * 0.2); // Rebotes más variados
-      continue; 
-    }
-    const w = clamp(gauss(wv.baseW, wv.baseW*.12), wv.baseW*.75, wv.baseW*1.25) * sizeMultiplier;
+    const nx = wv.x + wv.vx;
+    const ny = wv.y + wv.vy;
+    // inercia hacia la velocidad objetivo, más lenta
+    wv.vx = lerp(wv.vx, nx, 0.07);
+    wv.vy = lerp(wv.vy, ny, 0.07);
+    const w = clamp(gauss(wv.baseW, wv.baseW*.08), wv.baseW*.8, wv.baseW*1.2) * sizeMultiplier;
     const a0 = wv.alpha;
     if (hasBrush){
       const brush = maskBrushes[wv.b];
@@ -3436,13 +3169,6 @@ function loop(ts){
     console.log('✅ COLOREADO COMPLETO AL 100% - Imagen totalmente coloreada');
     animationFinished = true;
     
-    // Liberar secuencia de wallpaper si estaba activa
-    if (coloringMode === 'wallpaper' && wallpaperSequenceActive) {
-      console.log(`🔓 Liberando secuencia wallpaper completada (ID: ${wallpaperSequenceId})`);
-      wallpaperSequenceActive = false;
-      wallpaperSequenceId = null;
-    }
-    
     // Liberar lock de paso en curso
     if (autoColorSequence) autoColorSequence.isRunning = false;
     
@@ -3462,13 +3188,6 @@ function loop(ts){
     preserveCanvasContent = true;
     console.log('🎨 *** COLOREADO COMPLETADO *** - Listo para recibir siguiente imagen');
 
-    // Si había un cambio a secuencia pendiente, ejecutarlo ahora
-    if (pendingSwitchToSequence) {
-      console.log('▶️ Ejecutando cambio a modo secuencia que estaba pendiente');
-      pendingSwitchToSequence = false;
-      try { switchToSequenceMode(); } catch (e) { console.error('❌ Error al cambiar a modo secuencia tras completar:', e); }
-    }
-
     // NUEVO: Si acabamos de colorear wallpaper y la secuencia central existe, solicitar inmediatamente sincronización del último paso
     if (coloringMode === 'wallpaper') {
       // Cambiar a sequence automáticamente si no hay cambio pendiente explícito
@@ -3486,15 +3205,15 @@ function loop(ts){
       
       // MEJORA DE SINCRONIZACIÓN: Solo usar auto-programación como fallback
       // En modo sincronizado, esperamos comandos del servidor
-      const period = autoColorSequence.periodMs || (autoColorSequence.intervalTime + (typeof DURATION_MS !== 'undefined' ? DURATION_MS : 14000));
-      const nowTs2 = Date.now();
+      const period = autoColorSequence.periodMs || (autoColorSequence.intervalTime + DURATION_MS);
+      const nowTs = Date.now();
       // Calcular la siguiente frontera a partir del último boundary (o anchorStartAt)
-      let base = autoColorSequence.lastBoundaryTs || autoColorSequence.anchorStartAt || nowTs2;
+      let base = autoColorSequence.lastBoundaryTs || autoColorSequence.anchorStartAt || nowTs;
       
       // PROTECCIÓN CONTRA BUCLE INFINITO
       let iterations = 0;
       const maxIterations = 100; // Protección de seguridad
-      while (base <= nowTs2 && iterations < maxIterations) {
+      while (base <= nowTs && iterations < maxIterations) {
         base += period;
         iterations++;
       }
@@ -3502,10 +3221,10 @@ function loop(ts){
       // Si period es inválido, usar valor por defecto
       if (iterations >= maxIterations || period <= 0) {
         console.warn('⚠️ Periodo inválido detectado, usando valor por defecto');
-        base = nowTs2 + 45000; // 45 segundos por defecto
+        base = nowTs + 45000; // 45 segundos por defecto
       }
       
-      const delayMs = Math.max(0, base - nowTs2);
+      const delayMs = Math.max(0, base - nowTs);
       autoColorSequence.lastBoundaryTs = base;
       
       console.log(`⏱️ Brush ${brushId}: Próximo paso programado en ${delayMs}ms (period=${period}) - FALLBACK AUTO`);
@@ -3599,14 +3318,6 @@ function start(){
       watchdogInterval = setInterval(() => {
         try {
           if (idleMode) return;
-          if (wallpaperSequenceActive) {
-            const now = Date.now();
-            if ((now - wallpaperSequenceActiveStartTs) > (DURATION_MS * 3)) {
-              console.warn('🛠️ Watchdog: liberando lock de wallpaperSequenceActive por timeout extendido');
-              wallpaperSequenceActive = false;
-              wallpaperSequenceId = null;
-            }
-          }
           if (coloringMode === 'sequence' && !autoColorSequence.active && !rafId && !animationFinished) {
             autoColorSequence.active = true;
             autoColorSequence.anchorStartAt = Date.now() + 500;
@@ -3635,7 +3346,7 @@ function start(){
   finalCircles = []; // limpiar círculos finales
   
   resize(); 
-  // Limpiar SOLO la máscara. No limpiar canvas principal si preserveExisting para evitar fondo vacío
+  // Limpiar SOLO la máscara. No limpiar canvas principal si venimos de wallpaper
   try { maskCtx.save(); maskCtx.setTransform(1,0,0,1,0,0); maskCtx.clearRect(0,0,maskCanvas.width,maskCanvas.height);} catch(_) {}
   try { maskCtx.restore(); } catch(_) {}
   
@@ -3682,8 +3393,6 @@ function colorOnTop(){
   if (idleMode){
     idleMode = false;
     cancelFinalFadeIfAny();
-  // Reconstruir arrays desde cero
-  seeds = []; strokes = []; sweeps = []; wash = []; spirals = []; radiants = []; connectors = []; droplets = []; waves = []; colorDrops = []; finalSealing = []; finalCircles = []; lateColorDrops = [];
   }
   
   // Cancelar bucles previos y resetear IDs para permitir re-inicio correcto
@@ -3729,13 +3438,17 @@ function colorOnTop(){
   
   // CRÍTICO: render inmediato para aplicar el nuevo color sobre el fondo preservado
   // Fuerza la rama directa para evitar pixelación en el primer frame de la nueva capa
-  const prevFirst = isFirstAnimation;
-  const prevPreserve = preserveCanvasContent;
-  isFirstAnimation = true;
-  preserveCanvasContent = false;
-  render();
-  isFirstAnimation = prevFirst;
-  preserveCanvasContent = prevPreserve;
+  if (!skipImmediateRenderOnce) {
+    const prevFirst = isFirstAnimation;
+    const prevPreserve = preserveCanvasContent;
+    isFirstAnimation = true;
+    preserveCanvasContent = false;
+    render();
+    isFirstAnimation = prevFirst;
+    preserveCanvasContent = prevPreserve;
+  } else {
+    skipImmediateRenderOnce = false;
+  }
   
   startedAt = 0; 
   if (!rafId) rafId = requestAnimationFrame(loop);
@@ -3787,14 +3500,14 @@ function startNewAnimation(){
   const imgW = currentBG.naturalWidth;
   const imgH = currentBG.naturalHeight;
   const scaleToVirtual = WALLPAPER_SECTION_HEIGHT / imgH;
-  const placedW = imgW * scaleToVirtual;
-  const virtualWidth = WALLPAPER_TOTAL_WIDTH; // 6480
+  const placedW = imgW * scaleToVirtual; // ancho dentro del espacio virtual
   const placeX = Math.floor((virtualWidth - placedW) / 2);
   const placeY = 0;
   const sectionWidth = WALLPAPER_SECTION_WIDTH;
   const sectionHeight = WALLPAPER_SECTION_HEIGHT;
   const sourceXVirtual = brushConfig.offsetX || 0;
   const sourceYVirtual = brushConfig.offsetY || 0;
+  // Convertir a coords de la imagen
   let sx = (sourceXVirtual - placeX) / scaleToVirtual;
   let sy = (sourceYVirtual - placeY) / scaleToVirtual;
   let sw = sectionWidth / scaleToVirtual;
@@ -3875,8 +3588,7 @@ window.addEventListener('resize',()=>{
   const now=performance.now(); 
   const p=startedAt?clamp((now-startedAt)/DURATION_MS,0,1):0; 
   resize(); 
-  try { maskCtx.save(); maskCtx.setTransform(1,0,0,1,0,0); } catch(_) {}
-  maskCtx.clearRect(0,0,maskCanvas.width,maskCanvas.height);
+  try { maskCtx.save(); maskCtx.setTransform(1,0,0,1,0,0); maskCtx.clearRect(0,0,maskCanvas.width,maskCanvas.height);} catch(_) {}
   try { maskCtx.restore(); } catch(_) {}
   makeSeeds(12); 
   makeStrokes(); 
@@ -3985,7 +3697,7 @@ async function updateFallbackPattern() {
   // También esperar órdenes del servidor para sincronización adicional
     
     // PASO 6: Inicializar sistema de slideshow
-    initializeSlideshow();
+    await initializeSlideshow();
     
     console.log('✅ Sistema completamente inicializado y listo para colorear');
     
@@ -4040,10 +3752,11 @@ document.addEventListener('visibilitychange', () => {
 async function initializeSlideshow() {
   // Solo inicializar slideshow para brush 3 y 7
   if (![3, 7].includes(brushId)) {
+    console.log(`⏭️ Slideshow NO inicializado para brush ${brushId} (solo para brush 3 y 7)`);
     return;
   }
   
-  // console.log(`📺 Inicializando slideshow para brush ${brushId}`);
+  console.log(`📺 Inicializando slideshow para brush ${brushId}`);
   
   // Configurar valores específicos por brush
   if (brushId === 3) {
@@ -4066,37 +3779,54 @@ async function initializeSlideshow() {
     
     if (state.slideshow && state.slideshow[brushId]) {
       slideshowConfig = { ...slideshowConfig, ...state.slideshow[brushId] };
-      // console.log(`📺 Configuración de slideshow cargada:`, slideshowConfig);
+      console.log(`📺 Configuración de slideshow cargada desde servidor:`, slideshowConfig);
+    } else {
+      console.log(`📺 Usando configuración por defecto del slideshow:`, slideshowConfig);
     }
   } catch (error) {
-    console.warn('Error cargando configuración de slideshow:', error);
+    console.warn('⚠️ Error cargando configuración de slideshow:', error);
+    console.log(`📺 Usando configuración por defecto del slideshow:`, slideshowConfig);
   }
   
   // Cargar imágenes del slideshow
   await loadSlideshowImages();
   
+  console.log(`📺 Imágenes cargadas: ${slideshowImages.length} elementos`);
+  
   // Crear contenedor del slideshow
   createSlideshowContainer();
   
+  console.log(`📺 Contenedor creado, actualizando display...`);
+  
   // Actualizar display
   updateSlideshowDisplay();
+  
+  console.log(`📺 Display actualizado, verificando estado...`);
+  
   // Arranque defensivo: asegurar que el slideshow queda mostrando una imagen
   try { ensureSlideshowReady(); } catch (_) {}
+  
+  console.log(`✅ Slideshow completamente inicializado para brush ${brushId}`);
 }
 
 // Verificación simple para asegurar que el slideshow tiene algo visible
 function ensureSlideshowReady() {
   if (!slideshowConfig.enabled) return;
   if (!slideshowContainer || !document.getElementById('slideshow-container')) {
+    console.log('🔧 Creando contenedor de slideshow faltante');
     createSlideshowContainer();
   }
   const layer = document.getElementById('slideshow-images-layer');
   if (!layer || layer.children.length === 0) {
+    console.log('🔧 Iniciando slideshow porque no hay contenido visible');
     startSlideshow();
     return;
   }
   if (layer.style.display === 'none' && !inVideoPlayback && !videoForcedByLogo) {
-    layer.style.display = '';
+    console.log('🔧 Mostrando capa de slideshow que estaba oculta');
+    layer.style.display = 'block';
+    layer.style.visibility = 'visible';
+    layer.style.opacity = '1';
   }
 }
 
@@ -4122,11 +3852,10 @@ async function loadSlideshowImages() {
       slideshowImages = base.map(u => u.includes('?') ? `${u}&${SLIDESHOW_CACHE_BUSTER}` : `${u}?${SLIDESHOW_CACHE_BUSTER}`);
       
       // Agregar el video pampita.mp4 al final del ciclo de imágenes
-      // El video se mostrará después de ver las 2 imágenes
+      // El video se reproducirá después de ver las 2 imágenes
       slideshowImages.push('VIDEO:/pampita.mp4');
       
-      console.log(`📸 Slideshow configurado: ${base.length} imágenes + 1 video`);
-      
+      console.log(`📸 Slideshow configurado: ${base.length} imágenes + 1 video`);      
   currentSlideshowIndex = 0; // reset index to avoid OOB
       
       // PRECARGAR IMÁGENES PARA MEJOR PERFORMANCE
@@ -4236,6 +3965,9 @@ function createSlideshowContainer() {
   slideshowContainer.style.overflow = 'hidden';
   slideshowContainer.style.willChange = 'transform';
   slideshowContainer.style.backfaceVisibility = 'hidden';
+  slideshowContainer.style.display = 'block';
+  slideshowContainer.style.visibility = 'visible';
+  slideshowContainer.style.opacity = '1';
   
   // Wrapper del slideshow
   const imageWrapper = document.createElement('div');
@@ -4272,7 +4004,7 @@ function createSlideshowContainer() {
   slideshowVideoEl.style.display = 'none';
   slideshowVideoEl.style.zIndex = '5';
   slideshowVideoEl.style.pointerEvents = 'none';
-  slideshowVideoEl.muted = true; // asegurar autoplay
+  slideshowVideoEl.muted = true;
   slideshowVideoEl.playsInline = true;
   slideshowVideoEl.preload = 'auto';
   imageWrapper.appendChild(slideshowVideoEl);
@@ -4305,9 +4037,16 @@ function createSlideshowContainer() {
 
   slideshowContainer.appendChild(shadowLeft);
   slideshowContainer.appendChild(shadowTop);
-  document.body.appendChild(slideshowContainer);
   
-  // console.log('📺 Contenedor de slideshow creado con crossfade optimizado y sombras');
+  // Agregar al contenedor principal en lugar de body para mejor control
+  const mainContainer = document.getElementById('container');
+  if (mainContainer) {
+    mainContainer.appendChild(slideshowContainer);
+  } else {
+    document.body.appendChild(slideshowContainer);
+  }
+  
+  console.log('📺 Contenedor de slideshow creado con crossfade optimizado y sombras');
 }
 
 function updateSlideshowDisplay() {
@@ -4340,13 +4079,17 @@ function updateSlideshowDisplay() {
   // Mostrar/ocultar según configuración
   if (slideshowConfig.enabled && slideshowImages.length > 0) {
     slideshowContainer.style.display = 'block';
+    slideshowContainer.style.visibility = 'visible';
+    slideshowContainer.style.opacity = '1';
     // Si estamos en reproducción de video, no tocar el slideshow aquí
     if (!inVideoPlayback) {
-  startSlideshow();
+      startSlideshow();
     }
+    console.log(`📺 Slideshow visible - enabled: ${slideshowConfig.enabled}, imágenes: ${slideshowImages.length}, posición: (${slideshowConfig.x}, ${slideshowConfig.y}), tamaño: ${slideshowConfig.width}x${slideshowConfig.height}`);
   } else {
     slideshowContainer.style.display = 'none';
     stopSlideshow();
+    console.log(`⚠️ Slideshow oculto - enabled: ${slideshowConfig.enabled}, imágenes: ${slideshowImages.length}`);
   }
   
   // console.log(`📺 Slideshow actualizado con crossfade - enabled: ${slideshowConfig.enabled}, posición: (${slideshowConfig.x}, ${slideshowConfig.y}), tamaño: ${slideshowConfig.width}x${slideshowConfig.height}, sombra: ${slideshowConfig.shadowWidth || 20}px`);
@@ -4383,7 +4126,8 @@ function startSlideshow() {
   const imagesLayer = document.getElementById('slideshow-images-layer');
   if (imagesLayer) {
     // Visibilizar capa por si quedó oculta (p.e., tras logos)
-    imagesLayer.style.display = '';
+    imagesLayer.style.display = 'block';
+    imagesLayer.style.visibility = 'visible';
     imagesLayer.style.opacity = '1';
     imagesLayer.innerHTML = '';
     
@@ -4403,7 +4147,8 @@ function startSlideshow() {
     // ⚡ GARANTÍA: La imagen se muestra INMEDIATAMENTE sin esperar load
     // Esto evita cualquier momento sin contenido visible
     imagesLayer.appendChild(firstImg);
-    imagesLayer.style.display = '';
+    imagesLayer.style.display = 'block';
+    imagesLayer.style.visibility = 'visible';
     imagesLayer.style.opacity = '1';
     firstImg.style.opacity = '1';
     
@@ -4443,8 +4188,10 @@ function startSlideshow() {
         const visible = top && (parseFloat(getComputedStyle(top).opacity || '0') > 0.01) && top.naturalWidth > 0;
         if (!visible) {
           console.warn('🛠️ Fallback: primera imagen no visible tras timeout, avanzando');
-          currentSlideshowIndex = (currentSlideshowIndex + 1) % slideshowImages.length;
-          startSlideshow();
+          top.style.transition = 'opacity 300ms ease';
+          top.style.opacity = '1';
+        } else {
+          console.log('✅ Primera imagen visible y cargada correctamente');
         }
       } catch (_) {}
     }, 1500);
@@ -4532,125 +4279,6 @@ function startSlideshow() {
       console.error('❌ Error en health-check:', e);
     }
   }, 3000); // Check cada 3 segundos
-  
-  // Programación por timeout para evitar bloqueos si la transición se retrasa
-  // console.log(`📺 Slideshow iniciado con fade simple - ${slideshowImages.length} imágenes, intervalo: ${slideshowConfig.interval}ms`);
-}
-
-// Crea un elemento <img> para el slideshow con estilos y opacidad inicial
-function createSlideshowImage(src, initialOpacity = 0) {
-  const img = document.createElement('img');
-  img.src = src;
-  img.style.position = 'absolute';
-  img.style.top = '0';
-  img.style.left = '0';
-  img.style.width = '100%';
-  img.style.height = '100%';
-  img.style.objectFit = 'cover';
-  img.style.opacity = String(initialOpacity);
-  img.style.transition = `opacity ${SLIDESHOW_FADE_MS}ms ease`;
-  img.style.willChange = 'opacity';
-  // Hints for better load
-  try { img.decoding = 'async'; } catch (_) {}
-  try { img.loading = 'eager'; } catch (_) {}
-  return img;
-}
-
-// Añade la siguiente imagen del slideshow con crossfade y limpia las anteriores
-function addNextSlideshowImage(onDone) {
-  const imagesLayer = document.getElementById('slideshow-images-layer');
-  if (!imagesLayer || !slideshowImages || slideshowImages.length === 0) {
-    if (typeof onDone === 'function') onDone();
-    return;
-  }
-  if (_slideshowTransitioning) {
-    // Evitar solapado; reintentar luego
-    setTimeout(() => addNextSlideshowImage(onDone), 100);
-    return;
-  }
-  _slideshowTransitioning = true;
-
-  const nextSrc = slideshowImages[currentSlideshowIndex];
-  console.log(`🔄 Transición a siguiente elemento [${currentSlideshowIndex}]: ${nextSrc}`);
-  
-  const prevImgs = Array.from(imagesLayer.querySelectorAll('img'));
-  const prevTop = prevImgs.length ? prevImgs[prevImgs.length - 1] : null;
-
-  // Crear nueva imagen con opacidad 0 y añadirla encima
-  const nextImg = createSlideshowImage(nextSrc, 0);
-  
-  // Agregar handlers de carga
-  nextImg.addEventListener('load', () => {
-    console.log(`✅ Imagen cargada: ${nextImg.naturalWidth}x${nextImg.naturalHeight}`);
-  });
-  
-  nextImg.addEventListener('error', (e) => {
-    console.error(`❌ Error cargando imagen [${currentSlideshowIndex}]:`, nextSrc, e);
-    // Si falla, intentar con la siguiente
-    _slideshowTransitioning = false;
-    currentSlideshowIndex = (currentSlideshowIndex + 1) % slideshowImages.length;
-    if (typeof onDone === 'function') onDone();
-  });
-  
-  imagesLayer.appendChild(nextImg);
-
-  // Cuando esté lista, iniciar el fade
-  const startFade = () => {
-    // Asegurar reflow antes de cambiar opacidad
-    void nextImg.offsetHeight;
-    // Fade-in de la nueva
-    nextImg.style.opacity = '1';
-    // Fade-out de la anterior
-    if (prevTop) prevTop.style.opacity = '0';
-
-    const cleanup = () => {
-      // Mantener solo las dos últimas imágenes para evitar fugas de memoria
-      const imgs = Array.from(imagesLayer.querySelectorAll('img'));
-      // Dejar como máximo 2 (prevTop + nextImg). Quitar las más antiguas
-      while (imgs.length > 2) {
-        const toRemove = imgs.shift();
-        if (toRemove && toRemove !== prevTop && toRemove !== nextImg) toRemove.remove();
-      }
-      // Si hay más de 2 por cualquier motivo, asegurar limpieza extra
-      const latest = Array.from(imagesLayer.querySelectorAll('img'));
-      if (latest.length > 2) {
-        for (let i = 0; i < latest.length - 2; i++) latest[i].remove();
-      }
-      _slideshowTransitioning = false;
-      if (typeof onDone === 'function') onDone();
-    };
-
-    // Usar transitionend con timeout de respaldo
-    let finished = false;
-    const onEnd = () => {
-      if (finished) return;
-      finished = true;
-      nextImg.removeEventListener('transitionend', onEnd);
-      if (prevTop) prevTop.removeEventListener('transitionend', onEnd);
-      cleanup();
-    };
-    nextImg.addEventListener('transitionend', onEnd);
-    if (prevTop) prevTop.addEventListener('transitionend', onEnd);
-  setTimeout(onEnd, SLIDESHOW_FADE_MS + 80);
-  };
-
-  // Intentar decode() para evitar parpadeos; fallback por tiempo
-  let decoded = false;
-  try {
-    if (nextImg.decode) {
-      nextImg.decode().then(() => { decoded = true; startFade(); }).catch(() => { startFade(); });
-      // Fallback si decode tarda demasiado
-      setTimeout(() => { if (!decoded) startFade(); }, 1200);
-    } else {
-      // Fallback usando onload
-      nextImg.addEventListener('load', () => startFade());
-      // Fallback por tiempo en caso de cache instantánea sin disparar load
-      setTimeout(() => startFade(), 500);
-    }
-  } catch (_) {
-    // En navegadores sin decode, iniciar de inmediato con pequeñísimo retraso
-    setTimeout(() => startFade(), 30);
-  }
 }
 
 // Programación por timeout para evitar bloqueos si la transición se retrasa
@@ -4720,14 +4348,80 @@ function showSlideshowImage(index) {
   }
 }
 
+// Crear elemento <img> del slideshow con estilos correctos y transición de opacidad
+function createSlideshowImage(src, initialOpacity = 0) {
+  const img = document.createElement('img');
+  img.src = src;
+  img.style.position = 'absolute';
+  img.style.top = '0';
+  img.style.left = '0';
+  img.style.width = '100%';
+  img.style.height = '100%';
+  img.style.objectFit = 'cover';
+  img.style.opacity = String(initialOpacity);
+  img.style.transition = `opacity ${SLIDESHOW_FADE_MS}ms ease`;
+  // pistas de carga/rendereado
+  img.decoding = 'async';
+  img.loading = 'eager';
+  return img;
+}
+
+// Agregar la siguiente imagen con crossfade y limpiar anteriores (mantener máx 2)
+function addNextSlideshowImage(onDone) {
+  const imagesLayer = document.getElementById('slideshow-images-layer');
+  if (!imagesLayer || !slideshowImages || slideshowImages.length === 0) {
+    if (typeof onDone === 'function') onDone();
+    return;
+  }
+  // Evitar solapes de transición
+  if (_slideshowTransitioning) {
+    if (typeof onDone === 'function') onDone();
+    return;
+  }
+  _slideshowTransitioning = true;
+
+  const nextSrc = slideshowImages[currentSlideshowIndex];
+  // Seguridad: si por error es un video, abortar y continuar
+  if (nextSrc && typeof nextSrc === 'string' && nextSrc.startsWith('VIDEO:')) {
+    _slideshowTransitioning = false;
+    if (typeof onDone === 'function') onDone();
+    return;
+  }
+
+  const prevImgs = Array.from(imagesLayer.querySelectorAll('img'));
+  const prevTop = prevImgs.length ? prevImgs[prevImgs.length - 1] : null;
+
+  const nextImg = createSlideshowImage(nextSrc, 0);
+  imagesLayer.appendChild(nextImg);
+
+  // Iniciar crossfade tras un pequeño tick para asegurar aplicación de estilos
+  setTimeout(() => {
+    try {
+      nextImg.style.opacity = '1';
+      if (prevTop) prevTop.style.opacity = '0';
+    } catch (_) {}
+    // Al finalizar el fade, limpiar exceso y liberar flag
+    setTimeout(() => {
+      try {
+        const imgs = Array.from(imagesLayer.querySelectorAll('img'));
+        while (imgs.length > 2) {
+          const toRemove = imgs.shift();
+          if (toRemove && toRemove !== nextImg) toRemove.remove();
+        }
+      } catch (_) {}
+      _slideshowTransitioning = false;
+      if (typeof onDone === 'function') onDone();
+    }, SLIDESHOW_FADE_MS + 80);
+  }, 30);
+}
+
 // ==============================
 // VIDEO: Reproducir video dentro del slideshow
 // ==============================
 
 function playSlideshowVideo(videoSrc) {
   if (!ENABLE_SLIDESHOW_VIDEO) {
-    // Feature deshabilitada: saltar al siguiente
-    scheduleNextSlide();
+    // Feature deshabilitada: no interrumpir slideshow
     return;
   }
   
@@ -4812,7 +4506,9 @@ function playSlideshowVideo(videoSrc) {
       const nextImg = createSlideshowImage(nextSrc, 1); // Opacidad 1 directa
       imagesLayer.innerHTML = ''; // Limpiar capa
       imagesLayer.appendChild(nextImg);
-      imagesLayer.style.opacity = '1'; // Asegurar visible
+      imagesLayer.style.display = '';
+      imagesLayer.style.opacity = '1';
+      
       console.log('✅ Siguiente imagen agregada DEBAJO del video (visible como backup)');
     }
   };
@@ -4973,77 +4669,79 @@ function stopLogoVideoLoopIfActive() {
 }
 
 // Aplicar un paso de color con un patrón específico enviado por el servidor (sin alterar el orden local)
-// Debouncing específico para wallpaper
-let lastWallpaperPatternTs = 0;
-const WALLPAPER_PATTERN_COOLDOWN = 8000; // 8 segundos entre ejecuciones de wallpaper
+// SIMPLIFICADO: wallpaper.jpg se trata exactamente igual que rojo.jpg
+async function executeColorStepWithPattern(forcedPattern, options = {}) {
+  if (!forcedPattern) return;
 
-async function executeColorStepWithPattern(forcedPattern) {
-  if (!forcedPattern) return executeColorStep();
+  // Modo siempre 'sequence' para consistencia - sin modos especiales
+  coloringMode = 'sequence';
+  skipImmediateRenderOnce = false;
   
-  // DEBOUNCE ESPECÍFICO PARA WALLPAPER: prevenir múltiples ejecuciones
-  if (forcedPattern === 'wallpaper.jpg') {
-    const now = Date.now();
-    if ((now - lastWallpaperPatternTs) < WALLPAPER_PATTERN_COOLDOWN) {
-      console.log(`⏸️ DEBOUNCE WALLPAPER: Ignorando ejecución - última hace ${now - lastWallpaperPatternTs}ms (cooldown: ${WALLPAPER_PATTERN_COOLDOWN}ms)`);
-      return;
-    }
-    lastWallpaperPatternTs = now;
-  }
-  
-  // Autoridad del servidor: si hay un paso corriendo lo interrumpimos (especialmente para logo1->logo2)
+  // Autoridad del servidor: si hay un paso corriendo lo interrumpimos
   if (autoColorSequence.isRunning) {
-    console.log(`⚡ Interrumpiendo paso en curso para aplicar patrón servidor: ${forcedPattern}`);
-    try { if (rafId) cancelAnimationFrame(rafId); } catch(_) {}
-    try { if (fpsMonitorRafId) cancelAnimationFrame(fpsMonitorRafId); } catch(_) {}
+    console.log(`⚠️ Interrumpiendo paso en curso para aplicar: ${forcedPattern}`);
     autoColorSequence.isRunning = false;
   }
+  
   autoColorSequence.isRunning = true;
   console.log(`🎨 *** COLOREANDO (forzado) *** Aplicando: ${forcedPattern}`);
+  
   try {
+    // Fade out suave SIEMPRE (igual que rojo.jpg)
+    await performSmoothFadeToBackground();
+    
+    // Cargar el patrón
     const img = new Image();
     await new Promise((resolve, reject) => {
       img.onload = resolve;
       img.onerror = reject;
-      img.src = `/patterns/${forcedPattern}?t=${Date.now()}`;
+      img.src = `/patterns/${forcedPattern}?cb=${Date.now()}`;
     });
     
-    // Logos tienen comportamiento especial (fade sin coloreo)
+    // LOGO SPECIAL: mostrar con fade-in en lugar de coloreo
     if (/logo1\.jpg|logo2\.jpg/i.test(forcedPattern)) {
-      console.log('🆕 LOGO MODE (forzado):', forcedPattern, 'fade-in directo sin coloreo');
-      // Ocultar slideshow durante logos (evita superposición/desincronización)
-      try {
-        const imagesLayer = document.getElementById('slideshow-images-layer');
-        if (imagesLayer && imagesLayer.style.display !== 'none') {
-          imagesLayer.style.display = 'none';
-          slideshowHiddenForLogo = true;
-        }
-      } catch (_) {}
       await showLogoFullFade(img, forcedPattern);
       finalizeLogoStep();
+      return;
+    }
+    
+    // Agregar el patrón a la lista (wallpaper se trata igual que colores)
+    const newPattern = {
+      src: `/patterns/${forcedPattern}`,
+      image: img,
+      filename: forcedPattern,
+      type: forcedPattern.replace('.jpg', '')
+    };
+    
+    // Reemplazar patrón existente del mismo tipo o agregar nuevo
+    const existingIdx = patterns.findIndex(p => p.filename === forcedPattern || p.type === newPattern.type);
+    if (existingIdx >= 0) {
+      patterns[existingIdx] = newPattern;
+      currentPatternIndex = existingIdx;
     } else {
-      // Colores normales Y wallpaper.jpg - mismo flujo para todos
-      const newPattern = {
-        src: `/patterns/${forcedPattern}`,
-        image: img,
-        filename: forcedPattern,
-        type: forcedPattern.replace('.jpg', '') === 'wallpaper' ? 'wallpaper' : forcedPattern.replace('.jpg', '')
-      };
-      if (patterns.length > 5) patterns = patterns.slice(-5);
+      // Evitar acumulación excesiva
+      if (patterns.length > 5) {
+        patterns.splice(0, patterns.length - 4);
+      }
       patterns.push(newPattern);
       currentPatternIndex = patterns.length - 1;
-      
-      console.log(`✅ Patrón cargado: ${forcedPattern}, iniciando colorOnTop...`);
-      try { resize(); } catch (_) {}
-      colorOnTop();
-      playFullscreenLogoVideoIfNeeded(forcedPattern);
-      if (!autoColorSequence.serverSync) {
-        autoColorSequence.currentIndex = (autoColorSequence.currentIndex + 1) % autoColorSequence.patterns.length;
-      }
     }
-    lastAppliedPattern = forcedPattern;
-    lastAppliedPatternTs = Date.now();
+    
+    patternsReady = true;
+    
+    console.log(`✅ Patrón ${forcedPattern} cargado, iniciando coloreado...`);
+    
+    // Recalcular layout para el nuevo patrón
+    resize();
+    
+    // IMPORTANTE: Un solo colorOnTop, no múltiples llamadas
+    colorOnTop();
+    
+    // Manejar video fullscreen si es necesario
+    playFullscreenLogoVideoIfNeeded(forcedPattern);
+    
   } catch (e) {
-    console.error('❌ Error aplicando patrón forzado:', forcedPattern, e);
+    console.error(`❌ Error aplicando patrón ${forcedPattern}:`, e);
   } finally {
     autoColorSequence.isRunning = false;
   }

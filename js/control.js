@@ -322,7 +322,7 @@ function setupWebSocket() {
         }
 
         loadGeneralConfig(state.general);
-        updateWallpaperButtonState(state.wallpaper?.isActive || false);
+    // Estado de wallpaper legacy omitido
         updateUI();
 
         // Cargar estado de servidores si existe
@@ -340,9 +340,7 @@ function setupWebSocket() {
     });
 
     // Eventos específicos
-    socket.on('wallpaperToggle', (data) => {
-        updateWallpaperButtonState(data.isActive);
-    });
+    // wallpaperToggle legacy eliminado
 
     // NUEVO: Eventos del gestor robusto de sincronización de imágenes
     socket.on('screenCaptureComplete', (data) => {
@@ -662,7 +660,9 @@ function setupEventListeners() {
     // Control de wallpaper
     if (elements.toggleWallpaper) {
         elements.toggleWallpaper.addEventListener('click', () => {
-            socket?.emit('requestAnimationStart');
+            // Unificar comportamiento: que el botón wallpaper dispare un paso de color
+            // igual que "amarillo" pero con wallpaper.jpg a través del servidor
+            socket?.emit('jumpToWallpaper');
         });
     }
 
@@ -860,17 +860,7 @@ function updateUI() {
     updateBackgroundRgb(elements.backgroundColor?.value);
 }
 
-function updateWallpaperButtonState(isActive) {
-    if (!elements.toggleWallpaper) return;
-    
-    if (isActive) {
-        elements.toggleWallpaper.textContent = '🔴 Apagar Wallpaper';
-        elements.toggleWallpaper.className = 'wallpaper-off';
-    } else {
-        elements.toggleWallpaper.textContent = '🟢 Encender Wallpaper + Animación';
-        elements.toggleWallpaper.className = 'wallpaper-on';
-    }
-}
+// Eliminado: updateWallpaperButtonState (legacy)
 
 function updateBackgroundRgb(hex) {
     if (!hex || !backgroundRgb) return;
@@ -1020,11 +1010,11 @@ function setupImageSelectionButtons() {
 
 function setupKeyboardControls() {
     document.addEventListener('keydown', (e) => {
-        // Tecla "1" - Iniciar secuencia de brush reveal (antes era 'a')
+        // Tecla "1" - DESHABILITADA (wallpaper removido)
         if (e.key === '1') {
             e.preventDefault();
-            console.log('🎯 Tecla "1" presionada - Iniciando secuencia de brush reveal');
-            startBrushRevealSequence();
+            console.log('⛔ Tecla "1" deshabilitada - funcionalidad wallpaper removida');
+            return;
         }
         // Teclas "z", "a", "q" - Selección de imagen (antes era 1, 2, 3)
         else if (e.key === 'z' || e.key === 'Z') {
@@ -1115,38 +1105,22 @@ let lastActivityTime = Date.now();
 // Legacy compatibility: some inline scripts may reference rotationInterval; ensure it exists
 window.rotationInterval = window.rotationInterval || null;
 
-// Función para iniciar la secuencia de brush reveal (tecla "1") con sistema robusto
+// Función DESHABILITADA - wallpaper removido
 function startBrushRevealSequence() {
-    console.log('🎯 INICIANDO SECUENCIA BRUSH REVEAL CON SISTEMA UDP');
-    
-    if (socket && socket.connected) {
-        // Actualizar monitor UDP
-        if (typeof udpMonitor !== 'undefined') {
-            udpMonitor.setStatus('processing', '📸 Iniciando captura de imagen...');
-        }
-        
-        // El servidor ahora manejará toda la secuencia esperando confirmación UDP
-        socket.emit('startBrushRevealSequence');
-    }
-    
-    // Mostrar feedback visual mejorado
+    console.log('⛔ startBrushRevealSequence DESHABILITADA - funcionalidad wallpaper removida');
     const status = document.getElementById('connectionStatus');
     if (status) {
         const originalText = status.textContent;
-        status.textContent = '🎯 Esperando confirmación UDP en puerto 5555...';
-        status.style.background = '#17a2b8';
-        
+        status.textContent = '⛔ Tecla "1" deshabilitada - wallpaper removido';
+        status.style.background = '#dc3545';
         setTimeout(() => {
             status.textContent = originalText;
             status.style.background = '';
-        }, 15000);
+        }, 2000);
     }
-    
-    // Registrar actividad
-    registerActivity();
 }
 
-// Exponer para scripts inline (control.html) que disparan la secuencia
+// Exponer para compatibilidad
 window.startBrushRevealSequence = startBrushRevealSequence;
 
 // ========================================
@@ -1332,30 +1306,9 @@ function updateColorSequenceStatus(message) {
 }
 
 function switchColoringMode() {
-    const currentMode = elements.switchModeBtn.dataset.mode;
-    
-    if (currentMode === 'sequence') {
-        // Cambiar a modo wallpaper
-        console.log('🔀 *** CONTROL *** Cambiando a modo Wallpaper');
-        
-        if (socket && socket.connected) {
-            socket.emit('switchToWallpaperMode');
-            elements.switchModeBtn.dataset.mode = 'wallpaper';
-            elements.switchModeBtn.innerHTML = '🔀 SWITCH a Secuencia';
-            elements.switchModeBtn.style.background = '#28a745';
-            updateColorSequenceStatus('🖼️ Modo: Wallpaper (coloreando con wallpaper.jpg)');
-        }
-    } else {
-        // Cambiar a modo secuencia
-        console.log('🔀 *** CONTROL *** Cambiando a modo Secuencia');
-        
-        if (socket && socket.connected) {
-            socket.emit('switchToSequenceMode');
-            elements.switchModeBtn.dataset.mode = 'sequence';
-            elements.switchModeBtn.innerHTML = '🔀 SWITCH a Wallpaper';
-            elements.switchModeBtn.style.background = '#6f42c1';
-            updateColorSequenceStatus('🟡 Modo: Secuencia (rojo→azul→amarillo)');
-        }
+    // Legacy switch removed; no action needed
+    if (elements && elements.switchModeBtn) {
+        elements.switchModeBtn.style.display = 'none';
     }
 }
 
@@ -1462,7 +1415,8 @@ function setupManualColorJumpButtons() {
     if (wallpaperBtn) {
         wallpaperBtn.addEventListener('click', () => {
             if (socket && socket.connected) {
-                socket.emit('forceWallpaperPattern');
+                // Usar el mismo camino que un salto de color, pero con wallpaper.jpg
+                socket.emit('jumpToWallpaper');
                 const status = document.getElementById('connectionStatus');
                 if (status) {
                     const original = status.textContent;

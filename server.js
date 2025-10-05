@@ -1049,44 +1049,7 @@ io.on('connection', (socket) => {
         }
     });
 
-    socket.on('requestAnimationStart', (data) => {
-        // Solo el control puede iniciar animaciones
-        const client = connectedClients.get(socket.id);
-        if (client && client.type === 'control') {
-            // Toggle del estado del wallpaper
-            globalState.wallpaper.isActive = !globalState.wallpaper.isActive;
-            
-            if (globalState.wallpaper.isActive) {
-                // Encender wallpaper y ejecutar animación
-                globalState.animation.isRunning = true;
-                globalState.animation.startTime = Date.now();
-                
-                // Enviar comando de inicio con delays específicos para cada pantalla
-                io.emit('wallpaperToggle', {
-                    isActive: true,
-                    startTime: globalState.animation.startTime,
-                    sequence: globalState.animation.sequence,
-                    delayPattern: globalState.animation.delayPattern
-                });
-                
-                // NUEVO: También enviar comando específico para brush-reveal
-                io.emit('requestAnimationStart', {
-                    timestamp: Date.now(),
-                    message: 'Iniciar animación desde control'
-                });
-                
-                console.log('🎬 Comando de animación enviado a todas las pantallas y brush-reveal');
-            } else {
-                // Apagar wallpaper
-                globalState.animation.isRunning = false;
-                globalState.animation.startTime = null;
-                
-                io.emit('wallpaperToggle', {
-                    isActive: false
-                });
-            }
-        }
-    });
+    // Eliminado: requestAnimationStart legacy (wallpaperToggle). Usar jumpToWallpaper/nextColorStep.
 
     socket.on('updateGeneralConfig', (config) => {
         const client = connectedClients.get(socket.id);
@@ -1195,14 +1158,61 @@ io.on('connection', (socket) => {
         jumpToPatternAndResync(idx, pattern);
     });
 
+    // NUEVO: Salto directo a wallpaper.jpg usando mismo mecanismo de pasos de color
+    socket.on('jumpToWallpaper', () => {
+        const client = connectedClients.get(socket.id);
+        if (!client || client.type !== 'control') return;
+        if (!colorStepScheduler.active) {
+            console.log('▶️ Arrancando scheduler antes de salto a wallpaper');
+            startCentralColorScheduler();
+        }
+        try {
+            // Cancelar timeout actual para reprogramar correctamente
+            if (colorStepScheduler.timeoutId) {
+                clearTimeout(colorStepScheduler.timeoutId);
+                colorStepScheduler.timeoutId = null;
+            }
+            const now = Date.now();
+            const APPLY_OFFSET_MS = 120;
+            const payload = { timestamp: now, applyAt: now + APPLY_OFFSET_MS, pattern: 'wallpaper.jpg', currentIndex: -1 };
+            colorStepScheduler.lastStep = payload;
+            console.log('🖼️ *** SERVER *** Paso de color forzado -> wallpaper.jpg');
+            // Broadcast a control primero para UI, luego a brushes
+            connectedClients.forEach(c => { if (c.type === 'control' && c.socket.connected) c.socket.emit('colorStepUpdate', payload); });
+            connectedClients.forEach(c => { if (c.type === 'brush-reveal' && c.socket.connected) c.socket.emit('nextColorStep', payload); });
+            
+            // CLAVE: Pausar secuencia durante WALLPAPER_HOLD_MS para evitar que salte inmediatamente a amarillo
+            if (colorStepScheduler.active && !colorStepScheduler.paused) {
+                pauseCentralColorScheduler();
+                console.log(`⏸️ *** SERVER *** Secuencia pausada por ${WALLPAPER_HOLD_MS}ms durante wallpaper`);
+            }
+            
+            // Programar reanudación de la secuencia después del hold
+            if (wallpaperHoldTimer) clearTimeout(wallpaperHoldTimer);
+            wallpaperHoldTimer = setTimeout(() => {
+                if (colorStepScheduler.active && colorStepScheduler.paused) {
+                    console.log('▶️ *** SERVER *** Reanudando secuencia tras wallpaper hold');
+                    resumeCentralColorScheduler();
+                } else if (!colorStepScheduler.active) {
+                    console.log('▶️ *** SERVER *** Reiniciando scheduler tras wallpaper hold');
+                    startCentralColorScheduler();
+                }
+            }, WALLPAPER_HOLD_MS);
+        } catch (e) {
+            console.error('❌ Error en jumpToWallpaper:', e);
+        }
+    });
+
     // NUEVO: Forzar mostrar wallpaper.jpg en todos los brush-reveal
     socket.on('forceWallpaperPattern', () => {
         const client = connectedClients.get(socket.id);
         if (!client || client.type !== 'control') return;
         console.log('🖼️ *** SERVER *** Forzando wallpaper.jpg en todos los brush-reveal');
+        const sequenceId = `force_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`;
+        currentWallpaperSequenceId = sequenceId;
         connectedClients.forEach(c => {
             if (c.type === 'brush-reveal' && c.socket.connected) {
-                c.socket.emit('forceWallpaperPattern');
+                c.socket.emit('forceWallpaperPattern', { sequenceId });
             }
         });
     });
@@ -1292,15 +1302,24 @@ io.on('connection', (socket) => {
                             console.log('⚡ *** SERVER *** Emitiendo paso de color inmediato tras timeout UDP');
                             emitNextColorStep();
                         }
-                        // Fallback: si ya existe wallpaper.jpg reciente, forzar modo wallpaper brevemente
+                        // Fallback: si ya existe wallpaper.jpg reciente, forzar un paso wallpaper.jpg
                         const wp = path.join(__dirname,'patterns','wallpaper.jpg');
                         if (fs.existsSync(wp)) {
                             const stat = fs.statSync(wp);
                             const ageMs = Date.now() - stat.mtimeMs;
                             if (ageMs < 5 * 60 * 1000) { // menor a 5 min
-                                const fallbackSeq = `wallpaper_timeout_${Date.now()}`;
-                                console.log(`🟡 *** SERVER *** Forzando switchToWallpaperMode con wallpaper existente (edad ${ageMs}ms)`);
-                                io.emit('switchToWallpaperMode', { sequenceId: fallbackSeq });
+                                console.log(`🟡 *** SERVER *** Forzando paso de color wallpaper.jpg por fallback (edad ${ageMs}ms)`);
+                                try {
+                                    if (colorStepScheduler.timeoutId) { clearTimeout(colorStepScheduler.timeoutId); colorStepScheduler.timeoutId = null; }
+                                    const now = Date.now();
+                                    const APPLY_OFFSET_MS = 120;
+                                    const payload = { timestamp: now, applyAt: now + APPLY_OFFSET_MS, pattern: 'wallpaper.jpg', currentIndex: -1 };
+                                    colorStepScheduler.lastStep = payload;
+                                    connectedClients.forEach(c => { if (c.type === 'control' && c.socket.connected) c.socket.emit('colorStepUpdate', payload); });
+                                    connectedClients.forEach(c => { if (c.type === 'brush-reveal' && c.socket.connected) c.socket.emit('nextColorStep', payload); });
+                                    colorStepScheduler.nextBoundary = now + (colorStepScheduler.nextIntervalOverrideMs || colorStepScheduler.periodMs);
+                                    scheduleNextColorBoundary();
+                                } catch(e2) { console.warn('⚠️ Error forzando paso wallpaper fallback:', e2.message); }
                             }
                         }
                     } catch(e) { console.warn('⚠️ Error en recuperación post-timeout:', e.message); }
@@ -1491,54 +1510,7 @@ io.on('connection', (socket) => {
         }
     });
 
-    // NUEVO: Switch a modo wallpaper
-    socket.on('switchToWallpaperMode', (data) => {
-        const client = connectedClients.get(socket.id);
-        if (client && client.type === 'control') {
-            console.log('🔀 *** SERVER *** Cambiando a modo Wallpaper (wallpaper.jpg)');
-            pauseCentralColorScheduler();
-            
-            // Generar ID de secuencia único
-            const sequenceId = `wallpaper_manual_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-            currentWallpaperSequenceId = sequenceId;
-
-            // THROTTLE SIMPLE: evitar duplicados inmediatos (p.e. UI doble click)
-            if (!global.__lastSwitchWallpaperTs) global.__lastSwitchWallpaperTs = 0;
-            const nowTs = Date.now();
-            if (nowTs - global.__lastSwitchWallpaperTs < 800) {
-                console.log('⏩ switchToWallpaperMode ignorado (throttle <800ms)');
-                return;
-            }
-            global.__lastSwitchWallpaperTs = nowTs;
-            
-            // Enviar comando a todos los brush-reveal
-            connectedClients.forEach((otherClient) => {
-                if (otherClient.type === 'brush-reveal' && otherClient.socket.connected) {
-                    otherClient.socket.emit('switchToWallpaperMode', { sequenceId: sequenceId });
-                }
-            });
-            
-            console.log(`📡 *** SERVER *** Comando switchToWallpaperMode enviado a brush-reveal clients (ID: ${sequenceId})`);
-        }
-    });
-
-    // NUEVO: Switch a modo secuencia
-    socket.on('switchToSequenceMode', () => {
-        const client = connectedClients.get(socket.id);
-        if (client && client.type === 'control') {
-            console.log('🔀 *** SERVER *** Cambiando a modo Secuencia (rojo→azul→amarillo)');
-            resumeCentralColorScheduler();
-            
-            // Enviar comando a todos los brush-reveal
-            connectedClients.forEach((otherClient) => {
-                if (otherClient.type === 'brush-reveal' && otherClient.socket.connected) {
-                    otherClient.socket.emit('switchToSequenceMode');
-                }
-            });
-            
-            console.log('📡 *** SERVER *** Comando switchToSequenceMode enviado a brush-reveal clients');
-        }
-    });
+    // Eliminado: switchToWallpaperMode/switchToSequenceMode (legacy). Usar jumpToWallpaper o scheduler.
 
     // NUEVO: Detener rotación automática de patrones
     socket.on('stopPatternRotation', (data) => {
@@ -2006,12 +1978,14 @@ io.on('connection', (socket) => {
             console.log('🎨 *** SERVER *** Continuando secuencia de coloreado con wallpaper');
             
             // Emitir a todos los brush-reveal para que cambien a modo wallpaper
+            const sequenceId = imageProcessingState.pendingOperation?.id || `seq-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`;
+            currentWallpaperSequenceId = sequenceId;
             connectedClients.forEach((otherClient) => {
                 if (otherClient.type === 'brush-reveal' && otherClient.socket.connected) {
                     otherClient.socket.emit('switchToWallpaperMode', {
                         timestamp: Date.now(),
                         source: 'screen-sequence',
-                        sequenceId: imageProcessingState.pendingOperation?.id || `seq-${Date.now()}`
+                        sequenceId
                     });
                 }
             });
@@ -2076,21 +2050,26 @@ io.on('connection', (socket) => {
                 message: 'wallpaper.jpg guardado desde processed.png',
                 timestamp: Date.now()
             });
-            // Broadcast a todas las pantallas para que entren en modo wallpaper (fade + coloreo)
-            io.emit('switchToWallpaperMode', { timestamp: Date.now() });
-            // Pausar secuencia de colores durante hold
-            if (colorStepScheduler.active && !colorStepScheduler.paused) {
-                pauseCentralColorScheduler();
-            }
-            if (wallpaperHoldTimer) clearTimeout(wallpaperHoldTimer);
-            wallpaperHoldTimer = setTimeout(() => {
-                // Reanudar secuencia
-                if (colorStepScheduler.active && colorStepScheduler.paused) {
-                    resumeCentralColorScheduler();
-                } else if (!colorStepScheduler.active) {
-                    startCentralColorScheduler();
-                }
-            }, WALLPAPER_HOLD_MS);
+            // Emitir paso de color wallpaper.jpg usando el mismo mecanismo de secuencia
+            try {
+                if (colorStepScheduler.timeoutId) { clearTimeout(colorStepScheduler.timeoutId); colorStepScheduler.timeoutId = null; }
+                const now = Date.now();
+                const APPLY_OFFSET_MS = 120;
+                const payload = { timestamp: now, applyAt: now + APPLY_OFFSET_MS, pattern: 'wallpaper.jpg', currentIndex: -1 };
+                colorStepScheduler.lastStep = payload;
+                connectedClients.forEach(c => { if (c.type === 'control' && c.socket.connected) c.socket.emit('colorStepUpdate', payload); });
+                connectedClients.forEach(c => { if (c.type === 'brush-reveal' && c.socket.connected) c.socket.emit('nextColorStep', payload); });
+                // Pausar secuencia durante hold
+                if (colorStepScheduler.active && !colorStepScheduler.paused) pauseCentralColorScheduler();
+                if (wallpaperHoldTimer) clearTimeout(wallpaperHoldTimer);
+                wallpaperHoldTimer = setTimeout(() => {
+                    if (colorStepScheduler.active && colorStepScheduler.paused) {
+                        resumeCentralColorScheduler();
+                    } else if (!colorStepScheduler.active) {
+                        startCentralColorScheduler();
+                    }
+                }, WALLPAPER_HOLD_MS);
+            } catch(e) { console.warn('⚠️ Error emitiendo paso wallpaper tras guardado:', e.message); }
 
         } catch (error) {
             console.error('❌ Error guardando wallpaper.jpg:', error);
